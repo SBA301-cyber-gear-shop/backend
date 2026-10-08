@@ -11,22 +11,19 @@ import com.project.cybershop.shared.exception.BusinessException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/auth")
+@RequiredArgsConstructor
 @Tag(name = "Authentication", description = "API Xác thực người dùng (Đăng ký, Đăng nhập, Thông tin tài khoản)")
 public class AuthController {
 
     private final AuthService authService;
     private final JwtUtil jwtUtil;
-
-    public AuthController(AuthService authService, JwtUtil jwtUtil) {
-        this.authService = authService;
-        this.jwtUtil = jwtUtil;
-    }
 
     @PostMapping("/register")
     @Operation(summary = "Đăng ký tài khoản khách hàng mới")

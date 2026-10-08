@@ -4,6 +4,7 @@ import com.project.cybershop.identity.internal.entity.Role;
 import com.project.cybershop.identity.internal.entity.User;
 import com.project.cybershop.identity.internal.repository.RoleRepository;
 import com.project.cybershop.identity.internal.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 @Component
+@RequiredArgsConstructor
 public class IdentityDataInitializer implements CommandLineRunner {
 
     private static final Logger log = LoggerFactory.getLogger(IdentityDataInitializer.class);
@@ -20,14 +22,6 @@ public class IdentityDataInitializer implements CommandLineRunner {
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-
-    public IdentityDataInitializer(RoleRepository roleRepository,
-                                  UserRepository userRepository,
-                                  PasswordEncoder passwordEncoder) {
-        this.roleRepository = roleRepository;
-        this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
-    }
 
     @Override
     public void run(String... args) {
