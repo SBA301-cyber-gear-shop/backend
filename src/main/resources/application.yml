@@ -6,9 +6,9 @@ spring:
   # DATABASE (Neon PostgreSQL Cloud)
   # ==========================================
   datasource:
-    url: ${DB_URL:jdbc:postgresql://${DB_HOST:ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech}:${DB_PORT:5432}/${DB_NAME:neondb}?sslmode=${DB_SSLMODE:require}}
-    username: ${DB_USERNAME:neondb_owner}
-    password: ${DB_PASSWORD:npg_E3lTM5aYOpNA}
+    url: jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech:5432/neondb?sslmode=require
+    username: neondb_owner
+    password: npg_E3lTM5aYOpNA
     driver-class-name: org.postgresql.Driver
 
   # ==========================================
@@ -37,12 +37,12 @@ springdoc:
 # SERVER
 # ==========================================
 server:
-  port: ${SERVER_PORT:8080}
+  port: 8080
 
 # ==========================================
 # JWT
 # ==========================================
 app:
   jwt:
-    secret: ${JWT_SECRET:cybershop_super_secret_jwt_key_2026_sba301_project_dev}
-    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+    secret: cybershop_super_secret_jwt_key_2026_sba301_project_dev
+    expiration-ms: 86400000
