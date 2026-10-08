@@ -59,4 +59,3 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponseDTO.success("Lấy thông tin tài khoản thành công", userDto));
     }
 }
-
