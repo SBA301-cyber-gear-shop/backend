@@ -8,5 +8,5 @@ Danh sách module
 | `payment` | `Payment_methods`, `Payments` | Phương thức thanh toán, thanh toán online/tại quầy, xác minh kết quả |
 | `promotion` | `Promotions`, `Promotion_Usages`, `Banners` | Voucher, hạn mức, lượt sử dụng và banner |
 | `pcbuild` | `PC_Customs`, `PC_Custom_Items` | Build thủ công, kiểm tra tương thích, gợi ý AI và quản lý cấu hình |
-| `aftersales` | `Warrantly_cards`, `Service_requests` | Thẻ bảo hành và xử lý bảo hành |
+| `aftersales` | `Warranty_Cards`, `Service_requests`, `Service_request_events` | Thẻ bảo hành và xử lý bảo hành |
 | `review` | `Reviews` | Đánh giá sau mua |
