@@ -11,7 +11,6 @@ import java.util.List;
 public class ProductLookup {
 
     private final EntityManager em;
-
     public ProductLookup(EntityManager em) {
         this.em = em;
     }
