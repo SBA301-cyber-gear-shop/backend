@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cybershop-postgres
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-cybershop}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../cyber-gear-shop (3).sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - cybershop-network
+
+  # Tận dụng image adminer:6.1.0-standalone ĐÃ CÓ SẴN trên máy bạn (truy cập: http://localhost:5050)
+  adminer:
+    image: adminer:6.1.0-standalone
+    container_name: cybershop-adminer
+    restart: unless-stopped
+    ports:
+      - "5050:8080"
+    depends_on:
+      - postgres
+    networks:
+      - cybershop-network
+
+volumes:
+  postgres_data:
+    name: cybershop_postgres_data
+
+networks:
+  cybershop-network:
+    name: cybershop_network
