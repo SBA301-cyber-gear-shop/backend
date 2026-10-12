@@ -1,34 +1,40 @@
 package com.project.cybershop.identity.internal.service;
 
+import com.project.cybershop.identity.api.dto.RegisterRequest;
 import com.project.cybershop.identity.api.dto.UserDto;
+import com.project.cybershop.identity.internal.entity.Role;
 import com.project.cybershop.identity.internal.entity.User;
-import org.springframework.stereotype.Component;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.Named;
 
-@Component
-public class UserMapper {
+import java.util.List;
 
-    public UserDto toDto(User user) {
-        if (user == null) return null;
-        return UserDto.builder()
-                .id(user.getId())
-                .fullName(user.getFullName())
-                .email(user.getEmail())
-                .phone(user.getPhone())
-                .address(user.getAddress())
-                .role(user.getRole() != null ? formatRole(user.getRole().getName()) : null)
-                .isActive(user.getIsActive())
-                .createdAt(user.getCreatedAt())
-                .build();
-    }
+@Mapper(componentModel = "spring")
+public interface UserMapper {
 
-    private String formatRole(String role) {
-        if (role == null) return null;
-        return switch (role.toUpperCase()) {
+    @Mapping(target = "role", source = "role", qualifiedByName = "formatRole")
+    UserDto toDto(User user);
+
+    List<UserDto> toDtoList(List<User> users);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "role", ignore = true)
+    @Mapping(target = "passwordHash", ignore = true)
+    @Mapping(target = "isActive", constant = "true")
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    User toEntity(RegisterRequest request);
+
+    @Named("formatRole")
+    default String formatRole(Role role) {
+        if (role == null || role.getName() == null) return null;
+        return switch (role.getName().toUpperCase()) {
             case "ADMIN" -> "Admin";
             case "STAFF" -> "Staff";
             case "TECHNICIAN" -> "Technician";
             case "CUSTOMER" -> "Customer";
-            default -> role;
+            default -> role.getName();
         };
     }
 }

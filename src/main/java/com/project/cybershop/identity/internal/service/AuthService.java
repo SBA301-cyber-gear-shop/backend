@@ -26,6 +26,7 @@ public class AuthService {
     private final JwtUtil jwtUtil;
     private final UserMapper userMapper;
 
+
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         String email = request.getEmail().trim().toLowerCase();
@@ -43,14 +44,20 @@ public class AuthService {
         Role role = roleRepository.findByNameIgnoreCase("CUSTOMER")
                 .orElseGet(() -> roleRepository.save(new Role("CUSTOMER", "Khách hàng mua sắm")));
 
-        User user = new User(
-                role,
-                request.getFullName().trim(),
-                email,
-                request.getPhone() != null && !request.getPhone().isBlank() ? request.getPhone().trim() : null,
-                passwordEncoder.encode(request.getPassword()),
-                request.getAddress() != null ? request.getAddress().trim() : null
-        );
+        User user = userMapper.toEntity(request);
+        user.setEmail(email);
+        user.setRole(role);
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        if (request.getPhone() != null && !request.getPhone().isBlank()) {
+            user.setPhone(request.getPhone().trim());
+        } else {
+            user.setPhone(null);
+        }
+        if (request.getAddress() != null && !request.getAddress().isBlank()) {
+            user.setAddress(request.getAddress().trim());
+        } else {
+            user.setAddress(null);
+        }
 
         user = userRepository.save(user);
 
