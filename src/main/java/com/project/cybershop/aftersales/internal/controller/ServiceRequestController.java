@@ -1,4 +1,4 @@
-package com.project.cybershop.aftersales.internal.web;
+package com.project.cybershop.aftersales.internal.controller;
 
 import com.project.cybershop.aftersales.api.dto.NoteRequest;
 import com.project.cybershop.aftersales.api.dto.RelinkCardRequest;

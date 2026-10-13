@@ -1,4 +1,4 @@
-package com.project.cybershop.catalog.internal.web;
+package com.project.cybershop.catalog.internal.controller;
 
 import com.project.cybershop.catalog.api.dto.CategoryResponse;
 import com.project.cybershop.catalog.api.dto.ProductResponse;

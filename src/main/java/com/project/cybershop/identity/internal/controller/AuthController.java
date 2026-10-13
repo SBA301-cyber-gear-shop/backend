@@ -1,4 +1,4 @@
-package com.project.cybershop.identity.internal.web;
+package com.project.cybershop.identity.internal.controller;
 
 import com.project.cybershop.identity.api.dto.AuthResponse;
 import com.project.cybershop.identity.api.dto.LoginRequest;
