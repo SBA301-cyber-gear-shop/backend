@@ -1,6 +1,6 @@
 package com.project.cybershop.catalog.api;
 
-import com.project.cybershop.catalog.api.dto.ProductVariantResponse;
+import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
 
 public interface CatalogInternalApi {
     boolean isVariantInStock(Integer variantId, int requestedQty);

@@ -1,9 +1,9 @@
 package com.project.cybershop.catalog.internal.controller;
 
-import com.project.cybershop.catalog.api.dto.CategoryResponse;
-import com.project.cybershop.catalog.api.dto.CategorySpecResponse;
-import com.project.cybershop.catalog.api.dto.ConfigureCategorySpecRequest;
-import com.project.cybershop.catalog.api.dto.CreateCategoryRequest;
+import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
+import com.project.cybershop.catalog.api.dto.response.CategorySpecResponse;
+import com.project.cybershop.catalog.api.dto.request.ConfigureCategorySpecRequest;
+import com.project.cybershop.catalog.api.dto.request.CreateCategoryRequest;
 import com.project.cybershop.catalog.internal.service.CategoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

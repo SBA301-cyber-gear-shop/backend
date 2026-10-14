@@ -1,9 +1,9 @@
 package com.project.cybershop.identity.internal.controller;
 
-import com.project.cybershop.identity.api.dto.AuthResponse;
-import com.project.cybershop.identity.api.dto.LoginRequest;
-import com.project.cybershop.identity.api.dto.RegisterRequest;
-import com.project.cybershop.identity.api.dto.UserDto;
+import com.project.cybershop.identity.api.dto.response.AuthResponse;
+import com.project.cybershop.identity.api.dto.request.LoginRequest;
+import com.project.cybershop.identity.api.dto.request.RegisterRequest;
+import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.identity.internal.service.AuthService;
 import com.project.cybershop.shared.config.JwtUtil;
 import com.project.cybershop.shared.dto.ApiResponseDTO;

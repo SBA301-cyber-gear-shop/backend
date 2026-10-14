@@ -1,13 +1,14 @@
 package com.project.cybershop.identity.internal.service;
 
-import com.project.cybershop.identity.api.dto.AuthResponse;
-import com.project.cybershop.identity.api.dto.LoginRequest;
-import com.project.cybershop.identity.api.dto.RegisterRequest;
-import com.project.cybershop.identity.api.dto.UserDto;
+import com.project.cybershop.identity.api.dto.response.AuthResponse;
+import com.project.cybershop.identity.api.dto.request.LoginRequest;
+import com.project.cybershop.identity.api.dto.request.RegisterRequest;
+import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.identity.internal.entity.Role;
 import com.project.cybershop.identity.internal.entity.User;
 import com.project.cybershop.identity.internal.repository.RoleRepository;
 import com.project.cybershop.identity.internal.repository.UserRepository;
+import com.project.cybershop.identity.internal.mapper.UserMapper;
 import com.project.cybershop.shared.config.JwtUtil;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
@@ -76,6 +77,7 @@ public class AuthService {
         User user = userRepository.findByIdentity(identity)
                 .orElseThrow(() -> new BusinessException("Email, số điện thoại hoặc mật khẩu không chính xác"));
 
+        System.out.println(passwordEncoder.encode("111111"));
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new BusinessException("Email, số điện thoại hoặc mật khẩu không chính xác");
         }

@@ -1,12 +1,13 @@
 package com.project.cybershop.catalog.internal.service;
 
-import com.project.cybershop.catalog.api.dto.CategoryResponse;
-import com.project.cybershop.catalog.api.dto.CategorySpecResponse;
-import com.project.cybershop.catalog.api.dto.ConfigureCategorySpecRequest;
-import com.project.cybershop.catalog.api.dto.CreateCategoryRequest;
+import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
+import com.project.cybershop.catalog.api.dto.response.CategorySpecResponse;
+import com.project.cybershop.catalog.api.dto.request.ConfigureCategorySpecRequest;
+import com.project.cybershop.catalog.api.dto.request.CreateCategoryRequest;
 import com.project.cybershop.catalog.internal.entity.Category;
 import com.project.cybershop.catalog.internal.entity.CategorySpecification;
 import com.project.cybershop.catalog.internal.entity.Specification;
+import com.project.cybershop.catalog.internal.mapper.CatalogMapper;
 import com.project.cybershop.catalog.internal.repository.CategoryRepository;
 import com.project.cybershop.catalog.internal.repository.CategorySpecificationRepository;
 import com.project.cybershop.catalog.internal.repository.SpecificationRepository;

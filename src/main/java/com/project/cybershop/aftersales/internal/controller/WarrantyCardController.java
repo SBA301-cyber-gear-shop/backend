@@ -1,6 +1,6 @@
 package com.project.cybershop.aftersales.internal.controller;
 
-import com.project.cybershop.aftersales.api.dto.WarrantyCardDto;
+import com.project.cybershop.aftersales.api.dto.response.WarrantyCardDto;
 import com.project.cybershop.aftersales.internal.service.Actor;
 import com.project.cybershop.aftersales.internal.service.CurrentUser;
 import com.project.cybershop.aftersales.internal.service.WarrantyCardService;

@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * Một dòng lịch sử của phiếu bảo hành. Chỉ thêm, không sửa, không xóa.
  */
 @Entity
-@Table(name = "\"Service_request_events\"")
+@Table(name = "service_request_events")
 @Getter
 @Setter
 @NoArgsConstructor

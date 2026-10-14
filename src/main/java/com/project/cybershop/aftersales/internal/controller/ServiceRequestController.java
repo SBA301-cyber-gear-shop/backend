@@ -1,12 +1,12 @@
 package com.project.cybershop.aftersales.internal.controller;
 
-import com.project.cybershop.aftersales.api.dto.NoteRequest;
-import com.project.cybershop.aftersales.api.dto.RelinkCardRequest;
-import com.project.cybershop.aftersales.api.dto.ReplacementRequest;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestCreateRequest;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestDto;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestSummaryDto;
-import com.project.cybershop.aftersales.api.dto.TransitionRequest;
+import com.project.cybershop.aftersales.api.dto.request.NoteRequest;
+import com.project.cybershop.aftersales.api.dto.request.RelinkCardRequest;
+import com.project.cybershop.aftersales.api.dto.request.ReplacementRequest;
+import com.project.cybershop.aftersales.api.dto.request.ServiceRequestCreateRequest;
+import com.project.cybershop.aftersales.api.dto.response.ServiceRequestDto;
+import com.project.cybershop.aftersales.api.dto.response.ServiceRequestSummaryDto;
+import com.project.cybershop.aftersales.api.dto.request.TransitionRequest;
 import com.project.cybershop.aftersales.internal.service.Actor;
 import com.project.cybershop.aftersales.internal.service.CurrentUser;
 import com.project.cybershop.aftersales.internal.service.CurrentUser.Principal;

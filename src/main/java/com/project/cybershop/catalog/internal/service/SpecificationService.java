@@ -1,8 +1,9 @@
 package com.project.cybershop.catalog.internal.service;
 
-import com.project.cybershop.catalog.api.dto.CreateSpecificationRequest;
-import com.project.cybershop.catalog.api.dto.SpecificationResponse;
+import com.project.cybershop.catalog.api.dto.request.CreateSpecificationRequest;
+import com.project.cybershop.catalog.api.dto.response.SpecificationResponse;
 import com.project.cybershop.catalog.internal.entity.Specification;
+import com.project.cybershop.catalog.internal.mapper.CatalogMapper;
 import com.project.cybershop.catalog.internal.repository.SpecificationRepository;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;

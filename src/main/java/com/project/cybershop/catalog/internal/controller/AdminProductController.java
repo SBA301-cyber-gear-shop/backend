@@ -1,9 +1,9 @@
 package com.project.cybershop.catalog.internal.controller;
 
-import com.project.cybershop.catalog.api.dto.CreateProductRequest;
-import com.project.cybershop.catalog.api.dto.CreateVariantDto;
-import com.project.cybershop.catalog.api.dto.ProductResponse;
-import com.project.cybershop.catalog.api.dto.ProductVariantResponse;
+import com.project.cybershop.catalog.api.dto.request.CreateProductRequest;
+import com.project.cybershop.catalog.api.dto.request.CreateVariantDto;
+import com.project.cybershop.catalog.api.dto.response.ProductResponse;
+import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
 import com.project.cybershop.catalog.internal.entity.ProductStatus;
 import com.project.cybershop.catalog.internal.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;

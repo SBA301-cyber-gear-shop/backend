@@ -1,7 +1,7 @@
 package com.project.cybershop.aftersales.internal.service;
 
 import com.project.cybershop.identity.api.IdentityApi;
-import com.project.cybershop.identity.api.dto.UserDto;
+import com.project.cybershop.identity.api.dto.response.UserDto;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authentication.InsufficientAuthenticationException;

@@ -1,6 +1,6 @@
 package com.project.cybershop.identity.api;
 
-import com.project.cybershop.identity.api.dto.UserDto;
+import com.project.cybershop.identity.api.dto.response.UserDto;
 
 import java.util.Optional;
 

@@ -1,9 +1,9 @@
 package com.project.cybershop.aftersales.internal.service;
 
-import com.project.cybershop.aftersales.api.dto.MyServiceRequestDto;
-import com.project.cybershop.aftersales.api.dto.MyWarrantyCardDto;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestSummaryDto;
-import com.project.cybershop.aftersales.api.dto.WarrantyCardDto;
+import com.project.cybershop.aftersales.api.dto.response.MyServiceRequestDto;
+import com.project.cybershop.aftersales.api.dto.response.MyWarrantyCardDto;
+import com.project.cybershop.aftersales.api.dto.response.ServiceRequestSummaryDto;
+import com.project.cybershop.aftersales.api.dto.response.WarrantyCardDto;
 import com.project.cybershop.aftersales.internal.entity.Resolution;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequest;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequestEvent;
@@ -13,6 +13,7 @@ import com.project.cybershop.aftersales.internal.repository.OrderLookup.OrderInf
 import com.project.cybershop.aftersales.internal.repository.ServiceRequestEventRepository;
 import com.project.cybershop.aftersales.internal.repository.ServiceRequestRepository;
 import com.project.cybershop.aftersales.internal.repository.WarrantyCardRepository;
+import com.project.cybershop.aftersales.internal.mapper.AftersalesMapper;
 import com.project.cybershop.shared.exception.BusinessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

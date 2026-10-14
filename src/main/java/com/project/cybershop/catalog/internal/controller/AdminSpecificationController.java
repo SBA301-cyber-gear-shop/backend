@@ -1,7 +1,7 @@
 package com.project.cybershop.catalog.internal.controller;
 
-import com.project.cybershop.catalog.api.dto.CreateSpecificationRequest;
-import com.project.cybershop.catalog.api.dto.SpecificationResponse;
+import com.project.cybershop.catalog.api.dto.request.CreateSpecificationRequest;
+import com.project.cybershop.catalog.api.dto.response.SpecificationResponse;
 import com.project.cybershop.catalog.internal.service.SpecificationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

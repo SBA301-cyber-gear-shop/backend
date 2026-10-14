@@ -1,7 +1,7 @@
 package com.project.cybershop.catalog.internal.controller;
 
-import com.project.cybershop.catalog.api.dto.BrandResponse;
-import com.project.cybershop.catalog.api.dto.CreateBrandRequest;
+import com.project.cybershop.catalog.api.dto.response.BrandResponse;
+import com.project.cybershop.catalog.api.dto.request.CreateBrandRequest;
 import com.project.cybershop.catalog.internal.service.BrandService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

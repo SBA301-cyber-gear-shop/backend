@@ -1,7 +1,7 @@
 package com.project.cybershop.catalog.internal.controller;
 
-import com.project.cybershop.catalog.api.dto.CategoryResponse;
-import com.project.cybershop.catalog.api.dto.ProductResponse;
+import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
+import com.project.cybershop.catalog.api.dto.response.ProductResponse;
 import com.project.cybershop.catalog.internal.service.CategoryService;
 import com.project.cybershop.catalog.internal.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;

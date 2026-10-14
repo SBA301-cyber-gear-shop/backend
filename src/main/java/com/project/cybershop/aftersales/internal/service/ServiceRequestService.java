@@ -1,14 +1,14 @@
 package com.project.cybershop.aftersales.internal.service;
 
-import com.project.cybershop.aftersales.api.dto.AllowedTransitionDto;
-import com.project.cybershop.aftersales.api.dto.NoteRequest;
-import com.project.cybershop.aftersales.api.dto.RelinkCardRequest;
-import com.project.cybershop.aftersales.api.dto.ReplacementRequest;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestCreateRequest;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestDto;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestEventDto;
-import com.project.cybershop.aftersales.api.dto.ServiceRequestSummaryDto;
-import com.project.cybershop.aftersales.api.dto.TransitionRequest;
+import com.project.cybershop.aftersales.api.dto.response.AllowedTransitionDto;
+import com.project.cybershop.aftersales.api.dto.request.NoteRequest;
+import com.project.cybershop.aftersales.api.dto.request.RelinkCardRequest;
+import com.project.cybershop.aftersales.api.dto.request.ReplacementRequest;
+import com.project.cybershop.aftersales.api.dto.request.ServiceRequestCreateRequest;
+import com.project.cybershop.aftersales.api.dto.response.ServiceRequestDto;
+import com.project.cybershop.aftersales.api.dto.response.ServiceRequestEventDto;
+import com.project.cybershop.aftersales.api.dto.response.ServiceRequestSummaryDto;
+import com.project.cybershop.aftersales.api.dto.request.TransitionRequest;
 import com.project.cybershop.aftersales.internal.entity.Resolution;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequest;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequestEvent;
@@ -20,8 +20,9 @@ import com.project.cybershop.aftersales.internal.repository.ServiceRequestEventR
 import com.project.cybershop.aftersales.internal.repository.ServiceRequestRepository;
 import com.project.cybershop.aftersales.internal.repository.WarrantyCardRepository;
 import com.project.cybershop.aftersales.internal.service.CurrentUser.Principal;
+import com.project.cybershop.aftersales.internal.mapper.AftersalesMapper;
 import com.project.cybershop.identity.api.IdentityApi;
-import com.project.cybershop.identity.api.dto.UserDto;
+import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;

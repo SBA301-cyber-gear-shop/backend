@@ -1,7 +1,12 @@
 package com.project.cybershop.catalog.internal.service;
 
-import com.project.cybershop.catalog.api.dto.*;
+import com.project.cybershop.catalog.api.dto.request.AttributeValueInputDto;
+import com.project.cybershop.catalog.api.dto.request.CreateProductRequest;
+import com.project.cybershop.catalog.api.dto.request.CreateVariantDto;
+import com.project.cybershop.catalog.api.dto.response.ProductResponse;
+import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
 import com.project.cybershop.catalog.internal.entity.*;
+import com.project.cybershop.catalog.internal.mapper.CatalogMapper;
 import com.project.cybershop.catalog.internal.repository.*;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;

@@ -1,8 +1,9 @@
 package com.project.cybershop.catalog.internal.service;
 
-import com.project.cybershop.catalog.api.dto.BrandResponse;
-import com.project.cybershop.catalog.api.dto.CreateBrandRequest;
+import com.project.cybershop.catalog.api.dto.response.BrandResponse;
+import com.project.cybershop.catalog.api.dto.request.CreateBrandRequest;
 import com.project.cybershop.catalog.internal.entity.Brand;
+import com.project.cybershop.catalog.internal.mapper.CatalogMapper;
 import com.project.cybershop.catalog.internal.repository.BrandRepository;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
