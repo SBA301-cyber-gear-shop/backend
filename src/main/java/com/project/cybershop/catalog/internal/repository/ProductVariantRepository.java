@@ -22,6 +22,14 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     @Query("SELECT DISTINCT pv FROM ProductVariant pv " +
            "LEFT JOIN FETCH pv.attributeValues av " +
            "LEFT JOIN FETCH av.specification " +
+           "LEFT JOIN FETCH av.option " +
            "WHERE pv.id = :id")
     Optional<ProductVariant> findWithAttributesById(@Param("id") Integer id);
+
+    @Query("SELECT DISTINCT pv FROM ProductVariant pv " +
+           "LEFT JOIN FETCH pv.attributeValues av " +
+           "LEFT JOIN FETCH av.specification " +
+           "LEFT JOIN FETCH av.option " +
+           "WHERE pv.product.id = :productId")
+    List<ProductVariant> findWithAttributesByProductId(@Param("productId") Integer productId);
 }

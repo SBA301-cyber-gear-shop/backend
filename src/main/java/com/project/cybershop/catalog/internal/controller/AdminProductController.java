@@ -2,6 +2,7 @@ package com.project.cybershop.catalog.internal.controller;
 
 import com.project.cybershop.catalog.api.dto.request.CreateProductRequest;
 import com.project.cybershop.catalog.api.dto.request.CreateVariantDto;
+import com.project.cybershop.catalog.api.dto.request.UpdateVariantRequest;
 import com.project.cybershop.catalog.api.dto.response.ProductResponse;
 import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
 import com.project.cybershop.catalog.internal.entity.ProductStatus;
@@ -19,11 +20,14 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/products")
-@RequiredArgsConstructor
 @Tag(name = "Admin - Products", description = "Quản lý sản phẩm: tạo bản nháp, thêm biến thể SKU, gán thông số EAV và đăng bán")
 public class AdminProductController {
 
     private final ProductService productService;
+
+    public AdminProductController(ProductService productService) {
+        this.productService = productService;
+    }
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
@@ -39,6 +43,40 @@ public class AdminProductController {
             @PathVariable Integer id,
             @Valid @RequestBody CreateVariantDto variantDto) {
         return ResponseEntity.status(HttpStatus.CREATED).body(productService.addVariant(id, variantDto));
+    }
+
+    @GetMapping("/{id}/variants")
+    @Operation(summary = "Lấy danh sách các biến thể của sản phẩm")
+    public ResponseEntity<List<ProductVariantResponse>> getVariants(@PathVariable Integer id) {
+        return ResponseEntity.ok(productService.getVariantsByProductId(id));
+    }
+
+    @GetMapping("/{id}/variants/{variantId}")
+    @Operation(summary = "Xem chi tiết một biến thể cụ thể của sản phẩm")
+    public ResponseEntity<ProductVariantResponse> getVariantDetail(
+            @PathVariable Integer id,
+            @PathVariable Integer variantId) {
+        return ResponseEntity.ok(productService.getVariantById(id, variantId));
+    }
+
+    @PutMapping("/{id}/variants/{variantId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Cập nhật biến thể sản phẩm (SKU, giá bán, giá gốc, tồn kho, ảnh, thông số kỹ thuật)")
+    public ResponseEntity<ProductVariantResponse> updateVariant(
+            @PathVariable Integer id,
+            @PathVariable Integer variantId,
+            @Valid @RequestBody UpdateVariantRequest request) {
+        return ResponseEntity.ok(productService.updateVariant(id, variantId, request));
+    }
+
+    @DeleteMapping("/{id}/variants/{variantId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Xóa biến thể sản phẩm (Chặn xóa nếu đã phát sinh đơn hàng)")
+    public ResponseEntity<Void> deleteVariant(
+            @PathVariable Integer id,
+            @PathVariable Integer variantId) {
+        productService.deleteVariant(id, variantId);
+        return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/{id}/publish")
