@@ -70,6 +70,7 @@ public class CategoryService {
             catSpec.setIsFilterable(req.isFilterable() != null ? req.isFilterable() : false);
             catSpec.setIsPrimary(req.isPrimary() != null ? req.isPrimary() : false);
             catSpec.setShowInMenu(req.showInMenu() != null ? req.showInMenu() : false);
+            catSpec.setIsCompatibility(req.isCompatibility() != null ? req.isCompatibility() : false);
 
             savedSpecs.add(categorySpecRepository.save(catSpec));
         }

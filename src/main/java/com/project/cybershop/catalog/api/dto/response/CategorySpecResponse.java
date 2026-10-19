@@ -6,5 +6,6 @@ public record CategorySpecResponse(
     String specificationName,
     Boolean isFilterable,
     Boolean isPrimary,
-    Boolean showInMenu
+    Boolean showInMenu,
+    Boolean isCompatibility
 ) {}
