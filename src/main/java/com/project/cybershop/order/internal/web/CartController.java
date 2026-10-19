@@ -2,7 +2,7 @@
 package com.project.cybershop.order.internal.web;
 
 import com.project.cybershop.identity.api.IdentityApi;
-import com.project.cybershop.identity.api.dto.UserDto;
+import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.order.api.dto.AddToCartRequest;
 import com.project.cybershop.order.api.dto.UpdateCartItemRequest;
 import com.project.cybershop.order.internal.service.CartService;
