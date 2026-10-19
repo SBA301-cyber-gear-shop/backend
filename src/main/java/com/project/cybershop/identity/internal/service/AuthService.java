@@ -8,7 +8,8 @@ import com.project.cybershop.identity.internal.entity.Role;
 import com.project.cybershop.identity.internal.entity.User;
 import com.project.cybershop.identity.internal.repository.RoleRepository;
 import com.project.cybershop.identity.internal.repository.UserRepository;
-import com.project.cybershop.identity.internal.mapper.UserMapper;
+import com.project.cybershop.order.internal.entity.Cart;
+import com.project.cybershop.order.internal.repository.CartRepository;
 import com.project.cybershop.shared.config.JwtUtil;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
@@ -26,7 +27,20 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final UserMapper userMapper;
+    private final CartRepository cart;
 
+    public AuthService(UserRepository userRepository,
+                       RoleRepository roleRepository,
+                       PasswordEncoder passwordEncoder,
+                       JwtUtil jwtUtil,
+                       UserMapper userMapper, CartRepository cart) {
+        this.userRepository = userRepository;
+        this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtUtil = jwtUtil;
+        this.userMapper = userMapper;
+        this.cart = cart;
+    }
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -61,6 +75,7 @@ public class AuthService {
         }
 
         user = userRepository.save(user);
+        cart.save(new Cart());
 
         String token = jwtUtil.generateToken(user.getEmail(), user.getRole().getName());
 
