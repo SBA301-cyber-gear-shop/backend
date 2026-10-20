@@ -2,8 +2,10 @@ package com.project.cybershop.catalog.internal.service;
 
 import com.project.cybershop.catalog.api.CatalogPublicApi;
 import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.catalog.internal.entity.Brand;
 import com.project.cybershop.catalog.internal.entity.ProductVariant;
 import com.project.cybershop.catalog.internal.entity.SpecificationValue;
+import com.project.cybershop.catalog.internal.repository.BrandRepository;
 import com.project.cybershop.catalog.internal.repository.ProductVariantRepository;
 import com.project.cybershop.catalog.internal.repository.SpecificationValueRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ public class CatalogPublicApiImpl implements CatalogPublicApi {
 
     private final ProductVariantRepository variantRepository;
     private final SpecificationValueRepository specValueRepository;
+    private final BrandRepository brandRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -43,6 +46,8 @@ public class CatalogPublicApiImpl implements CatalogPublicApi {
         return variants.stream().map(pv -> ComponentCandidateDTO.builder()
                 .variantId(pv.getId())
                 .productId(pv.getProduct().getId())
+                .brandId(pv.getProduct().getBrand() != null ? pv.getProduct().getBrand().getId() : null)
+                .brandName(pv.getProduct().getBrand() != null ? pv.getProduct().getBrand().getName() : null)
                 .categoryId(pv.getProduct().getCategory() != null ? pv.getProduct().getCategory().getId() : null)
                 .categorySlug(pv.getProduct().getCategory() != null ? pv.getProduct().getCategory().getSlug() : "other")
                 .productName(pv.getProduct().getName())
@@ -63,5 +68,17 @@ public class CatalogPublicApiImpl implements CatalogPublicApi {
         return getActiveCandidatesForBuild().stream()
                 .filter(dto -> variantIds.contains(dto.getVariantId()))
                 .collect(Collectors.toMap(ComponentCandidateDTO::getVariantId, dto -> dto));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<String> getAllBrandNames() {
+        return brandRepository.findAll().stream()
+                .map(Brand::getName)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(name -> !name.isEmpty())
+                .distinct()
+                .toList();
     }
 }

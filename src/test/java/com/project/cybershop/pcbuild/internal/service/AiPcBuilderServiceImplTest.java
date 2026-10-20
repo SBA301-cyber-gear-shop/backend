@@ -100,7 +100,7 @@ class AiPcBuilderServiceImplTest {
         List<ComponentCandidateDTO> candidates = List.of(cpu, mb);
 
         when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(candidates);
-        when(heuristicService.filterCandidates(any(), any(), any())).thenReturn(candidates);
+        when(heuristicService.filterCandidates(any(), any(), any(), any(), any(), any())).thenReturn(candidates);
 
         LlmClientService.AiDraftProposal proposal = new LlmClientService.AiDraftProposal();
         proposal.setBuildName("Cấu hình Test");
@@ -122,12 +122,6 @@ class AiPcBuilderServiceImplTest {
         );
         when(validator.validate(any(), any())).thenReturn(validReport);
 
-        when(pcCustomRepository.save(any())).thenAnswer(inv -> {
-            PcCustom custom = inv.getArgument(0);
-            custom.setId(99);
-            return custom;
-        });
-
         AiBuildRequest request = AiBuildRequest.builder()
                 .budget(new BigDecimal("20000000"))
                 .purpose("gaming")
@@ -136,16 +130,12 @@ class AiPcBuilderServiceImplTest {
         var response = aiPcBuilderService.processAiBuild(request, 12);
 
         assertThat(response).isNotNull();
-        assertThat(response.getBuildId()).isEqualTo(99);
+        assertThat(response.getBuildId()).isNull();
         assertThat(response.isCompatible()).isTrue();
         assertThat(response.getTotalPrice()).isEqualByComparingTo(new BigDecimal("7700000"));
+        assertThat(response.getItems()).hasSize(2);
 
-        ArgumentCaptor<PcCustom> captor = ArgumentCaptor.forClass(PcCustom.class);
-        verify(pcCustomRepository).save(captor.capture());
-        PcCustom savedCustom = captor.getValue();
-        assertThat(savedCustom.getUserId()).isEqualTo(12);
-        assertThat(savedCustom.getTotalPrice()).isEqualByComparingTo(new BigDecimal("7700000"));
-        assertThat(savedCustom.getItems()).hasSize(2);
+        verify(pcCustomRepository, never()).save(any());
     }
 
     @Test
@@ -153,7 +143,7 @@ class AiPcBuilderServiceImplTest {
     void shouldReturnIncompatibleResponseWhenValidatorFails() {
         ComponentCandidateDTO cpu = createSamplePart(101, "cpu", "Intel Core i5 13400F", new BigDecimal("4500000"));
         when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(List.of(cpu));
-        when(heuristicService.filterCandidates(any(), any(), any())).thenReturn(List.of(cpu));
+        when(heuristicService.filterCandidates(any(), any(), any(), any(), any(), any())).thenReturn(List.of(cpu));
 
         LlmClientService.AiDraftProposal proposal = new LlmClientService.AiDraftProposal();
         proposal.setBuildName("Lỗi Cấu hình");
@@ -168,7 +158,6 @@ class AiPcBuilderServiceImplTest {
                 List.of("Lỗi socket")
         );
         when(validator.validate(any(), any())).thenReturn(invalidReport);
-        when(pcCustomRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         AiBuildRequest request = AiBuildRequest.builder()
                 .budget(new BigDecimal("10000000"))
@@ -179,5 +168,6 @@ class AiPcBuilderServiceImplTest {
 
         assertThat(response.isCompatible()).isFalse();
         assertThat(response.getChecks().get(0).isValid()).isFalse();
+        verify(pcCustomRepository, never()).save(any());
     }
 }

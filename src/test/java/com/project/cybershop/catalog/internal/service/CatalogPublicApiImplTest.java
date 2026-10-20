@@ -1,10 +1,12 @@
 package com.project.cybershop.catalog.internal.service;
 
+import com.project.cybershop.catalog.internal.entity.Brand;
 import com.project.cybershop.catalog.internal.entity.Category;
 import com.project.cybershop.catalog.internal.entity.Product;
 import com.project.cybershop.catalog.internal.entity.ProductVariant;
 import com.project.cybershop.catalog.internal.entity.Specification;
 import com.project.cybershop.catalog.internal.entity.SpecificationValue;
+import com.project.cybershop.catalog.internal.repository.BrandRepository;
 import com.project.cybershop.catalog.internal.repository.ProductVariantRepository;
 import com.project.cybershop.catalog.internal.repository.SpecificationValueRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +33,9 @@ class CatalogPublicApiImplTest {
     @Mock
     private SpecificationValueRepository specValueRepository;
 
+    @Mock
+    private BrandRepository brandRepository;
+
     @InjectMocks
     private CatalogPublicApiImpl catalogPublicApi;
 
@@ -52,9 +57,14 @@ class CatalogPublicApiImplTest {
         category.setSlug("cpu");
         category.setName("Bộ vi xử lý");
 
+        Brand brand = new Brand();
+        brand.setId(1);
+        brand.setName("Intel");
+
         Product product = new Product();
         product.setId(1);
         product.setCategory(category);
+        product.setBrand(brand);
         product.setName("Intel Core i5-13400F");
 
         ProductVariant pv = new ProductVariant();
@@ -84,6 +94,8 @@ class CatalogPublicApiImplTest {
         assertThat(dto.getVariantId()).isEqualTo(101);
         assertThat(dto.getCategorySlug()).isEqualTo("cpu");
         assertThat(dto.getProductName()).isEqualTo("Intel Core i5-13400F");
+        assertThat(dto.getBrandId()).isEqualTo(1);
+        assertThat(dto.getBrandName()).isEqualTo("Intel");
         assertThat(dto.getSpec("Socket")).isEqualTo("LGA1700");
     }
 
@@ -112,5 +124,17 @@ class CatalogPublicApiImplTest {
 
         assertThat(map).containsKey(104);
         assertThat(map.get(104).getProductName()).isEqualTo("RTX 4060");
+    }
+
+    @Test
+    @DisplayName("getAllBrandNames: Lấy toàn bộ tên thương hiệu từ Database bảng brands")
+    void shouldReturnAllBrandNamesFromDatabase() {
+        Brand b1 = new Brand(); b1.setId(1); b1.setName("Intel");
+        Brand b2 = new Brand(); b2.setId(2); b2.setName("Kingston");
+        when(brandRepository.findAll()).thenReturn(List.of(b1, b2));
+
+        var brands = catalogPublicApi.getAllBrandNames();
+
+        assertThat(brands).containsExactly("Intel", "Kingston");
     }
 }

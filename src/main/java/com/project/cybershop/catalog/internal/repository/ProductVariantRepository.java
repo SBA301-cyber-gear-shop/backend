@@ -28,6 +28,7 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     @Query("SELECT pv FROM ProductVariant pv " +
            "JOIN FETCH pv.product p " +
            "JOIN FETCH p.category c " +
+           "LEFT JOIN FETCH p.brand b " +
            "WHERE p.status = com.project.cybershop.catalog.internal.entity.ProductStatus.ACTIVE AND pv.stockQuantity > 0")
     List<ProductVariant> findAllActiveInStock();
 

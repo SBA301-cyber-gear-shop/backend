@@ -3,8 +3,11 @@ package com.project.cybershop.pcbuild.internal.controller;
 import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.pcbuild.api.dto.request.AiBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.AiBuildResponse;
 import com.project.cybershop.pcbuild.api.dto.response.CompatibleReplacementResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildDetailResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildSummaryResponse;
 import com.project.cybershop.pcbuild.internal.service.AiPcBuilderService;
 import com.project.cybershop.pcbuild.internal.service.PcCustomService;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
@@ -54,6 +57,26 @@ public class PcBuildController {
         return ResponseEntity.ok(ApiResponseDTO.success(list));
     }
 
+    @PostMapping("/save")
+    @Operation(summary = "Lưu cấu hình PC từ danh sách linh kiện đã chọn vào tài khoản")
+    public ResponseEntity<ApiResponseDTO<Integer>> saveCustomBuild(
+            @Valid @RequestBody SavePcBuildRequest request,
+            Principal principal
+    ) {
+        Integer userId = resolveUserId(principal);
+        if (userId == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    ApiResponseDTO.<Integer>builder()
+                            .status(HttpStatus.UNAUTHORIZED.value())
+                            .message("Vui lòng đăng nhập để lưu cấu hình")
+                            .data(null)
+                            .build()
+            );
+        }
+        Integer buildId = pcCustomService.saveNewBuild(request, userId);
+        return ResponseEntity.ok(ApiResponseDTO.success("Đã lưu cấu hình vào danh sách yêu thích của bạn", buildId));
+    }
+
     @PostMapping("/{buildId}/save")
     @Operation(summary = "Lưu cấu hình PC vào tài khoản khách hàng")
     public ResponseEntity<ApiResponseDTO<String>> saveBuild(
@@ -72,6 +95,65 @@ public class PcBuildController {
         }
         pcCustomService.saveBuildForUser(buildId, userId);
         return ResponseEntity.ok(ApiResponseDTO.success("Đã lưu cấu hình vào danh sách yêu thích của bạn", "OK"));
+    }
+
+    @GetMapping("/my-builds")
+    @Operation(summary = "Lấy danh sách các cấu hình PC đã lưu của người dùng hiện tại")
+    public ResponseEntity<ApiResponseDTO<List<SavedPcBuildSummaryResponse>>> getMySavedBuilds(
+            Principal principal
+    ) {
+        Integer userId = resolveUserId(principal);
+        if (userId == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    ApiResponseDTO.<List<SavedPcBuildSummaryResponse>>builder()
+                            .status(HttpStatus.UNAUTHORIZED.value())
+                            .message("Vui lòng đăng nhập để xem danh sách cấu hình đã lưu")
+                            .data(null)
+                            .build()
+            );
+        }
+        List<SavedPcBuildSummaryResponse> list = pcCustomService.getMySavedBuilds(userId);
+        return ResponseEntity.ok(ApiResponseDTO.success(list));
+    }
+
+    @GetMapping("/{buildId}")
+    @Operation(summary = "Xem chi tiết một cấu hình PC đã lưu theo buildId")
+    public ResponseEntity<ApiResponseDTO<SavedPcBuildDetailResponse>> getSavedBuildDetail(
+            @PathVariable Integer buildId,
+            Principal principal
+    ) {
+        Integer userId = resolveUserId(principal);
+        if (userId == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    ApiResponseDTO.<SavedPcBuildDetailResponse>builder()
+                            .status(HttpStatus.UNAUTHORIZED.value())
+                            .message("Vui lòng đăng nhập để xem chi tiết cấu hình")
+                            .data(null)
+                            .build()
+            );
+        }
+        SavedPcBuildDetailResponse detail = pcCustomService.getSavedBuildDetail(buildId, userId);
+        return ResponseEntity.ok(ApiResponseDTO.success(detail));
+    }
+
+    @DeleteMapping("/{buildId}")
+    @Operation(summary = "Xóa một cấu hình PC đã lưu")
+    public ResponseEntity<ApiResponseDTO<Void>> deleteSavedBuild(
+            @PathVariable Integer buildId,
+            Principal principal
+    ) {
+        Integer userId = resolveUserId(principal);
+        if (userId == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    ApiResponseDTO.<Void>builder()
+                            .status(HttpStatus.UNAUTHORIZED.value())
+                            .message("Vui lòng đăng nhập để thực hiện thao tác này")
+                            .data(null)
+                            .build()
+            );
+        }
+        pcCustomService.deleteSavedBuild(buildId, userId);
+        return ResponseEntity.ok(ApiResponseDTO.success("Đã xóa cấu hình PC thành công", null));
     }
 
     private Integer resolveUserId(Principal principal) {

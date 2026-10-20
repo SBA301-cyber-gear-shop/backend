@@ -8,4 +8,5 @@ import java.util.Map;
 public interface CatalogPublicApi {
     List<ComponentCandidateDTO> getActiveCandidatesForBuild();
     Map<Integer, ComponentCandidateDTO> getCandidateMapByIds(List<Integer> variantIds);
+    List<String> getAllBrandNames();
 }
