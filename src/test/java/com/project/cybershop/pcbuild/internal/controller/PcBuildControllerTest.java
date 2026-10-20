@@ -9,6 +9,9 @@ import com.project.cybershop.pcbuild.api.dto.response.CompatibleReplacementRespo
 import com.project.cybershop.pcbuild.internal.controller.PcBuildController;
 import com.project.cybershop.pcbuild.internal.service.AiPcBuilderService;
 import com.project.cybershop.pcbuild.internal.service.PcCustomService;
+import com.project.cybershop.identity.api.dto.response.UserDto;
+import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildDetailResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildSummaryResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,9 +23,12 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -111,5 +117,102 @@ class PcBuildControllerTest {
         mockMvc.perform(post("/api/v1/pc-build/10/save"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("Vui lòng đăng nhập để lưu cấu hình"));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/pc-build/save: Chưa đăng nhập -> HTTP 401")
+    void shouldReturn401WhenSaveCustomBuildNotLoggedIn() throws Exception {
+        mockMvc.perform(post("/api/v1/pc-build/save")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"buildName\":\"Test\",\"totalPrice\":10000000,\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":1,\"unitPrice\":10000000}]}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Vui lòng đăng nhập để lưu cấu hình"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/pc-build/my-builds: Chưa đăng nhập -> HTTP 401")
+    void shouldReturn401WhenGetMySavedBuildsNotLoggedIn() throws Exception {
+        mockMvc.perform(get("/api/v1/pc-build/my-builds"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Vui lòng đăng nhập để xem danh sách cấu hình đã lưu"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/pc-build/my-builds: Đã đăng nhập -> HTTP 200 và danh sách cấu hình")
+    void shouldReturn200AndListWhenGetMySavedBuildsLoggedIn() throws Exception {
+        when(identityApi.getUserByEmail("test@example.com"))
+                .thenReturn(Optional.of(UserDto.builder().id(10).email("test@example.com").build()));
+
+        SavedPcBuildSummaryResponse summary = SavedPcBuildSummaryResponse.builder()
+                .buildId(1)
+                .buildName("Bộ PC Intel i5-13400F & RTX 4060")
+                .totalPrice(new BigDecimal("18000000"))
+                .cpuName("Intel i5-13400F")
+                .gpuName("RTX 4060")
+                .itemCount(8)
+                .build();
+
+        when(pcCustomService.getMySavedBuilds(10)).thenReturn(List.of(summary));
+
+        mockMvc.perform(get("/api/v1/pc-build/my-builds")
+                        .principal(() -> "test@example.com"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(200))
+                .andExpect(jsonPath("$.data[0].buildId").value(1))
+                .andExpect(jsonPath("$.data[0].buildName").value("Bộ PC Intel i5-13400F & RTX 4060"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/pc-build/{buildId}: Chưa đăng nhập -> HTTP 401")
+    void shouldReturn401WhenGetSavedBuildDetailNotLoggedIn() throws Exception {
+        mockMvc.perform(get("/api/v1/pc-build/1"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Vui lòng đăng nhập để xem chi tiết cấu hình"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/pc-build/{buildId}: Đã đăng nhập -> HTTP 200 và chi tiết cấu hình")
+    void shouldReturn200AndDetailWhenGetSavedBuildDetailLoggedIn() throws Exception {
+        when(identityApi.getUserByEmail("test@example.com"))
+                .thenReturn(Optional.of(UserDto.builder().id(10).email("test@example.com").build()));
+
+        SavedPcBuildDetailResponse detail = SavedPcBuildDetailResponse.builder()
+                .buildId(1)
+                .buildName("Bộ PC Intel i5-13400F & RTX 4060")
+                .totalPrice(new BigDecimal("18000000"))
+                .items(List.of())
+                .build();
+
+        when(pcCustomService.getSavedBuildDetail(1, 10)).thenReturn(detail);
+
+        mockMvc.perform(get("/api/v1/pc-build/1")
+                        .principal(() -> "test@example.com"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(200))
+                .andExpect(jsonPath("$.data.buildId").value(1))
+                .andExpect(jsonPath("$.data.buildName").value("Bộ PC Intel i5-13400F & RTX 4060"));
+    }
+
+    @Test
+    @DisplayName("DELETE /api/v1/pc-build/{buildId}: Chưa đăng nhập -> HTTP 401")
+    void shouldReturn401WhenDeleteSavedBuildNotLoggedIn() throws Exception {
+        mockMvc.perform(delete("/api/v1/pc-build/1"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Vui lòng đăng nhập để thực hiện thao tác này"));
+    }
+
+    @Test
+    @DisplayName("DELETE /api/v1/pc-build/{buildId}: Đã đăng nhập -> HTTP 200 và xóa thành công")
+    void shouldReturn200WhenDeleteSavedBuildLoggedIn() throws Exception {
+        when(identityApi.getUserByEmail("test@example.com"))
+                .thenReturn(Optional.of(UserDto.builder().id(10).email("test@example.com").build()));
+
+        mockMvc.perform(delete("/api/v1/pc-build/1")
+                        .principal(() -> "test@example.com"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(200))
+                .andExpect(jsonPath("$.message").value("Đã xóa cấu hình PC thành công"));
+
+        verify(pcCustomService).deleteSavedBuild(1, 10);
     }
 }

@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class BudgetHeuristicServiceImpl implements BudgetHeuristicService {
@@ -48,8 +49,42 @@ public class BudgetHeuristicServiceImpl implements BudgetHeuristicService {
 
     @Override
     public List<ComponentCandidateDTO> filterCandidates(List<ComponentCandidateDTO> all, BigDecimal budget, String purpose) {
+        return filterCandidates(all, budget, purpose, null, null, null);
+    }
+
+    @Override
+    public List<ComponentCandidateDTO> filterCandidates(List<ComponentCandidateDTO> all, BigDecimal budget, String purpose, String userPrompt, Integer targetRamGb) {
+        return filterCandidates(all, budget, purpose, userPrompt, targetRamGb, null);
+    }
+
+    @Override
+    public List<ComponentCandidateDTO> filterCandidates(List<ComponentCandidateDTO> all, BigDecimal budget, String purpose, String userPrompt, Integer targetRamGb, List<String> availableBrandNames) {
         Map<String, PriceRange> ranges = calculateTargetRanges(budget, purpose);
         List<ComponentCandidateDTO> result = new ArrayList<>();
+
+        // Danh sách thương hiệu động: ưu tiên lấy từ DB, fallback trích xuất từ chính candidates
+        List<String> knownBrands;
+        if (availableBrandNames != null && !availableBrandNames.isEmpty()) {
+            knownBrands = new ArrayList<>(availableBrandNames);
+        } else {
+            knownBrands = all.stream()
+                    .map(ComponentCandidateDTO::getBrandName)
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(name -> !name.isEmpty())
+                    .distinct()
+                    .collect(Collectors.toCollection(ArrayList::new));
+        }
+
+        String promptLower = userPrompt != null ? userPrompt.toLowerCase(Locale.ROOT) : "";
+        List<String> requestedBrands = knownBrands.stream()
+                .filter(b -> {
+                    String bLower = b.toLowerCase(Locale.ROOT);
+                    if (promptLower.contains(bLower)) return true;
+                    if ("western digital".equals(bLower) && (promptLower.contains("wd") || promptLower.contains("w.d"))) return true;
+                    return false;
+                })
+                .toList();
 
         Map<String, List<ComponentCandidateDTO>> byCategory = new HashMap<>();
         for (ComponentCandidateDTO c : all) {
@@ -64,19 +99,81 @@ public class BudgetHeuristicServiceImpl implements BudgetHeuristicService {
             // Sắp xếp theo giá tăng dần
             list.sort(Comparator.comparing(ComponentCandidateDTO::getPrice));
 
-            if (range != null) {
-                List<ComponentCandidateDTO> matched = list.stream()
-                        .filter(p -> p.getPrice().doubleValue() >= range.min() * 0.7 
-                                  && p.getPrice().doubleValue() <= range.max() * 1.3)
-                        .limit(5)
-                        .toList();
-                if (!matched.isEmpty()) {
-                    result.addAll(matched);
-                    continue;
+            Set<Integer> addedVariantIds = new HashSet<>();
+            List<ComponentCandidateDTO> catResult = new ArrayList<>();
+
+            // 1. Ưu tiên hàng đầu: Các linh kiện thuộc thương hiệu khách hàng chỉ định (khớp brandName từ DB hoặc productName)
+            if (!requestedBrands.isEmpty()) {
+                for (ComponentCandidateDTO c : list) {
+                    String cBrandLower = c.getBrandName() != null ? c.getBrandName().toLowerCase(Locale.ROOT) : "";
+                    String pNameLower = c.getProductName() != null ? c.getProductName().toLowerCase(Locale.ROOT) : "";
+                    boolean brandMatch = requestedBrands.stream()
+                            .anyMatch(b -> {
+                                String bLower = b.toLowerCase(Locale.ROOT);
+                                return (!cBrandLower.isEmpty() && (cBrandLower.contains(bLower) || bLower.contains(cBrandLower)))
+                                        || pNameLower.contains(bLower)
+                                        || ("western digital".equals(bLower) && (cBrandLower.contains("wd") || pNameLower.contains("wd")));
+                            });
+                    if (brandMatch && c.getPrice().compareTo(budget) <= 0) {
+                        catResult.add(c);
+                        addedVariantIds.add(c.getVariantId());
+                        if (catResult.size() >= 3) break;
+                    }
                 }
             }
-            // Fallback lấy 4 sản phẩm tiêu biểu nhất
-            result.addAll(list.stream().limit(4).toList());
+
+            // 2. Với RAM: Ưu tiên thêm biến thể khớp dung lượng targetRamGb nếu có
+            if ("ram".equals(cat) && targetRamGb != null && targetRamGb > 0) {
+                String ramTargetStr = targetRamGb + "gb";
+                for (ComponentCandidateDTO c : list) {
+                    if (addedVariantIds.contains(c.getVariantId())) continue;
+                    String vName = c.getVariantName() != null ? c.getVariantName().toLowerCase(Locale.ROOT) : "";
+                    String pName = c.getProductName() != null ? c.getProductName().toLowerCase(Locale.ROOT) : "";
+                    String capSpec = c.getSpecs() != null ? c.getSpecs().get("Capacity_GB") : null;
+                    boolean capMatch = String.valueOf(targetRamGb).equals(capSpec)
+                            || vName.contains(ramTargetStr)
+                            || pName.contains(ramTargetStr);
+                    if (capMatch && c.getPrice().compareTo(budget) <= 0) {
+                        catResult.add(c);
+                        addedVariantIds.add(c.getVariantId());
+                        if (catResult.size() >= 5) break;
+                    }
+                }
+            }
+
+            // 3. Lọc theo dải ngân sách Heuristic
+            int maxPerCat = (promptLower.isEmpty() && targetRamGb == null) ? 5 : 8;
+            if (range != null) {
+                int remainingSlots = maxPerCat - catResult.size();
+                if (remainingSlots > 0) {
+                    List<ComponentCandidateDTO> matched = list.stream()
+                            .filter(p -> p.getPrice().doubleValue() >= range.min() * 0.7 
+                                      && p.getPrice().doubleValue() <= range.max() * 1.3)
+                            .filter(p -> !addedVariantIds.contains(p.getVariantId()))
+                            .limit(remainingSlots)
+                            .toList();
+                    for (ComponentCandidateDTO m : matched) {
+                        catResult.add(m);
+                        addedVariantIds.add(m.getVariantId());
+                    }
+                }
+            }
+
+            // 4. Fallback nếu vẫn chưa có đủ linh kiện
+            if (catResult.isEmpty()) {
+                int fallbackLimit = (promptLower.isEmpty() && targetRamGb == null) ? 4 : 5;
+                catResult.addAll(list.stream().limit(fallbackLimit).toList());
+            } else if (catResult.size() < 4) {
+                for (ComponentCandidateDTO c : list) {
+                    if (!addedVariantIds.contains(c.getVariantId())) {
+                        catResult.add(c);
+                        addedVariantIds.add(c.getVariantId());
+                        if (catResult.size() >= 4) break;
+                    }
+                }
+            }
+
+            result.addAll(catResult);
         }
         return result;
     }

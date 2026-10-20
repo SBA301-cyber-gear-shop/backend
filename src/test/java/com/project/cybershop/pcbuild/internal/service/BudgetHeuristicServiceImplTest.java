@@ -99,4 +99,40 @@ class BudgetHeuristicServiceImplTest {
 
         assertThat(filtered).hasSize(4); // Fallback 4 linh kiện đầu
     }
+
+    @Test
+    @DisplayName("Ưu tiên linh kiện của thương hiệu khách hàng chỉ định trong userPrompt")
+    void shouldPrioritizeUserRequestedBrand() {
+        List<ComponentCandidateDTO> all = new ArrayList<>();
+        // 5 RAM Corsair trong tầm giá
+        for (int i = 1; i <= 5; i++) {
+            all.add(ComponentCandidateDTO.builder()
+                    .variantId(i)
+                    .brandName("Corsair")
+                    .categorySlug("ram")
+                    .productName("Corsair Vengeance DDR5")
+                    .price(new BigDecimal(3_500_000 + i * 100_000))
+                    .build());
+        }
+        // 1 RAM Kingston giá thấp hơn dải giá thường nhưng đúng thương hiệu khách hàng muốn
+        all.add(ComponentCandidateDTO.builder()
+                .variantId(99)
+                .brandName("Kingston")
+                .categorySlug("ram")
+                .productName("Kingston FURY Beast DDR5")
+                .variantName("32GB 6000MT/s")
+                .price(new BigDecimal("2500000"))
+                .build());
+
+        List<ComponentCandidateDTO> filtered = heuristicService.filterCandidates(
+                all,
+                new BigDecimal("70000000"),
+                "gaming",
+                "Tôi muốn bộ PC của tôi phải có RAM của hãng Kingston",
+                32,
+                List.of("Kingston", "Corsair")
+        );
+
+        assertThat(filtered).anyMatch(c -> c.getVariantId().equals(99) && "Kingston".equals(c.getBrandName()));
+    }
 }

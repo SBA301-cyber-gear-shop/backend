@@ -1,17 +1,15 @@
 package com.project.cybershop.pcbuild.internal.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.project.cybershop.pcbuild.internal.service.LlmClientService;
+import com.project.cybershop.shared.exception.BusinessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.util.List;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-@DisplayName("LlmClientServiceImpl - Kiểm thử tích hợp AI Client & Mock Fallback")
+@DisplayName("LlmClientServiceImpl - Kiểm thử tích hợp AI Client & Xử lý lỗi không dùng Mockdata")
 class LlmClientServiceImplTest {
 
     private LlmClientServiceImpl llmClientService;
@@ -22,31 +20,22 @@ class LlmClientServiceImplTest {
     }
 
     @Test
-    @DisplayName("Khi không cấu hình API Key (null hoặc blank) -> Tự động gọi Mock Proposal an toàn")
-    void shouldReturnMockProposalWhenApiKeyIsMissing() {
+    @DisplayName("Khi không cấu hình API Key (null hoặc blank) -> Ném BusinessException thông báo rõ ràng")
+    void shouldThrowBusinessExceptionWhenApiKeyIsMissing() {
         ReflectionTestUtils.setField(llmClientService, "apiKey", "");
 
-        var proposal = llmClientService.generateBuildProposal("System prompt", "{}");
-
-        assertThat(proposal).isNotNull();
-        assertThat(proposal.getBuildName()).contains("Bạch Hổ");
-        assertThat(proposal.getSelectedParts()).hasSize(8);
-        assertThat(proposal.getPerformanceHighlight()).isNotEmpty();
+        assertThatThrownBy(() -> llmClientService.generateBuildProposal("System prompt", "{}"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Chưa cấu hình API Key");
     }
 
     @Test
-    @DisplayName("Kiểm tra tính toàn vẹn của Mock Proposal: Chứa đủ 8 vai trò linh kiện chính")
-    void shouldContainAllEightRolesInMockProposal() {
+    @DisplayName("Khi API Key là null -> Ném BusinessException yêu cầu cấu hình")
+    void shouldThrowBusinessExceptionWhenApiKeyIsNull() {
         ReflectionTestUtils.setField(llmClientService, "apiKey", null);
 
-        var proposal = llmClientService.generateBuildProposal("System prompt", "{}");
-
-        List<String> roles = proposal.getSelectedParts().stream()
-                .map(LlmClientService.AiDraftProposal.PartSelection::getRole)
-                .toList();
-
-        assertThat(roles).containsExactlyInAnyOrder(
-                "cpu", "mainboard", "ram", "gpu", "ssd", "psu", "case", "cooler"
-        );
+        assertThatThrownBy(() -> llmClientService.generateBuildProposal("System prompt", "{}"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Chưa cấu hình API Key");
     }
 }

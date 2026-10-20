@@ -16,6 +16,8 @@ import java.util.Map;
 public class ComponentCandidateDTO {
     private Integer variantId;
     private Integer productId;
+    private Integer brandId;
+    private String brandName;
     private Integer categoryId;   // ID danh mục linh kiện (1: cpu, 2: mainboard, 3: ram, 4: gpu, 5: ssd, 6: psu, 7: case, 8: cooler)
     private String categorySlug; // cpu, mainboard, ram, gpu, ssd, psu, case, cooler
     private String productName;
