@@ -3,6 +3,7 @@ package com.project.cybershop.catalog.internal.service;
 import com.project.cybershop.catalog.api.dto.request.AttributeValueInputDto;
 import com.project.cybershop.catalog.api.dto.request.CreateProductRequest;
 import com.project.cybershop.catalog.api.dto.request.CreateVariantDto;
+import com.project.cybershop.catalog.api.dto.request.UpdateProductRequest;
 import com.project.cybershop.catalog.api.dto.request.UpdateVariantRequest;
 import com.project.cybershop.catalog.api.dto.response.ProductResponse;
 import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
@@ -321,9 +322,64 @@ public class ProductService {
     }
 
     @Transactional(readOnly = true)
+    public List<ProductResponse> listAllProducts() {
+        return productRepository.findAllWithDetails().stream()
+                .map(catalogMapper::toProductResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public List<ProductResponse> listProductsByStatus(ProductStatus status) {
         return productRepository.findByStatus(status).stream()
                 .map(catalogMapper::toProductResponse)
                 .toList();
+    }
+
+    @Transactional
+    public ProductResponse updateProduct(Integer productId, UpdateProductRequest request) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm với ID: " + productId));
+
+        Brand brand = brandRepository.findById(request.brandId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thương hiệu với ID: " + request.brandId()));
+
+        Category category = categoryRepository.findById(request.categoryId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy danh mục với ID: " + request.categoryId()));
+
+        product.setName(request.name().trim());
+        product.setBrand(brand);
+        product.setCategory(category);
+        product.setWarrantyPeriodMonths(request.warrantyPeriodMonths());
+        product.setDescription(request.description());
+        if (request.status() != null) {
+            product.setStatus(request.status());
+        }
+
+        Product saved = productRepository.save(product);
+        return catalogMapper.toProductResponse(productRepository.findWithDetailsById(saved.getId()).orElse(saved));
+    }
+
+    @Transactional
+    public void deleteProduct(Integer productId) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm với ID: " + productId));
+
+        Number orderCount = (Number) em.createNativeQuery(
+                "SELECT COUNT(*) FROM order_items oi JOIN product_variants pv ON oi.product_variant_id = pv.id WHERE pv.product_id = :productId"
+        ).setParameter("productId", productId).getSingleResult();
+
+        if (orderCount != null && orderCount.longValue() > 0) {
+            throw new BusinessException("Không thể xóa sản phẩm '" + product.getName() +
+                    "' vì đã có biến thể phát sinh trong " + orderCount + " đơn hàng. Vui lòng chuyển trạng thái sang ARCHIVED thay vì xóa.");
+        }
+
+        try {
+            em.createNativeQuery("DELETE FROM cart_items WHERE product_variant_id IN (SELECT id FROM product_variants WHERE product_id = :productId)")
+                    .setParameter("productId", productId).executeUpdate();
+            em.createNativeQuery("DELETE FROM \"Cart_Items\" WHERE product_variant_id IN (SELECT id FROM product_variants WHERE product_id = :productId)")
+                    .setParameter("productId", productId).executeUpdate();
+        } catch (Exception ignored) {}
+
+        productRepository.delete(product);
     }
 }

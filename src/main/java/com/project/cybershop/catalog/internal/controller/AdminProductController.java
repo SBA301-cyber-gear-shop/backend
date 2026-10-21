@@ -2,6 +2,7 @@ package com.project.cybershop.catalog.internal.controller;
 
 import com.project.cybershop.catalog.api.dto.request.CreateProductRequest;
 import com.project.cybershop.catalog.api.dto.request.CreateVariantDto;
+import com.project.cybershop.catalog.api.dto.request.UpdateProductRequest;
 import com.project.cybershop.catalog.api.dto.request.UpdateVariantRequest;
 import com.project.cybershop.catalog.api.dto.response.ProductResponse;
 import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
@@ -92,13 +93,30 @@ public class AdminProductController {
         return ResponseEntity.ok(productService.getProductById(id));
     }
 
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Cập nhật thông tin chung sản phẩm")
+    public ResponseEntity<ProductResponse> updateProduct(
+            @PathVariable Integer id,
+            @Valid @RequestBody UpdateProductRequest request) {
+        return ResponseEntity.ok(productService.updateProduct(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Xóa sản phẩm (Chặn xóa nếu đã có biến thể trong đơn hàng)")
+    public ResponseEntity<Void> deleteProduct(@PathVariable Integer id) {
+        productService.deleteProduct(id);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping
-    @Operation(summary = "Danh sách sản phẩm theo trạng thái (DRAFT, ACTIVE, ARCHIVED)")
+    @Operation(summary = "Danh sách sản phẩm (Mặc định lấy tất cả; hỗ trợ lọc theo DRAFT, ACTIVE, ARCHIVED)")
     public ResponseEntity<List<ProductResponse>> listProducts(
             @RequestParam(required = false) ProductStatus status) {
         if (status != null) {
             return ResponseEntity.ok(productService.listProductsByStatus(status));
         }
-        return ResponseEntity.ok(productService.listProductsByStatus(ProductStatus.DRAFT));
+        return ResponseEntity.ok(productService.listAllProducts());
     }
 }
