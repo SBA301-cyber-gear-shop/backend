@@ -7,6 +7,6 @@ Danh sách module
 | `order` | `Orders`, `Order_Items` | Checkout, tính tiền đơn, điều phối mua hàng, trạng thái đơn, hủy và bàn giao |
 | `payment` | `Payment_methods`, `Payments` | Phương thức thanh toán, thanh toán online/tại quầy, xác minh kết quả |
 | `promotion` | `Promotions`, `Promotion_Usages`, `Banners` | Voucher, hạn mức, lượt sử dụng và banner |
-| `pcbuild` | `PC_Customs`, `PC_Custom_Items` | Build thủ công, kiểm tra tương thích, gợi ý AI và quản lý cấu hình |
+| `pcbuild` | `PC_Customs`, `PC_Custom_Items`, `Compatibility_rules` | Build thủ công, kiểm tra tương thích động, gợi ý AI và quản lý cấu hình |
 | `aftersales` | `Warranty_Cards`, `Service_requests`, `Service_request_events` | Thẻ bảo hành và xử lý bảo hành |
 | `review` | `Reviews` | Đánh giá sau mua |

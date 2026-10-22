@@ -32,4 +32,15 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
            "LEFT JOIN FETCH av.option " +
            "WHERE pv.product.id = :productId")
     List<ProductVariant> findWithAttributesByProductId(@Param("productId") Integer productId);
+    @Query("SELECT pv FROM ProductVariant pv " +
+           "JOIN FETCH pv.product p " +
+           "JOIN FETCH p.category c " +
+           "WHERE p.status = com.project.cybershop.catalog.internal.entity.ProductStatus.ACTIVE AND pv.stockQuantity > 0")
+    List<ProductVariant> findAllActiveInStock();
+
+    @Query("SELECT pv FROM ProductVariant pv " +
+           "JOIN FETCH pv.product p " +
+           "JOIN FETCH p.category c " +
+           "WHERE p.status = com.project.cybershop.catalog.internal.entity.ProductStatus.ACTIVE AND pv.stockQuantity > 0 AND c.id = :categoryId")
+    List<ProductVariant> findActiveByCategoryId(@Param("categoryId") Integer categoryId);
 }

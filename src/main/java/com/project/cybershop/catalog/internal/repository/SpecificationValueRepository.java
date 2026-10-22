@@ -19,4 +19,9 @@ public interface SpecificationValueRepository extends JpaRepository<Specificatio
     Optional<SpecificationValue> findByProductVariantIdAndSpecificationId(Integer variantId, Integer specificationId);
 
     void deleteByProductVariantId(Integer variantId);
+
+    @Query("SELECT sv FROM SpecificationValue sv " +
+           "JOIN FETCH sv.specification s " +
+           "WHERE sv.productVariant.id IN :variantIds")
+    List<SpecificationValue> findByProductVariantIdIn(@Param("variantIds") List<Integer> variantIds);
 }
