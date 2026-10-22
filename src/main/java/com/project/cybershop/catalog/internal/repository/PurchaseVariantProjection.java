@@ -11,4 +11,5 @@ public interface PurchaseVariantProjection {
     Integer getWarrantyPeriodMonths();
     String getStatus();
     Integer getStockQuantity();
+    String getImageUrl();
 }

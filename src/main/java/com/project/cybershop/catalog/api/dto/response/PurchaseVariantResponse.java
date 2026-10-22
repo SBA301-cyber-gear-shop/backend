@@ -9,6 +9,7 @@ public record PurchaseVariantResponse(
         BigDecimal price,
         Integer warrantyPeriodMonths,
         String status,
-        Integer stockQuantity
+        Integer stockQuantity,
+        String imageUrl
 ) {
 }

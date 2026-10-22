@@ -17,7 +17,8 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
             SELECT pv.id AS "variantId", p.name AS "productName",
                    pv.variant_name AS "variantName", pv.price AS "price",
                    p.warranty_period_months AS "warrantyPeriodMonths",
-                   p.status AS "status", pv.stock_quantity AS "stockQuantity"
+                   p.status AS "status", pv.stock_quantity AS "stockQuantity",
+                   pv.image_url AS "imageUrl"
             FROM product_variants pv
             JOIN products p ON p.id = pv.product_id
             WHERE pv.id = :variantId

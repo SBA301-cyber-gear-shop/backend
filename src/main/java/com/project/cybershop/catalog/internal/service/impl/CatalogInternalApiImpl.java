@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -69,6 +70,18 @@ public class CatalogInternalApiImpl implements CatalogInternalApi {
         PurchaseVariantProjection product = productVariantRepository.findPurchaseVariant(variantId)
                 .orElseThrow(() -> new BusinessException("Phiên bản sản phẩm không còn tồn tại."));
 
+        return toPurchaseVariantResponse(product);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<PurchaseVariantResponse> findActiveVariant(Integer variantId) {
+        return productVariantRepository.findPurchaseVariant(variantId)
+                .filter(product -> "active".equalsIgnoreCase(product.getStatus()))
+                .map(this::toPurchaseVariantResponse);
+    }
+
+    private PurchaseVariantResponse toPurchaseVariantResponse(PurchaseVariantProjection product) {
         return new PurchaseVariantResponse(
                 product.getVariantId(),
                 product.getProductName(),
@@ -76,7 +89,8 @@ public class CatalogInternalApiImpl implements CatalogInternalApi {
                 product.getPrice(),
                 product.getWarrantyPeriodMonths() == null ? 0 : product.getWarrantyPeriodMonths(),
                 product.getStatus(),
-                product.getStockQuantity() == null ? 0 : product.getStockQuantity()
+                product.getStockQuantity() == null ? 0 : product.getStockQuantity(),
+                product.getImageUrl()
         );
     }
 

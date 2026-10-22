@@ -58,6 +58,10 @@ Khóa user dùng chung với thay đổi giỏ; khóa phiên bản theo thứ t�
 
 ## Checkout và đơn hàng
 
+Giỏ hàng đọc sản phẩm qua `CartController → CartService → CartServiceImpl → CatalogInternalApi → ProductVariantRepository`. Module catalog dùng `products`/`product_variants` hiện có; không tạo lại `ProductLookup` hoặc entity sản phẩm trong module order. `findActiveVariant` trả giá, tên, ảnh và tồn kho hiện tại của phiên bản có sản phẩm đang `ACTIVE`; phiên bản không tồn tại hoặc sản phẩm ngừng bán trả về rỗng.
+
+Thêm/cập nhật giỏ kiểm tra sản phẩm và tồn kho; xem giỏ giữ dòng sản phẩm ngừng bán với `available=false` để khách xóa được. Thay đổi giỏ khóa user qua `IdentityApi.lockActiveUser`, dùng chung cơ chế với đặt hàng. Giỏ không giữ/trừ tồn; khi đặt hàng, `OrderServiceImpl` khóa phiên bản, đọc lại giá/tồn qua catalog rồi trừ tồn trong transaction tạo đơn. HTTP route và cấu trúc `CartResponse` giữ nguyên.
+
 `CheckoutServiceImpl` và `OrderServiceImpl` dùng cùng mẫu `Service interface → ServiceImpl → Repository → Entity`. Service chỉ kiểm tra nghiệp vụ, điều phối API giữa các module và quản lý transaction; không chứa SQL hoặc `JdbcTemplate`.
 
 - `Order` và `OrderItem` map đúng hai bảng `orders`, `order_items`; CRUD qua `OrderRepository`, `OrderItemRepository`.
