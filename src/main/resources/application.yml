@@ -10,6 +10,8 @@ spring:
     username: neondb_owner
     password: npg_E3lTM5aYOpNA
     driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
 
   # ==========================================
   # JPA / HIBERNATE

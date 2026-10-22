@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 @Entity
-@Table(name = "\"Carts\"")
+@Table(name = "carts")
 @NoArgsConstructor
 public class Cart {
 
