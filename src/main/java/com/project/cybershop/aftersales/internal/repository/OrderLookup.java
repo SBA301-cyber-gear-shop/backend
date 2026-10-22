@@ -22,10 +22,11 @@ public class OrderLookup {
 
     // shortcut: đọc thẳng bảng của module order và identity vì order chưa có API, thay bằng OrderApi khi có.
     private static final String FROM = """
-            FROM "Warranty_Cards" wc
-            JOIN "Order_Items" oi ON oi.id = wc.order_item_id
-            JOIN "Orders" o ON o.id = oi.order_id
-            JOIN "Users" u ON u.id = o.user_id
+            FROM warranty_cards wc
+            JOIN order_items oi ON oi.id = wc.order_item_id
+            JOIN product_variants pv ON pv.id = oi.product_variant_id
+            JOIN orders o ON o.id = oi.order_id
+            JOIN users u ON u.id = o.user_id
             """;
 
     private final EntityManager em;
@@ -40,7 +41,7 @@ public class OrderLookup {
             return result;
         }
         List<?> rows = em.createNativeQuery("""
-                        SELECT wc.id AS card_id, oi.id AS order_item_id, oi.product_name, oi.variant_name, oi.sku,
+                        SELECT wc.id AS card_id, oi.id AS order_item_id, oi.product_name, pv.variant_name, pv.serial_code,
                                oi.warranty_period_months, o.id AS order_id, o.order_code, o.pickup_name,
                                o.pickup_phone, u.id AS user_id, u.full_name, u.phone
                         """ + FROM + "WHERE wc.id IN (:ids)")
@@ -61,7 +62,7 @@ public class OrderLookup {
         return ids(em.createNativeQuery("SELECT wc.id AS card_id " + FROM + """
                         WHERE upper(wc.serial_number) = :q OR upper(o.order_code) = :q
                            OR u.phone = :q OR o.pickup_phone = :q
-                           OR EXISTS (SELECT 1 FROM "Service_requests" sr
+                           OR EXISTS (SELECT 1 FROM service_requests sr
                                       WHERE sr.warranty_card_id = wc.id AND upper(sr.request_code) = :q)
                         ORDER BY wc.id
                         """)
