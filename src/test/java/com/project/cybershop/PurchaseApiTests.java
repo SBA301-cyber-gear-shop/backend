@@ -136,6 +136,45 @@ class PurchaseApiTests {
     }
 
     @Test
+    void cartReadsCurrentDataFromTheExistingProductAndVariant() throws Exception {
+        addItem(101, 2);
+        jdbc.update("UPDATE products SET name='Kingston RAM mới', status='ACTIVE' WHERE id=10");
+        jdbc.update("UPDATE product_variants SET variant_name='16GB mới', price=1000000, image_url='new-ram.png', stock_quantity=2 WHERE id=101");
+
+        mvc.perform(get("/api/orders/cart").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].productVariantId").value(101))
+                .andExpect(jsonPath("$.data.items[0].productName").value("Kingston RAM mới"))
+                .andExpect(jsonPath("$.data.items[0].variantName").value("16GB mới"))
+                .andExpect(jsonPath("$.data.items[0].imageUrl").value("new-ram.png"))
+                .andExpect(jsonPath("$.data.items[0].unitPrice").value(1000000))
+                .andExpect(jsonPath("$.data.items[0].stockQuantity").value(2))
+                .andExpect(jsonPath("$.data.items[0].available").value(true))
+                .andExpect(jsonPath("$.data.totalAmount").value(2000000));
+    }
+
+    @Test
+    void cartRejectsMissingInactiveAndOutOfStockVariants() throws Exception {
+        mvc.perform(post("/api/orders/cart/items").header("Authorization", token)
+                .contentType("application/json").content("{\"productVariantId\":999,\"quantity\":1}"))
+                .andExpect(status().isNotFound());
+
+        for (String productStatus : new String[]{"DRAFT", "ARCHIVED"}) {
+            jdbc.update("UPDATE products SET status=? WHERE id=10", productStatus);
+            mvc.perform(post("/api/orders/cart/items").header("Authorization", token)
+                    .contentType("application/json").content("{\"productVariantId\":101,\"quantity\":1}"))
+                    .andExpect(status().isNotFound());
+        }
+
+        jdbc.update("UPDATE products SET status='ACTIVE' WHERE id=10");
+        jdbc.update("UPDATE product_variants SET stock_quantity=0 WHERE id=101");
+        mvc.perform(post("/api/orders/cart/items").header("Authorization", token)
+                .contentType("application/json").content("{\"productVariantId\":101,\"quantity\":1}"))
+                .andExpect(status().isBadRequest());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cart_items", Integer.class));
+    }
+
+    @Test
     void anotherCustomerCannotEditOrDeleteAnItem() throws Exception {
         addItem(101, 1);
         Integer itemId = jdbc.queryForObject("SELECT id FROM cart_items", Integer.class);
@@ -158,6 +197,17 @@ class PurchaseApiTests {
         jdbc.update("UPDATE products SET status='inactive' WHERE id=10");
         mvc.perform(get("/api/orders/cart").header("Authorization", token))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].available").value(false));
+        Integer itemId = jdbc.queryForObject("SELECT id FROM cart_items WHERE product_variant_id=101", Integer.class);
+        mvc.perform(put("/api/orders/cart/items/" + itemId).header("Authorization", token)
+                .contentType("application/json").content("{\"quantity\":1}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(delete("/api/orders/cart/items/" + itemId).header("Authorization", token))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/orders/cart").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].productVariantId").value(102));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cart_items WHERE id=?", Integer.class, itemId));
     }
 
     @Test

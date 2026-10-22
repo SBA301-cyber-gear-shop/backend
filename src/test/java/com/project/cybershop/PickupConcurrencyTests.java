@@ -70,6 +70,34 @@ class PickupConcurrencyTests {
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM cart_items",Integer.class));
     }
 
+    @Test
+    void concurrentRetriesWithTheSameKeyCreateOneOrderAndDeductStockOnce() throws Exception {
+        String key = UUID.randomUUID().toString();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+
+        try {
+            Callable<com.project.cybershop.order.api.dto.response.OrderResponse> placeOrder = () -> {
+                barrier.await(10, TimeUnit.SECONDS);
+                return orders.place("customer@techzone.demo", key, request(""));
+            };
+
+            Future<com.project.cybershop.order.api.dto.response.OrderResponse> firstAttempt = pool.submit(placeOrder);
+            Future<com.project.cybershop.order.api.dto.response.OrderResponse> retry = pool.submit(placeOrder);
+
+            assertEquals(firstAttempt.get(20, TimeUnit.SECONDS).id(), retry.get(20, TimeUnit.SECONDS).id());
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM orders", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_items", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments", Integer.class));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT stock_quantity FROM product_variants WHERE id=301", Integer.class
+        ));
+    }
+
     @Test void differentProductsStillCompeteForOneVoucherReservation() throws Exception {
         jdbc.update("UPDATE cart_items SET product_variant_id=302 WHERE cart_id=(SELECT id FROM carts WHERE user_id=?)",second);
         jdbc.update("INSERT INTO promotions (code,name,discount_type,discount_value,usage_limit,is_active,start_date,end_date) VALUES ('LAST','Last','fixed_amount',100000,1,TRUE,CURRENT_TIMESTAMP-INTERVAL '1' DAY,CURRENT_TIMESTAMP+INTERVAL '1' DAY)");

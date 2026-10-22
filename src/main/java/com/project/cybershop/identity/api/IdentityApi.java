@@ -5,6 +5,8 @@ import com.project.cybershop.identity.api.dto.response.UserDto;
 import java.util.Optional;
 
 public interface IdentityApi {
+    void lockActiveUser(Integer userId);
+
     default UserDto requireActiveUser(String email) {
         return getUserByEmail(email).filter(user -> Boolean.TRUE.equals(user.getIsActive()))
                 .orElseThrow(() -> new org.springframework.security.authentication.InsufficientAuthenticationException(

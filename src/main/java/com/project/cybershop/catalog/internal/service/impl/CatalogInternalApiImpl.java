@@ -2,6 +2,8 @@ package com.project.cybershop.catalog.internal.service.impl;
 
 import com.project.cybershop.catalog.api.CatalogInternalApi;
 import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
+import com.project.cybershop.catalog.api.dto.response.PurchaseVariantResponse;
+import com.project.cybershop.catalog.internal.repository.PurchaseVariantProjection;
 import com.project.cybershop.catalog.internal.entity.ProductVariant;
 import com.project.cybershop.catalog.internal.mapper.CatalogMapper;
 import com.project.cybershop.catalog.internal.repository.ProductVariantRepository;
@@ -10,6 +12,9 @@ import com.project.cybershop.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -29,26 +34,64 @@ public class CatalogInternalApiImpl implements CatalogInternalApi {
     @Override
     @Transactional
     public void deductStock(Integer variantId, int quantity) {
-        ProductVariant variant = productVariantRepository.findById(variantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy biến thể ID: " + variantId));
-
-        int currentStock = variant.getStockQuantity() != null ? variant.getStockQuantity() : 0;
-        if (currentStock < quantity) {
-            throw new BusinessException("Sản phẩm '" + variant.getVariantName() + "' không đủ số lượng tồn kho (Còn: " + currentStock + ", Cần: " + quantity + ")");
+        if (quantity <= 0) {
+            throw new BusinessException("Số lượng trừ tồn phải lớn hơn 0.");
         }
-        variant.setStockQuantity(currentStock - quantity);
-        productVariantRepository.save(variant);
+
+        if (productVariantRepository.deductAvailableStock(variantId, quantity) != 1) {
+            throw new BusinessException("Không đủ tồn kho cho phiên bản ID: " + variantId);
+        }
     }
 
     @Override
     @Transactional
     public void restoreStock(Integer variantId, int quantity) {
-        ProductVariant variant = productVariantRepository.findById(variantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy biến thể ID: " + variantId));
+        if (quantity <= 0) {
+            throw new BusinessException("Số lượng hoàn tồn phải lớn hơn 0.");
+        }
 
-        int currentStock = variant.getStockQuantity() != null ? variant.getStockQuantity() : 0;
-        variant.setStockQuantity(currentStock + quantity);
-        productVariantRepository.save(variant);
+        if (productVariantRepository.restoreAvailableStock(variantId, quantity) != 1) {
+            throw new ResourceNotFoundException("Không tìm thấy biến thể ID: " + variantId);
+        }
+    }
+
+    @Override
+    @Transactional
+    public void lockVariantsForPurchase(List<Integer> variantIds) {
+        // Khóa theo cùng thứ tự ID để các đơn nhiều sản phẩm không khóa chéo nhau.
+        for (Integer variantId : variantIds.stream().distinct().sorted().toList()) {
+            productVariantRepository.lockForPurchase(variantId);
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PurchaseVariantResponse getPurchaseVariant(Integer variantId) {
+        PurchaseVariantProjection product = productVariantRepository.findPurchaseVariant(variantId)
+                .orElseThrow(() -> new BusinessException("Phiên bản sản phẩm không còn tồn tại."));
+
+        return toPurchaseVariantResponse(product);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<PurchaseVariantResponse> findActiveVariant(Integer variantId) {
+        return productVariantRepository.findPurchaseVariant(variantId)
+                .filter(product -> "active".equalsIgnoreCase(product.getStatus()))
+                .map(this::toPurchaseVariantResponse);
+    }
+
+    private PurchaseVariantResponse toPurchaseVariantResponse(PurchaseVariantProjection product) {
+        return new PurchaseVariantResponse(
+                product.getVariantId(),
+                product.getProductName(),
+                product.getVariantName(),
+                product.getPrice(),
+                product.getWarrantyPeriodMonths() == null ? 0 : product.getWarrantyPeriodMonths(),
+                product.getStatus(),
+                product.getStockQuantity() == null ? 0 : product.getStockQuantity(),
+                product.getImageUrl()
+        );
     }
 
     @Override
