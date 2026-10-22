@@ -233,9 +233,6 @@ public class ProductService {
             em.createNativeQuery("DELETE FROM cart_items WHERE product_variant_id = :variantId")
                     .setParameter("variantId", variantId)
                     .executeUpdate();
-            em.createNativeQuery("DELETE FROM \"Cart_Items\" WHERE product_variant_id = :variantId")
-                    .setParameter("variantId", variantId)
-                    .executeUpdate();
         } catch (Exception ignored) {}
 
         productVariantRepository.delete(variant);
@@ -375,8 +372,6 @@ public class ProductService {
 
         try {
             em.createNativeQuery("DELETE FROM cart_items WHERE product_variant_id IN (SELECT id FROM product_variants WHERE product_id = :productId)")
-                    .setParameter("productId", productId).executeUpdate();
-            em.createNativeQuery("DELETE FROM \"Cart_Items\" WHERE product_variant_id IN (SELECT id FROM product_variants WHERE product_id = :productId)")
                     .setParameter("productId", productId).executeUpdate();
         } catch (Exception ignored) {}
 
