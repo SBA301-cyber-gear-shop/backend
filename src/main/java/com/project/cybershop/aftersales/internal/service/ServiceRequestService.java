@@ -342,6 +342,7 @@ public class ServiceRequestService {
         ServiceRequestEvent event = new ServiceRequestEvent();
         event.setServiceRequestId(request.getId());
         event.setActorId(actor.id());
+        event.setEventType(from == null ? "CREATED" : from != request.getStatus() ? "STATUS_CHANGED" : "NOTE_UPDATED");
         event.setFromStatus(from);
         event.setToStatus(request.getStatus());
         event.setInternalNote(internalNote);

@@ -2,6 +2,7 @@ package com.project.cybershop.shared.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -18,12 +19,13 @@ import java.util.List;
 
 /**
  * Cấu hình Security cho môi trường phát triển:
- * - Mở toàn bộ quyền truy cập permitAll() cho Swagger và API
+ * - Cho phép xem sản phẩm và Swagger công khai; giỏ hàng/checkout cần JWT
  * - Đính kèm JwtAuthenticationFilter để trích xuất user token khi có
  * - Kích hoạt CORS cho phép Frontend (localhost:5173, etc.) kết nối API
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
@@ -39,8 +41,14 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/orders/**", "/api/checkout/**", "/api/operations/**", "/api/order-items/**", "/api/me/**", "/api/admin/**").authenticated()
                         .anyRequest().permitAll()
                 )
+                .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) -> {
+                    response.setStatus(401);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write("{\"message\":\"Bạn cần đăng nhập để tiếp tục.\"}");
+                }))
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
