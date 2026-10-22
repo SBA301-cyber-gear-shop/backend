@@ -18,6 +18,7 @@ import java.util.List;
 public class SpecificationService {
 
     private final SpecificationRepository specificationRepository;
+    private final com.project.cybershop.catalog.internal.repository.SpecificationOptionRepository specificationOptionRepository;
     private final CatalogMapper catalogMapper;
 
     @Transactional
@@ -41,5 +42,31 @@ public class SpecificationService {
         Specification spec = specificationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông số với ID: " + id));
         return catalogMapper.toSpecResponse(spec);
+    }
+
+    @Transactional
+    public com.project.cybershop.catalog.api.dto.response.SpecificationOptionResponse addOption(
+            Integer specificationId,
+            com.project.cybershop.catalog.api.dto.request.CreateSpecificationOptionRequest request) {
+        Specification spec = specificationRepository.findById(specificationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông số với ID: " + specificationId));
+
+        if (specificationOptionRepository.existsBySpecificationIdAndCode(specificationId, request.code())) {
+            throw new BusinessException("Mã giá trị (code) '" + request.code() + "' đã tồn tại cho thông số này.");
+        }
+
+        com.project.cybershop.catalog.internal.entity.SpecificationOption option =
+                new com.project.cybershop.catalog.internal.entity.SpecificationOption(spec, request.code(), request.displayValue());
+        return catalogMapper.toSpecOptionResponse(specificationOptionRepository.save(option));
+    }
+
+    @Transactional(readOnly = true)
+    public List<com.project.cybershop.catalog.api.dto.response.SpecificationOptionResponse> getOptionsBySpecificationId(Integer specificationId) {
+        if (!specificationRepository.existsById(specificationId)) {
+            throw new ResourceNotFoundException("Không tìm thấy thông số với ID: " + specificationId);
+        }
+        return specificationOptionRepository.findBySpecificationId(specificationId).stream()
+                .map(catalogMapper::toSpecOptionResponse)
+                .toList();
     }
 }

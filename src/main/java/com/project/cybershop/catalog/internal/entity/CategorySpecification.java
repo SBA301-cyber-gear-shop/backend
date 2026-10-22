@@ -35,11 +35,19 @@ public class CategorySpecification {
     @Column(name = "show_in_menu")
     private Boolean showInMenu = false;
 
+    @Column(name = "is_compatibility")
+    private Boolean isCompatibility = false;
+
     public CategorySpecification(Category category, Specification specification, Boolean isFilterable, Boolean isPrimary, Boolean showInMenu) {
+        this(category, specification, isFilterable, isPrimary, showInMenu, false);
+    }
+
+    public CategorySpecification(Category category, Specification specification, Boolean isFilterable, Boolean isPrimary, Boolean showInMenu, Boolean isCompatibility) {
         this.category = category;
         this.specification = specification;
         this.isFilterable = isFilterable != null ? isFilterable : false;
         this.isPrimary = isPrimary != null ? isPrimary : false;
         this.showInMenu = showInMenu != null ? showInMenu : false;
+        this.isCompatibility = isCompatibility != null ? isCompatibility : false;
     }
 }

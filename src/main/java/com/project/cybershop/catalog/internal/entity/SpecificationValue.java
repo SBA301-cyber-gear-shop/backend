@@ -26,12 +26,21 @@ public class SpecificationValue {
     @JoinColumn(name = "specification_id", nullable = false)
     private Specification specification;
 
-    @Column(name = "value", nullable = false, columnDefinition = "TEXT")
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "option_id")
+    private SpecificationOption option;
+
+    @Column(name = "value", columnDefinition = "TEXT")
     private String value;
 
     public SpecificationValue(ProductVariant productVariant, Specification specification, String value) {
+        this(productVariant, specification, null, value);
+    }
+
+    public SpecificationValue(ProductVariant productVariant, Specification specification, SpecificationOption option, String value) {
         this.productVariant = productVariant;
         this.specification = specification;
+        this.option = option;
         this.value = value;
     }
 }

@@ -36,7 +36,6 @@ public class Product {
     @Column(name = "warranty_period_months", nullable = false)
     private Integer warrantyPeriodMonths;
 
-    @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 50)
     private ProductStatus status = ProductStatus.DRAFT;
 

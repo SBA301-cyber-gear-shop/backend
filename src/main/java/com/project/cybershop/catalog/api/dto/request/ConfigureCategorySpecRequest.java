@@ -7,5 +7,6 @@ public record ConfigureCategorySpecRequest(
     Integer specificationId,
     Boolean isFilterable,
     Boolean isPrimary,
-    Boolean showInMenu
+    Boolean showInMenu,
+    Boolean isCompatibility
 ) {}
