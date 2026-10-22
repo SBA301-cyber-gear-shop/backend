@@ -27,6 +27,10 @@ public class ServiceRequestEvent {
     @Column(name = "actor_id", nullable = false)
     private Integer actorId;
 
+    // CREATED, STATUS_CHANGED hoặc NOTE_UPDATED; suy ra từ from_status và to_status khi ghi.
+    @Column(name = "event_type", nullable = false, length = 50)
+    private String eventType;
+
     @Convert(converter = ServiceRequestStatus.JpaConverter.class)
     @Column(name = "from_status", length = 50)
     private ServiceRequestStatus fromStatus;
