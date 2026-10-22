@@ -50,8 +50,8 @@ public class CheckoutService {
                        pv."price" AS unit_price,
                        pv."stock_quantity" AS stock_quantity
                   FROM "Cart_Items" ci
-                  LEFT JOIN "Product_Variants" pv ON pv."id" = ci."product_variant_id"
-                  LEFT JOIN "Products" p ON p."id" = pv."product_id"
+                  LEFT JOIN product_variants pv ON pv.id = ci."product_variant_id"
+                  LEFT JOIN products p ON p.id = pv.product_id
                  WHERE ci."cart_id" = ?
                  ORDER BY ci."id"
                 """;

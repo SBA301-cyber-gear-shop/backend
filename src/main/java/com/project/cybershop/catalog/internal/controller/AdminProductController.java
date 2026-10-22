@@ -2,6 +2,8 @@ package com.project.cybershop.catalog.internal.controller;
 
 import com.project.cybershop.catalog.api.dto.request.CreateProductRequest;
 import com.project.cybershop.catalog.api.dto.request.CreateVariantDto;
+import com.project.cybershop.catalog.api.dto.request.UpdateProductRequest;
+import com.project.cybershop.catalog.api.dto.request.UpdateVariantRequest;
 import com.project.cybershop.catalog.api.dto.response.ProductResponse;
 import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
 import com.project.cybershop.catalog.internal.entity.ProductStatus;
@@ -19,11 +21,14 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/products")
-@RequiredArgsConstructor
 @Tag(name = "Admin - Products", description = "Quản lý sản phẩm: tạo bản nháp, thêm biến thể SKU, gán thông số EAV và đăng bán")
 public class AdminProductController {
 
     private final ProductService productService;
+
+    public AdminProductController(ProductService productService) {
+        this.productService = productService;
+    }
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
@@ -41,6 +46,40 @@ public class AdminProductController {
         return ResponseEntity.status(HttpStatus.CREATED).body(productService.addVariant(id, variantDto));
     }
 
+    @GetMapping("/{id}/variants")
+    @Operation(summary = "Lấy danh sách các biến thể của sản phẩm")
+    public ResponseEntity<List<ProductVariantResponse>> getVariants(@PathVariable Integer id) {
+        return ResponseEntity.ok(productService.getVariantsByProductId(id));
+    }
+
+    @GetMapping("/{id}/variants/{variantId}")
+    @Operation(summary = "Xem chi tiết một biến thể cụ thể của sản phẩm")
+    public ResponseEntity<ProductVariantResponse> getVariantDetail(
+            @PathVariable Integer id,
+            @PathVariable Integer variantId) {
+        return ResponseEntity.ok(productService.getVariantById(id, variantId));
+    }
+
+    @PutMapping("/{id}/variants/{variantId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Cập nhật biến thể sản phẩm (SKU, giá bán, giá gốc, tồn kho, ảnh, thông số kỹ thuật)")
+    public ResponseEntity<ProductVariantResponse> updateVariant(
+            @PathVariable Integer id,
+            @PathVariable Integer variantId,
+            @Valid @RequestBody UpdateVariantRequest request) {
+        return ResponseEntity.ok(productService.updateVariant(id, variantId, request));
+    }
+
+    @DeleteMapping("/{id}/variants/{variantId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Xóa biến thể sản phẩm (Chặn xóa nếu đã phát sinh đơn hàng)")
+    public ResponseEntity<Void> deleteVariant(
+            @PathVariable Integer id,
+            @PathVariable Integer variantId) {
+        productService.deleteVariant(id, variantId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PutMapping("/{id}/publish")
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Kiểm tra tính hợp lệ và Đăng bán sản phẩm (Chuyển DRAFT -> ACTIVE)")
@@ -54,13 +93,30 @@ public class AdminProductController {
         return ResponseEntity.ok(productService.getProductById(id));
     }
 
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Cập nhật thông tin chung sản phẩm")
+    public ResponseEntity<ProductResponse> updateProduct(
+            @PathVariable Integer id,
+            @Valid @RequestBody UpdateProductRequest request) {
+        return ResponseEntity.ok(productService.updateProduct(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Xóa sản phẩm (Chặn xóa nếu đã có biến thể trong đơn hàng)")
+    public ResponseEntity<Void> deleteProduct(@PathVariable Integer id) {
+        productService.deleteProduct(id);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping
-    @Operation(summary = "Danh sách sản phẩm theo trạng thái (DRAFT, ACTIVE, ARCHIVED)")
+    @Operation(summary = "Danh sách sản phẩm (Mặc định lấy tất cả; hỗ trợ lọc theo DRAFT, ACTIVE, ARCHIVED)")
     public ResponseEntity<List<ProductResponse>> listProducts(
             @RequestParam(required = false) ProductStatus status) {
         if (status != null) {
             return ResponseEntity.ok(productService.listProductsByStatus(status));
         }
-        return ResponseEntity.ok(productService.listProductsByStatus(ProductStatus.DRAFT));
+        return ResponseEntity.ok(productService.listAllProducts());
     }
 }

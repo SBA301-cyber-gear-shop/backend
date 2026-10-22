@@ -33,7 +33,18 @@ public class CatalogMapper {
                 cs.getSpecification().getName(),
                 cs.getIsFilterable(),
                 cs.getIsPrimary(),
-                cs.getShowInMenu()
+                cs.getShowInMenu(),
+                cs.getIsCompatibility()
+        );
+    }
+
+    public com.project.cybershop.catalog.api.dto.response.SpecificationOptionResponse toSpecOptionResponse(SpecificationOption opt) {
+        if (opt == null) return null;
+        return new com.project.cybershop.catalog.api.dto.response.SpecificationOptionResponse(
+                opt.getId(),
+                opt.getSpecification().getId(),
+                opt.getCode(),
+                opt.getDisplayValue()
         );
     }
 
@@ -61,10 +72,14 @@ public class CatalogMapper {
 
     public SpecificationValueResponse toSpecValueResponse(SpecificationValue sv) {
         if (sv == null) return null;
+        Integer optionId = sv.getOption() != null ? sv.getOption().getId() : null;
+        String optionCode = sv.getOption() != null ? sv.getOption().getCode() : null;
         return new SpecificationValueResponse(
                 sv.getId(),
                 sv.getSpecification().getId(),
                 sv.getSpecification().getName(),
+                optionId,
+                optionCode,
                 sv.getValue()
         );
     }
