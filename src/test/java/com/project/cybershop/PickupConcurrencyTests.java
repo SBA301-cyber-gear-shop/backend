@@ -48,14 +48,13 @@ class PickupConcurrencyTests {
 
     int race(String promo) throws Exception {
         var barrier=new CyclicBarrier(2);
-        var pool = Executors.newFixedThreadPool(2);
+        // ExecutorService chỉ là AutoCloseable từ Java 19; dự án biên dịch theo Java 17.
+        var pool=Executors.newFixedThreadPool(2);
         try {
             var a=pool.submit(()->attempt(barrier,"customer@techzone.demo",promo));
             var b=pool.submit(()->attempt(barrier,"parallel@example.com",promo));
             return (a.get(20,TimeUnit.SECONDS)?1:0)+(b.get(20,TimeUnit.SECONDS)?1:0);
-        } finally {
-            pool.shutdownNow();
-        }
+        } finally { pool.shutdownNow(); }
     }
 
     boolean attempt(CyclicBarrier barrier,String email,String promo) throws Exception {
