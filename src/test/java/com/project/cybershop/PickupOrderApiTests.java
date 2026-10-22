@@ -21,6 +21,7 @@ class PickupOrderApiTests {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired JwtUtil jwt;
+    @Autowired com.project.cybershop.order.internal.repository.CartItemRepository cartItemRepository;
     String customer, staff, code;
     int userId;
 
@@ -71,6 +72,41 @@ class PickupOrderApiTests {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].unitPrice").value(1000000))
                 .andExpect(jsonPath("$.items[0].productName").value("RAM · 16GB"))
                 .andExpect(jsonPath("$.paymentStatus").value("PENDING"));
+    }
+
+    @Test
+    void placementUsesTheCurrentCartQuantityAfterAnEarlierEntityRead() throws Exception {
+        Integer itemId = jdbc.queryForObject("SELECT id FROM cart_items", Integer.class);
+        assertEquals(2, cartItemRepository.findById(itemId).orElseThrow().getQuantity());
+        jdbc.update("UPDATE cart_items SET quantity=3 WHERE id=?", itemId);
+
+        String request = payload(0, "").replace("\"expectedTotal\":2000000", "\"expectedTotal\":3000000");
+        mvc.perform(post("/api/orders").header("Authorization", customer)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json").content(request))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.items[0].quantity").value(3))
+                .andExpect(jsonPath("$.items[0].subtotal").value(3000000))
+                .andExpect(jsonPath("$.finalAmount").value(3000000));
+
+        assertEquals(2, jdbc.queryForObject(
+                "SELECT stock_quantity FROM product_variants WHERE id=201", Integer.class
+        ));
+    }
+
+    @Test
+    void statusChangesRecheckTheDatabaseAfterAnEarlierOrderRead() throws Exception {
+        code = place(UUID.randomUUID().toString(), 0, "");
+        jdbc.update("UPDATE orders SET status='ready_for_pickup' WHERE order_code=?", code);
+
+        mvc.perform(patch("/api/operations/orders/" + code + "/status")
+                        .header("Authorization", staff)
+                        .contentType("application/json").content("{\"status\":\"confirmed\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertEquals("ready_for_pickup", jdbc.queryForObject(
+                "SELECT status FROM orders WHERE order_code=?", String.class, code
+        ));
     }
 
     @Test

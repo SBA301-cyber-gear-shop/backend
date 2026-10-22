@@ -50,6 +50,6 @@ app:
     expiration-ms: 86400000
   ai:
     provider: gemini
-    api-key: ${AI_API_KEY}
+    api-key: ${AI_API_KEY:}
     model: gemini-flash-lite-latest
     timeout-ms: 8000

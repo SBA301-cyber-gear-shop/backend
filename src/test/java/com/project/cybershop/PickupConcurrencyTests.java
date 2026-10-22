@@ -48,10 +48,13 @@ class PickupConcurrencyTests {
 
     int race(String promo) throws Exception {
         var barrier=new CyclicBarrier(2);
-        try(var pool=Executors.newFixedThreadPool(2)) {
+        var pool = Executors.newFixedThreadPool(2);
+        try {
             var a=pool.submit(()->attempt(barrier,"customer@techzone.demo",promo));
             var b=pool.submit(()->attempt(barrier,"parallel@example.com",promo));
             return (a.get(20,TimeUnit.SECONDS)?1:0)+(b.get(20,TimeUnit.SECONDS)?1:0);
+        } finally {
+            pool.shutdownNow();
         }
     }
 
@@ -66,6 +69,34 @@ class PickupConcurrencyTests {
         assertEquals(0,jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=301",Integer.class));
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM orders",Integer.class));
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM cart_items",Integer.class));
+    }
+
+    @Test
+    void concurrentRetriesWithTheSameKeyCreateOneOrderAndDeductStockOnce() throws Exception {
+        String key = UUID.randomUUID().toString();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+
+        try {
+            Callable<com.project.cybershop.order.api.dto.response.OrderResponse> placeOrder = () -> {
+                barrier.await(10, TimeUnit.SECONDS);
+                return orders.place("customer@techzone.demo", key, request(""));
+            };
+
+            Future<com.project.cybershop.order.api.dto.response.OrderResponse> firstAttempt = pool.submit(placeOrder);
+            Future<com.project.cybershop.order.api.dto.response.OrderResponse> retry = pool.submit(placeOrder);
+
+            assertEquals(firstAttempt.get(20, TimeUnit.SECONDS).id(), retry.get(20, TimeUnit.SECONDS).id());
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM orders", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_items", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments", Integer.class));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT stock_quantity FROM product_variants WHERE id=301", Integer.class
+        ));
     }
 
     @Test void differentProductsStillCompeteForOneVoucherReservation() throws Exception {
@@ -119,7 +150,8 @@ class PickupConcurrencyTests {
                         java.util.List.of(new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId, "REVIEW-RACE"))));
 
         var barrier = new CyclicBarrier(2);
-        try (var pool = Executors.newFixedThreadPool(2)) {
+        var pool = Executors.newFixedThreadPool(2);
+        try {
             var firstSave = pool.submit(() -> {
                 barrier.await(10, TimeUnit.SECONDS);
                 reviews.save("customer@techzone.demo", itemId,
@@ -134,6 +166,8 @@ class PickupConcurrencyTests {
             });
             firstSave.get(20, TimeUnit.SECONDS);
             secondSave.get(20, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
         }
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM reviews WHERE order_item_id=?", Integer.class, itemId));
         assertEquals(1, reviews.forVariant(301).size());

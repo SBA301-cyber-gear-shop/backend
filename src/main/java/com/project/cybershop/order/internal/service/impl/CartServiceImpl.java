@@ -9,7 +9,6 @@ import com.project.cybershop.order.internal.entity.Cart;
 import com.project.cybershop.order.internal.entity.CartItem;
 import com.project.cybershop.order.internal.repository.CartRepository;
 import com.project.cybershop.order.internal.repository.CartItemRepository;
-import com.project.cybershop.order.internal.repository.ProductLookup;
 
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;

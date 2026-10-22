@@ -6,6 +6,7 @@ import com.project.cybershop.identity.internal.repository.UserRepository;
 import com.project.cybershop.identity.internal.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
@@ -17,6 +18,14 @@ public class IdentityApiImpl implements IdentityApi {
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
+
+    @Override
+    @Transactional
+    public void lockActiveUser(Integer userId) {
+        if (userRepository.findActiveIdForUpdate(userId).isEmpty()) {
+            throw new InsufficientAuthenticationException("Tài khoản đã bị khóa.");
+        }
+    }
 
     @Override
     public Optional<UserDto> getUserById(Integer id) {

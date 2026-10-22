@@ -10,6 +10,14 @@ import java.util.Optional;
 
 @Repository
 public interface UserRepository extends JpaRepository<User, Integer> {
+
+    @Query(value = """
+            SELECT id FROM users
+            WHERE id = :userId AND is_active = true
+            FOR UPDATE
+            """, nativeQuery = true)
+    Optional<Integer> findActiveIdForUpdate(@Param("userId") Integer userId);
+
     Optional<User> findByEmailIgnoreCase(String email);
     Optional<User> findByPhone(String phone);
     boolean existsByEmailIgnoreCase(String email);
