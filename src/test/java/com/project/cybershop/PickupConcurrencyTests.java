@@ -48,11 +48,13 @@ class PickupConcurrencyTests {
 
     int race(String promo) throws Exception {
         var barrier=new CyclicBarrier(2);
-        try(var pool=Executors.newFixedThreadPool(2)) {
+        // ExecutorService chỉ là AutoCloseable từ Java 19; dự án biên dịch theo Java 17.
+        var pool=Executors.newFixedThreadPool(2);
+        try {
             var a=pool.submit(()->attempt(barrier,"customer@techzone.demo",promo));
             var b=pool.submit(()->attempt(barrier,"parallel@example.com",promo));
             return (a.get(20,TimeUnit.SECONDS)?1:0)+(b.get(20,TimeUnit.SECONDS)?1:0);
-        }
+        } finally { pool.shutdownNow(); }
     }
 
     boolean attempt(CyclicBarrier barrier,String email,String promo) throws Exception {
@@ -119,7 +121,8 @@ class PickupConcurrencyTests {
                         java.util.List.of(new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId, "REVIEW-RACE"))));
 
         var barrier = new CyclicBarrier(2);
-        try (var pool = Executors.newFixedThreadPool(2)) {
+        var pool = Executors.newFixedThreadPool(2);
+        try {
             var firstSave = pool.submit(() -> {
                 barrier.await(10, TimeUnit.SECONDS);
                 reviews.save("customer@techzone.demo", itemId,
@@ -134,6 +137,8 @@ class PickupConcurrencyTests {
             });
             firstSave.get(20, TimeUnit.SECONDS);
             secondSave.get(20, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
         }
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM reviews WHERE order_item_id=?", Integer.class, itemId));
         assertEquals(1, reviews.forVariant(301).size());
