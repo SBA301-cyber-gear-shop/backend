@@ -40,8 +40,8 @@ public class ProductLookup {
                     pv.stock_quantity,
                     pv.image_url,
                     p.warranty_period_months
-                FROM product_variants pv
-                JOIN products p
+                FROM "product_variants" pv
+                JOIN "products" p
                     ON pv.product_id = p.id
                 WHERE p.status = 'active'
                 ORDER BY p.id, pv.id
@@ -65,8 +65,8 @@ public class ProductLookup {
                     pv.stock_quantity,
                     pv.image_url,
                     p.warranty_period_months
-                FROM product_variants pv
-                JOIN products p
+                FROM "product_variants" pv
+                JOIN "products" p
                     ON pv.product_id = p.id
                 WHERE p.status = 'active'
                   AND (
@@ -101,8 +101,8 @@ public class ProductLookup {
                     pv.stock_quantity,
                     pv.image_url,
                     p.warranty_period_months
-                FROM product_variants pv
-                JOIN products p
+                FROM "product_variants" pv
+                JOIN "products" p
                     ON pv.product_id = p.id
                 WHERE pv.id = :variantId
                   AND p.status = 'active'

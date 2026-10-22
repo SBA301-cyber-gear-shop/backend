@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 @Entity
-@Table(name = "\"Cart_Items\"")
+@Table(name = "cart_items")
 @NoArgsConstructor
 public class CartItem {
 
