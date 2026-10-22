@@ -40,9 +40,14 @@ server:
   port: 8080
 
 # ==========================================
-# JWT
+# JWT & AI ENGINE
 # ==========================================
 app:
   jwt:
     secret: cybershop_super_secret_jwt_key_2026_sba301_project_dev
     expiration-ms: 86400000
+  ai:
+    provider: gemini
+    api-key: ${AI_API_KEY}
+    model: gemini-flash-lite-latest
+    timeout-ms: 8000
