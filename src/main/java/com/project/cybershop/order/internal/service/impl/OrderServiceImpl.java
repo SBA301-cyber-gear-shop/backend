@@ -50,7 +50,7 @@ public class OrderServiceImpl implements OrderService {
             throw new org.springframework.security.authentication.InsufficientAuthenticationException("Tài khoản đã bị khóa.");
         var previous = jdbc.queryForList("SELECT id,user_id FROM orders WHERE order_code=?", code);
         if (!previous.isEmpty()) {
-            if (((Number) previous.getFirst().get("user_id")).intValue() != user.getId()) throw missing();
+            if (((Number) previous.get(0).get("user_id")).intValue() != user.getId()) throw missing();
             return read(code, user.getId());
         }
         if (!"store".equals(request.method())) throw new BusinessException("Hiện hỗ trợ thanh toán tại cửa hàng. Cổng thanh toán online chưa được cấu hình.");
@@ -61,7 +61,7 @@ public class OrderServiceImpl implements OrderService {
         }
         var carts = jdbc.queryForList("SELECT id FROM carts WHERE user_id=? FOR UPDATE", Integer.class, user.getId());
         if (carts.isEmpty()) throw new BusinessException("Giỏ hàng đang trống.");
-        int cartId = carts.getFirst();
+        int cartId = carts.get(0);
         var rows = jdbc.query("SELECT product_variant_id,quantity FROM cart_items WHERE cart_id=? ORDER BY product_variant_id,id FOR UPDATE",
                 (rs, i) -> new CartLine(rs.getInt(1), rs.getInt(2)), cartId);
         if (rows.isEmpty()) throw new BusinessException("Giỏ hàng đang trống.");
@@ -87,7 +87,7 @@ public class OrderServiceImpl implements OrderService {
                     FROM product_variants pv JOIN products p ON p.id=pv.product_id WHERE pv.id=?
                     """, (rs, i) -> new Snapshot(rs.getString(1), rs.getString(2), rs.getBigDecimal(3), rs.getInt(4), rs.getString(5), rs.getInt(6)), entry.getKey());
             if (snapshot.size() != 1) throw new BusinessException("Phiên bản sản phẩm không còn tồn tại.");
-            var product = snapshot.getFirst();
+            var product = snapshot.get(0);
             if (!"active".equalsIgnoreCase(product.status) || product.stock < entry.getValue() || product.warranty < 0)
                 throw new BusinessException("Sản phẩm không còn đủ điều kiện đặt mua: " + product.name);
             int changed = jdbc.update("UPDATE product_variants SET stock_quantity=stock_quantity-? WHERE id=? AND stock_quantity>=?",
@@ -248,12 +248,12 @@ public class OrderServiceImpl implements OrderService {
                     (Integer) line.getObject("rating"), line.getString("review_comment")), id);
             return new OrderResponse(id, rs.getString("order_code"), rs.getInt("user_id"), rs.getString("status"),
                     rs.getString("pickup_name"), rs.getString("pickup_phone"), rs.getString("note"), rs.getBigDecimal("total_amount"),
-                    rs.getBigDecimal("discount_amount"), rs.getBigDecimal("final_amount"), promotionsUsed.isEmpty() ? null : promotionsUsed.getFirst(),
+                    rs.getBigDecimal("discount_amount"), rs.getBigDecimal("final_amount"), promotionsUsed.isEmpty() ? null : promotionsUsed.get(0),
                     payment.status(), payment.methodType(), rs.getObject("created_at", LocalDateTime.class),
                     rs.getObject("updated_at", LocalDateTime.class), payment.paidAt(), items);
         }, userId == null ? new Object[]{code} : new Object[]{code,userId});
         if (orders.isEmpty()) throw missing();
-        return orders.getFirst();
+        return orders.get(0);
     }
 
     private static ResourceNotFoundException missing() { return new ResourceNotFoundException("Không tìm thấy đơn hàng."); }

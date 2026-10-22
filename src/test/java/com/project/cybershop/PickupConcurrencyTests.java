@@ -96,7 +96,7 @@ class PickupConcurrencyTests {
         var order=orders.place("customer@techzone.demo",UUID.randomUUID().toString(),request);
         for(String status : new String[]{"confirmed","preparing","ready_for_pickup"}) orders.advance("staff@techzone.demo",order.orderCode(),status);
         orders.collect("staff@techzone.demo",order.orderCode(),new com.project.cybershop.order.api.dto.request.CollectPaymentRequest(new BigDecimal("2000000"),null));
-        int itemId=order.items().getFirst().id();
+        int itemId=order.items().get(0).id();
         jdbc.update("INSERT INTO warranty_cards (order_item_id,serial_number,start_date,end_date,status) VALUES (?,'ALREADY-USED',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'active')",itemId);
         var devices=java.util.List.of(new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId,"FIRST-NEW"),
                 new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId,"ALREADY-USED"));
@@ -113,7 +113,7 @@ class PickupConcurrencyTests {
         }
         orders.collect("staff@techzone.demo", order.orderCode(),
                 new com.project.cybershop.order.api.dto.request.CollectPaymentRequest(new BigDecimal("1000000"), null));
-        int itemId = order.items().getFirst().id();
+        int itemId = order.items().get(0).id();
         orders.handover("staff@techzone.demo", order.orderCode(),
                 new com.project.cybershop.order.api.dto.request.HandoverRequest("0900000128", true,
                         java.util.List.of(new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId, "REVIEW-RACE"))));
