@@ -39,7 +39,7 @@ public class ReviewServiceImpl implements ReviewService {
         if (statuses.isEmpty()) {
             throw new ResourceNotFoundException("Không tìm thấy dòng hàng đã mua.");
         }
-        if (!"completed".equals(statuses.getFirst())) {
+        if (!"completed".equals(statuses.get(0))) {
             throw new BusinessException("Chỉ được đánh giá sau khi đã nhận hàng.");
         }
         if (request.rating() == null || request.rating() < 1 || request.rating() > 5

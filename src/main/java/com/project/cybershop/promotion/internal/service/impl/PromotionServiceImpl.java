@@ -57,7 +57,7 @@ public class PromotionServiceImpl implements PromotionService {
             throw new BusinessException("Mã voucher bị trùng trong hệ thống.");
         }
 
-        PromotionTerms promotion = matches.getFirst();
+        PromotionTerms promotion = matches.get(0);
         LocalDateTime now = LocalDateTime.now(clock);
         if (!Boolean.TRUE.equals(promotion.active())
                 || now.isBefore(promotion.startDate())
