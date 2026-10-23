@@ -12,11 +12,6 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
-#  datasource:
-#    url: jdbc:postgresql://localhost:5432/SBA301_WebPC
-#    username: postgres
-#    password: 12345
-#    driver-class-name: org.postgresql.Driver
 
   # ==========================================
   # JPA / HIBERNATE
@@ -55,6 +50,6 @@ app:
     expiration-ms: 86400000
   ai:
     provider: gemini
-    api-key: ${AI_API_KEY:AQ.Ab8RN6IZdHtNUX9YJGvIZ-Nce3n3LXNdhUWNs4ZsDYAM4fYOHQ}
+    api-key: ${AI_API_KEY:}
     model: gemini-flash-lite-latest
     timeout-ms: 8000
