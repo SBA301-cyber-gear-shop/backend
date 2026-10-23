@@ -20,7 +20,10 @@ public class AiBuildResponse {
     private BigDecimal budget;
     private String aiReasoning;
     private String performanceHighlight;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("isCompatible")
     private boolean isCompatible;
+
     private List<CompatibilityCheckResponse> checks;
     private List<SelectedPartResponse> items;
 }
