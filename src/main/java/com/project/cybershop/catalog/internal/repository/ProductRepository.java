@@ -19,7 +19,7 @@ public interface ProductRepository extends JpaRepository<Product, Integer>, JpaS
            "LEFT JOIN FETCH p.brand " +
            "LEFT JOIN FETCH p.category " +
            "WHERE p.status = :status " +
-           "ORDER BY p.id DESC")
+           "ORDER BY p.id ASC")
     List<Product> findByStatusWithDetails(@Param("status") ProductStatus status);
 
     List<Product> findByStatus(ProductStatus status);
@@ -39,6 +39,6 @@ public interface ProductRepository extends JpaRepository<Product, Integer>, JpaS
            "LEFT JOIN FETCH p.variants v " +
            "LEFT JOIN FETCH p.brand " +
            "LEFT JOIN FETCH p.category " +
-           "ORDER BY p.id DESC")
+           "ORDER BY p.id ASC")
     List<Product> findAllWithDetails();
 }
