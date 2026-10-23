@@ -226,14 +226,37 @@ public class PcCustomServiceImpl implements PcCustomService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<CompatibleReplacementResponse> getCompatibleReplacements(String role, Integer currentCpuId, Integer currentMbId) {
+    public List<CompatibleReplacementResponse> getCompatibleReplacements(
+            String role,
+            Integer currentCpuId,
+            Integer currentMbId,
+            Integer currentRamId,
+            Integer currentGpuId,
+            Integer currentCaseId,
+            Integer currentCoolerId,
+            Integer currentPsuId
+    ) {
         List<ComponentCandidateDTO> candidates = catalogPublicApi.getActiveCandidatesForBuild();
         List<Integer> idsToFetch = new java.util.ArrayList<>();
         if (currentCpuId != null) idsToFetch.add(currentCpuId);
         if (currentMbId != null) idsToFetch.add(currentMbId);
-        Map<Integer, ComponentCandidateDTO> map = catalogPublicApi.getCandidateMapByIds(idsToFetch);
+        if (currentRamId != null) idsToFetch.add(currentRamId);
+        if (currentGpuId != null) idsToFetch.add(currentGpuId);
+        if (currentCaseId != null) idsToFetch.add(currentCaseId);
+        if (currentCoolerId != null) idsToFetch.add(currentCoolerId);
+        if (currentPsuId != null) idsToFetch.add(currentPsuId);
+
+        Map<Integer, ComponentCandidateDTO> map = idsToFetch.isEmpty()
+                ? Collections.emptyMap()
+                : catalogPublicApi.getCandidateMapByIds(idsToFetch);
+
         ComponentCandidateDTO cpu = currentCpuId != null ? map.get(currentCpuId) : null;
         ComponentCandidateDTO mb = currentMbId != null ? map.get(currentMbId) : null;
+        ComponentCandidateDTO ram = currentRamId != null ? map.get(currentRamId) : null;
+        ComponentCandidateDTO gpu = currentGpuId != null ? map.get(currentGpuId) : null;
+        ComponentCandidateDTO pcCase = currentCaseId != null ? map.get(currentCaseId) : null;
+        ComponentCandidateDTO cooler = currentCoolerId != null ? map.get(currentCoolerId) : null;
+        ComponentCandidateDTO psu = currentPsuId != null ? map.get(currentPsuId) : null;
 
         return candidates.stream()
                 .filter(c -> c.getCategorySlug().equalsIgnoreCase(role))
@@ -241,20 +264,128 @@ public class PcCustomServiceImpl implements PcCustomService {
                     boolean ok = true;
                     String note = "Tương thích tốt";
 
+                    // 1. Kiểm tra Socket CPU vs Mainboard
                     if ("mainboard".equalsIgnoreCase(role) && cpu != null) {
                         String cpuSocket = cpu.getSpec("Socket");
                         String mbSocket = c.getSpec("Socket");
-                        if (cpuSocket != null && !cpuSocket.equalsIgnoreCase(mbSocket)) {
+                        if (cpuSocket != null && mbSocket != null && !cpuSocket.equalsIgnoreCase(mbSocket)) {
                             ok = false;
                             note = "Lệch socket với CPU (Cần " + cpuSocket + ")";
                         }
                     } else if ("cpu".equalsIgnoreCase(role) && mb != null) {
                         String mbSocket = mb.getSpec("Socket");
                         String cpuSocket = c.getSpec("Socket");
-                        if (mbSocket != null && !mbSocket.equalsIgnoreCase(cpuSocket)) {
+                        if (mbSocket != null && cpuSocket != null && !mbSocket.equalsIgnoreCase(cpuSocket)) {
                             ok = false;
                             note = "Lệch socket với Bo mạch (Cần " + mbSocket + ")";
                         }
+                    }
+
+                    // 2. Kiểm tra chuẩn RAM (Memory_Type: DDR4 / DDR5)
+                    if (ok && "ram".equalsIgnoreCase(role) && mb != null) {
+                        String mbRamType = mb.getSpec("Memory_Type");
+                        String ramType = c.getSpec("Memory_Type");
+                        if (mbRamType != null && ramType != null && !mbRamType.equalsIgnoreCase(ramType)) {
+                            ok = false;
+                            note = "Lệch chuẩn RAM: Bo mạch dùng " + mbRamType + " (RAM này là " + ramType + ")";
+                        }
+                    } else if (ok && "mainboard".equalsIgnoreCase(role) && ram != null) {
+                        String mbRamType = c.getSpec("Memory_Type");
+                        String ramType = ram.getSpec("Memory_Type");
+                        if (mbRamType != null && ramType != null && !mbRamType.equalsIgnoreCase(ramType)) {
+                            ok = false;
+                            note = "Lệch chuẩn RAM: Bo mạch này dùng " + mbRamType + " (RAM đang chọn là " + ramType + ")";
+                        }
+                    }
+
+                    // 3. Kiểm tra kích thước VGA trong Case
+                    if (ok && "gpu".equalsIgnoreCase(role) && pcCase != null) {
+                        try {
+                            int gpuLen = Integer.parseInt(c.getSpecOrDefault("Length_MM", "0"));
+                            int maxGpu = Integer.parseInt(pcCase.getSpecOrDefault("Max_GPU_Length_MM", "9999"));
+                            if (gpuLen > maxGpu && maxGpu > 0) {
+                                ok = false;
+                                note = "Card dài " + gpuLen + "mm vượt quá vỏ case (" + maxGpu + "mm)";
+                            }
+                        } catch (NumberFormatException ignored) {}
+                    } else if (ok && "case".equalsIgnoreCase(role) && gpu != null) {
+                        try {
+                            int gpuLen = Integer.parseInt(gpu.getSpecOrDefault("Length_MM", "0"));
+                            int maxGpu = Integer.parseInt(c.getSpecOrDefault("Max_GPU_Length_MM", "9999"));
+                            if (gpuLen > maxGpu && maxGpu > 0) {
+                                ok = false;
+                                note = "Vỏ case hỗ trợ VGA tối đa " + maxGpu + "mm (Card hiện tại dài " + gpuLen + "mm)";
+                            }
+                        } catch (NumberFormatException ignored) {}
+                    }
+
+                    // 4. Kiểm tra chiều cao Tản nhiệt CPU trong Case (cho tản khí)
+                    if (ok && "cooler".equalsIgnoreCase(role) && pcCase != null) {
+                        String coolerType = c.getSpecOrDefault("Cooler_Type", "Air");
+                        if (!"Liquid".equalsIgnoreCase(coolerType)) {
+                            try {
+                                int coolerHeight = Integer.parseInt(c.getSpecOrDefault("Height_MM", "0"));
+                                int maxCooler = Integer.parseInt(pcCase.getSpecOrDefault("Max_Cooler_Height_MM", "9999"));
+                                if (coolerHeight > maxCooler && maxCooler > 0) {
+                                    ok = false;
+                                    note = "Tản nhiệt cao " + coolerHeight + "mm cấn nắp vỏ case (Tối đa " + maxCooler + "mm)";
+                                }
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    } else if (ok && "case".equalsIgnoreCase(role) && cooler != null) {
+                        String coolerType = cooler.getSpecOrDefault("Cooler_Type", "Air");
+                        if (!"Liquid".equalsIgnoreCase(coolerType)) {
+                            try {
+                                int coolerHeight = Integer.parseInt(cooler.getSpecOrDefault("Height_MM", "0"));
+                                int maxCooler = Integer.parseInt(c.getSpecOrDefault("Max_Cooler_Height_MM", "9999"));
+                                if (coolerHeight > maxCooler && maxCooler > 0) {
+                                    ok = false;
+                                    note = "Vỏ case hỗ trợ tản tối đa " + maxCooler + "mm (Tản hiện tại cao " + coolerHeight + "mm)";
+                                }
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    }
+
+                    // 5. Kiểm tra Tản nhiệt có hỗ trợ Socket của CPU không
+                    if (ok && "cooler".equalsIgnoreCase(role) && cpu != null) {
+                        String supportedSockets = c.getSpecOrDefault("Supported_Sockets", "");
+                        String cpuSocket = cpu.getSpec("Socket");
+                        if (cpuSocket != null && !supportedSockets.isBlank() && !supportedSockets.toUpperCase().contains(cpuSocket.toUpperCase())) {
+                            ok = false;
+                            note = "Tản nhiệt không hỗ trợ socket " + cpuSocket;
+                        }
+                    }
+
+                    // 6. Kiểm tra Kích thước Mainboard (Form_Factor) có vừa Case không
+                    if (ok && "case".equalsIgnoreCase(role) && mb != null) {
+                        String supportedMb = c.getSpecOrDefault("Supported_Motherboards", "");
+                        String mbFormFactor = mb.getSpec("Form_Factor");
+                        if (mbFormFactor != null && !supportedMb.isBlank() && !supportedMb.toUpperCase().contains(mbFormFactor.toUpperCase())) {
+                            ok = false;
+                            note = "Vỏ case không hỗ trợ bo mạch chuẩn " + mbFormFactor;
+                        }
+                    } else if (ok && "mainboard".equalsIgnoreCase(role) && pcCase != null) {
+                        String supportedMb = pcCase.getSpecOrDefault("Supported_Motherboards", "");
+                        String mbFormFactor = c.getSpec("Form_Factor");
+                        if (mbFormFactor != null && !supportedMb.isBlank() && !supportedMb.toUpperCase().contains(mbFormFactor.toUpperCase())) {
+                            ok = false;
+                            note = "Bo mạch chuẩn " + mbFormFactor + " không vừa với vỏ case hiện tại";
+                        }
+                    }
+
+                    // 7. Kiểm tra Công suất nguồn (PSU)
+                    if (ok && "psu".equalsIgnoreCase(role)) {
+                        int cpuP = cpu != null ? Integer.parseInt(cpu.getSpecOrDefault("TDP_Power", "65")) : 65;
+                        int gpuP = gpu != null ? Integer.parseInt(gpu.getSpecOrDefault("TDP_Power", "115")) : 0;
+                        int estLoad = cpuP + gpuP + 80;
+                        int recWatt = (int) Math.round(estLoad * 1.30);
+                        try {
+                            int psuWatt = Integer.parseInt(c.getSpecOrDefault("Wattage", "0"));
+                            if (psuWatt > 0 && psuWatt < recWatt) {
+                                ok = false;
+                                note = "Nguồn " + psuWatt + "W không đủ tải an toàn (Cần tối thiểu " + recWatt + "W)";
+                            }
+                        } catch (NumberFormatException ignored) {}
                     }
 
                     return CompatibleReplacementResponse.builder()

@@ -1,5 +1,6 @@
 package com.project.cybershop.pcbuild.api.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -20,6 +21,10 @@ public class CompatibleReplacementResponse {
     private String imageUrl;
     private Integer stockQuantity;
     private Map<String, String> specs;
+
+    @JsonProperty("isCompatible")
     private boolean isCompatible;
+
     private String compatibilityNote;
 }
+

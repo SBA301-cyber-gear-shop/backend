@@ -4,6 +4,7 @@ package com.project.cybershop.order.internal.controller;
 import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.order.api.dto.request.AddToCartRequest;
+import com.project.cybershop.order.api.dto.request.BatchAddToCartRequest;
 import com.project.cybershop.order.api.dto.request.UpdateCartItemRequest;
 import com.project.cybershop.order.internal.service.CartService;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
@@ -44,6 +45,26 @@ public class CartController {
         return ResponseEntity.ok(
                 ApiResponseDTO.success(
                         "Thêm sản phẩm vào giỏ hàng thành công",
+                        null
+                )
+        );
+    }
+
+    // =========================================
+    // THÊM NHIỀU SẢN PHẨM / LINH KIỆN PC VÀO GIỎ HÀNG (BATCH)
+    // =========================================
+    @PostMapping("/items/batch")
+    public ResponseEntity<ApiResponseDTO<Void>> addBatchToCart(
+            @Valid @RequestBody BatchAddToCartRequest request
+    ) {
+
+        Integer userId = getCurrentUserId();
+
+        cartService.addBatchToCart(userId, request.items());
+
+        return ResponseEntity.ok(
+                ApiResponseDTO.success(
+                        "Thêm danh sách linh kiện vào giỏ hàng thành công",
                         null
                 )
         );

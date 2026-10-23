@@ -13,6 +13,20 @@ public interface PcCustomService {
     List<SavedPcBuildSummaryResponse> getMySavedBuilds(Integer userId);
     SavedPcBuildDetailResponse getSavedBuildDetail(Integer buildId, Integer userId);
     void deleteSavedBuild(Integer buildId, Integer userId);
-    List<CompatibleReplacementResponse> getCompatibleReplacements(String role, Integer currentCpuId, Integer currentMbId);
+    default List<CompatibleReplacementResponse> getCompatibleReplacements(String role, Integer currentCpuId, Integer currentMbId) {
+        return getCompatibleReplacements(role, currentCpuId, currentMbId, null, null, null, null, null);
+    }
+
+    List<CompatibleReplacementResponse> getCompatibleReplacements(
+            String role,
+            Integer currentCpuId,
+            Integer currentMbId,
+            Integer currentRamId,
+            Integer currentGpuId,
+            Integer currentCaseId,
+            Integer currentCoolerId,
+            Integer currentPsuId
+    );
 }
+
 

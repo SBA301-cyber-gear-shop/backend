@@ -16,7 +16,20 @@ public class BudgetHeuristicServiceImpl implements BudgetHeuristicService {
         double b = budget.doubleValue();
         Map<String, PriceRange> ranges = new HashMap<>();
 
-        if ("creative".equalsIgnoreCase(purpose)) {
+        String p = purpose != null ? purpose.toLowerCase(Locale.ROOT) : "";
+        boolean isCreative = p.contains("creative") || p.contains("đồ họa") || p.contains("do hoa")
+                || p.contains("3d") || p.contains("dựng phim") || p.contains("dung phim")
+                || p.contains("render") || p.contains("video") || p.contains("edit")
+                || p.contains("photoshop") || p.contains("premiere") || p.contains("blender")
+                || p.contains("thiết kế") || p.contains("thiet ke") || p.contains("autocad");
+
+        boolean isWork = !isCreative && (p.contains("work") || p.contains("văn phòng") || p.contains("van phong")
+                || p.contains("học") || p.contains("hoc") || p.contains("lập trình")
+                || p.contains("lap trinh") || p.contains("code") || p.contains("developer")
+                || p.contains("ai") || p.contains("machine learning") || p.contains("data")
+                || p.contains("kế toán") || p.contains("office"));
+
+        if (isCreative) {
             ranges.put("cpu", new PriceRange(b * 0.22, b * 0.32));
             ranges.put("gpu", new PriceRange(b * 0.25, b * 0.35));
             ranges.put("mainboard", new PriceRange(b * 0.10, b * 0.15));
@@ -25,7 +38,7 @@ public class BudgetHeuristicServiceImpl implements BudgetHeuristicService {
             ranges.put("psu", new PriceRange(b * 0.05, b * 0.09));
             ranges.put("case", new PriceRange(b * 0.03, b * 0.06));
             ranges.put("cooler", new PriceRange(b * 0.03, b * 0.07));
-        } else if ("work".equalsIgnoreCase(purpose)) {
+        } else if (isWork) {
             ranges.put("cpu", new PriceRange(b * 0.25, b * 0.38));
             ranges.put("mainboard", new PriceRange(b * 0.12, b * 0.20));
             ranges.put("ram", new PriceRange(b * 0.10, b * 0.18));
@@ -34,7 +47,7 @@ public class BudgetHeuristicServiceImpl implements BudgetHeuristicService {
             ranges.put("case", new PriceRange(b * 0.04, b * 0.08));
             ranges.put("cooler", new PriceRange(b * 0.02, b * 0.05));
             ranges.put("gpu", new PriceRange(0, b * 0.20));
-        } else { // Gaming mặc định
+        } else { // Gaming mặc định (hoặc chơi game, esport, stream...)
             ranges.put("gpu", new PriceRange(b * 0.35, b * 0.48));
             ranges.put("cpu", new PriceRange(b * 0.18, b * 0.26));
             ranges.put("mainboard", new PriceRange(b * 0.10, b * 0.15));

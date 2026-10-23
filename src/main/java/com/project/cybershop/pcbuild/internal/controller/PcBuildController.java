@@ -51,9 +51,16 @@ public class PcBuildController {
     public ResponseEntity<ApiResponseDTO<List<CompatibleReplacementResponse>>> getReplacements(
             @RequestParam String role,
             @RequestParam(required = false) Integer currentCpuId,
-            @RequestParam(required = false) Integer currentMbId
+            @RequestParam(required = false) Integer currentMbId,
+            @RequestParam(required = false) Integer currentRamId,
+            @RequestParam(required = false) Integer currentGpuId,
+            @RequestParam(required = false) Integer currentCaseId,
+            @RequestParam(required = false) Integer currentCoolerId,
+            @RequestParam(required = false) Integer currentPsuId
     ) {
-        List<CompatibleReplacementResponse> list = pcCustomService.getCompatibleReplacements(role, currentCpuId, currentMbId);
+        List<CompatibleReplacementResponse> list = (currentRamId == null && currentGpuId == null && currentCaseId == null && currentCoolerId == null && currentPsuId == null)
+                ? pcCustomService.getCompatibleReplacements(role, currentCpuId, currentMbId)
+                : pcCustomService.getCompatibleReplacements(role, currentCpuId, currentMbId, currentRamId, currentGpuId, currentCaseId, currentCoolerId, currentPsuId);
         return ResponseEntity.ok(ApiResponseDTO.success(list));
     }
 

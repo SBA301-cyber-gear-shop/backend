@@ -47,6 +47,26 @@ class PurchaseApiTests {
     }
 
     @Test
+    void batchAddToCartPersistsItemsToDatabase() throws Exception {
+        mvc.perform(post("/api/orders/cart/items/batch").header("Authorization", token)
+                .contentType("application/json")
+                .content("""
+                        {
+                            "items": [
+                                {"productVariantId": 101, "quantity": 1},
+                                {"productVariantId": 102, "quantity": 2}
+                            ]
+                        }
+                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(200));
+
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM cart_items", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT quantity FROM cart_items WHERE product_variant_id=101", Integer.class));
+        assertEquals(2, jdbc.queryForObject("SELECT quantity FROM cart_items WHERE product_variant_id=102", Integer.class));
+    }
+
+    @Test
     void registrationCreatesACartOwnedByTheNewUser() throws Exception {
         mvc.perform(post("/api/auth/register").contentType("application/json").content("""
                 {"fullName":"Khách mới","email":"new-buyer@example.com","phone":"0987654321","password":"Example123!","address":""}

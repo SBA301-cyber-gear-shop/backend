@@ -71,6 +71,53 @@ public class CartServiceImpl implements CartService {
     }
 
     @Override
+    @Transactional
+    public void addBatchToCart(Integer userId, List<AddToCartRequest> items) {
+        validateUserId(userId);
+        if (items == null || items.isEmpty()) {
+            throw new BusinessException("Danh sách linh kiện thêm vào giỏ không được để trống");
+        }
+
+        // Dùng cùng khóa user với đặt hàng để tránh thay đổi giỏ trong lúc checkout.
+        identityApi.lockActiveUser(userId);
+        Cart cart = cartRepository.findByUserId(userId).orElseGet(() -> createCart(userId));
+
+        for (AddToCartRequest item : items) {
+            if (item == null || item.productVariantId() == null || item.productVariantId() <= 0
+                    || item.quantity() == null || item.quantity() <= 0) {
+                throw new BusinessException("Thông tin linh kiện hoặc số lượng không hợp lệ");
+            }
+
+            PurchaseVariantResponse product = requireActiveVariant(item.productVariantId());
+            if (product.stockQuantity() <= 0) {
+                throw new BusinessException("Linh kiện '" + product.productName() + "' đã hết hàng");
+            }
+
+            CartItem cartItem = cartItemRepository
+                    .findByCartIdAndProductVariantId(cart.getId(), item.productVariantId())
+                    .orElse(null);
+
+            long newQuantity = item.quantity();
+            if (cartItem != null) {
+                validateQuantity(cartItem.getQuantity());
+                newQuantity += cartItem.getQuantity();
+            }
+            validateStock(product, newQuantity);
+
+            if (cartItem == null) {
+                cartItem = new CartItem();
+                cartItem.setCartId(cart.getId());
+                cartItem.setProductVariantId(item.productVariantId());
+                cartItem.setCreatedAt(LocalDateTime.now());
+            }
+            cartItem.setQuantity((int) newQuantity);
+            cartItemRepository.save(cartItem);
+        }
+
+        touchCart(cart);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public CartResponse getMyCart(Integer userId) {
         validateUserId(userId);
