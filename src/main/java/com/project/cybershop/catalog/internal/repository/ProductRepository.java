@@ -14,6 +14,14 @@ import java.util.Optional;
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Integer>, JpaSpecificationExecutor<Product> {
 
+    @Query("SELECT DISTINCT p FROM Product p " +
+           "LEFT JOIN FETCH p.variants v " +
+           "LEFT JOIN FETCH p.brand " +
+           "LEFT JOIN FETCH p.category " +
+           "WHERE p.status = :status " +
+           "ORDER BY p.id DESC")
+    List<Product> findByStatusWithDetails(@Param("status") ProductStatus status);
+
     List<Product> findByStatus(ProductStatus status);
 
     List<Product> findByCategoryIdAndStatus(Integer categoryId, ProductStatus status);

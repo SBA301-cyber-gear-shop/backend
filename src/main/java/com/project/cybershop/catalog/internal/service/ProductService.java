@@ -327,7 +327,7 @@ public class ProductService {
 
     @Transactional(readOnly = true)
     public List<ProductResponse> listProductsByStatus(ProductStatus status) {
-        return productRepository.findByStatus(status).stream()
+        return productRepository.findByStatusWithDetails(status).stream()
                 .map(catalogMapper::toProductResponse)
                 .toList();
     }

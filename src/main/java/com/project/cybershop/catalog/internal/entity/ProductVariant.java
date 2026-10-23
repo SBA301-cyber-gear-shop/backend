@@ -45,6 +45,7 @@ public class ProductVariant {
     @Column(name = "image_url", length = 255)
     private String imageUrl;
 
+    @org.hibernate.annotations.BatchSize(size = 100)
     @OneToMany(mappedBy = "productVariant", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<SpecificationValue> attributeValues = new ArrayList<>();
 
