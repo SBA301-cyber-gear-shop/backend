@@ -1,9 +1,10 @@
 package com.project.cybershop.catalog.internal.controller;
 
-import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
-import com.project.cybershop.catalog.api.dto.response.CategorySpecResponse;
 import com.project.cybershop.catalog.api.dto.request.ConfigureCategorySpecRequest;
 import com.project.cybershop.catalog.api.dto.request.CreateCategoryRequest;
+import com.project.cybershop.catalog.api.dto.request.UpdateCategoryRequest;
+import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
+import com.project.cybershop.catalog.api.dto.response.CategorySpecResponse;
 import com.project.cybershop.catalog.internal.service.CategoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,6 +32,23 @@ public class AdminCategoryController {
         return ResponseEntity.status(HttpStatus.CREATED).body(categoryService.createCategory(request));
     }
 
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Cập nhật thông tin danh mục")
+    public ResponseEntity<CategoryResponse> updateCategory(
+            @PathVariable Integer id,
+            @Valid @RequestBody UpdateCategoryRequest request) {
+        return ResponseEntity.ok(categoryService.updateCategory(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Xóa danh mục (nếu không có sản phẩm và danh mục con)")
+    public ResponseEntity<Void> deleteCategory(@PathVariable Integer id) {
+        categoryService.deleteCategory(id);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/{id}/specifications")
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Cấu hình thông số kỹ thuật cho danh mục (bộ lọc, cấu hình nổi bật, mega menu)")
@@ -44,6 +62,12 @@ public class AdminCategoryController {
     @Operation(summary = "Lấy cây danh mục sản phẩm")
     public ResponseEntity<List<CategoryResponse>> getCategoryTree() {
         return ResponseEntity.ok(categoryService.getCategoryTree());
+    }
+
+    @GetMapping("/flat")
+    @Operation(summary = "Lấy danh sách tất cả danh mục dạng phẳng (phục vụ dropdown)")
+    public ResponseEntity<List<CategoryResponse>> getFlatCategories() {
+        return ResponseEntity.ok(categoryService.getFlatCategories());
     }
 
     @GetMapping("/{id}")

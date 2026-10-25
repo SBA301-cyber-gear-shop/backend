@@ -20,4 +20,8 @@ public interface CategorySpecificationRepository extends JpaRepository<CategoryS
     List<CategorySpecification> findFilterableSpecsByCategoryId(@Param("categoryId") Integer categoryId);
 
     Optional<CategorySpecification> findByCategoryIdAndSpecificationId(Integer categoryId, Integer specificationId);
+
+    void deleteByCategoryId(Integer categoryId);
+
+    void deleteByCategoryIdAndSpecificationIdNotIn(Integer categoryId, java.util.Collection<Integer> specificationIds);
 }

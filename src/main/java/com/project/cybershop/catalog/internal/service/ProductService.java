@@ -313,7 +313,20 @@ public class ProductService {
 
     @Transactional(readOnly = true)
     public List<ProductResponse> listActiveProducts() {
-        return productRepository.findByStatus(ProductStatus.ACTIVE).stream()
+        return listActiveProducts(null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProductResponse> listActiveProducts(Integer categoryId, String categorySlug) {
+        List<Product> products;
+        if (categoryId != null) {
+            products = productRepository.findByCategoryIdAndStatus(categoryId, ProductStatus.ACTIVE);
+        } else if (categorySlug != null && !categorySlug.isBlank()) {
+            products = productRepository.findByCategorySlugAndStatus(categorySlug.trim().toLowerCase(), ProductStatus.ACTIVE);
+        } else {
+            products = productRepository.findByStatus(ProductStatus.ACTIVE);
+        }
+        return products.stream()
                 .map(catalogMapper::toProductResponse)
                 .toList();
     }

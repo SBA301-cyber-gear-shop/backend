@@ -26,6 +26,10 @@ public interface ProductRepository extends JpaRepository<Product, Integer>, JpaS
 
     List<Product> findByCategoryIdAndStatus(Integer categoryId, ProductStatus status);
 
+    List<Product> findByCategorySlugAndStatus(String slug, ProductStatus status);
+
+    long countByCategoryId(Integer categoryId);
+
     List<Product> findByBrandIdAndStatus(Integer brandId, ProductStatus status);
 
     @Query("SELECT DISTINCT p FROM Product p " +
