@@ -19,6 +19,9 @@ import java.util.List;
 public class MyServiceRequestDto {
     private Integer id;
     private String requestCode;
+    private String intakeCode;
+    private String productName;
+    private String serialNumber;
     private String status;
     private String resolution;
     private String issueDescription;

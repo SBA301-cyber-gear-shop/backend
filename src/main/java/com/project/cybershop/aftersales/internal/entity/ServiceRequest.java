@@ -28,6 +28,10 @@ public class ServiceRequest {
     @Column(name = "warranty_card_id", nullable = false)
     private Integer warrantyCardId;
 
+    /** Lần tiếp nhận chứa phiếu này (ServiceIntake). */
+    @Column(name = "intake_id", nullable = false)
+    private Integer intakeId;
+
     @Column(name = "contact_name", length = 100)
     private String contactName;
 

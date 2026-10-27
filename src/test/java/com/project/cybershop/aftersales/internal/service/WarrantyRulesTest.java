@@ -6,9 +6,11 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
+import static com.project.cybershop.aftersales.internal.entity.ServiceRequestStatus.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class WarrantyRulesTest {
@@ -73,5 +75,30 @@ class WarrantyRulesTest {
     void serialIsTrimmedAndUppercased() {
         assertEquals("KST26A000428", WarrantyRules.normalizeSerial("  kst26a000428 "));
         assertEquals("", WarrantyRules.normalizeSerial(null));
+    }
+
+    @Test
+    void childCodeAppendsTwoDigitIndexToIntakeCode() {
+        assertEquals("BH-261027-7K2QXM-01", WarrantyRules.childCode("BH-261027-7K2QXM", 1));
+        assertEquals("BH-261027-7K2QXM-12", WarrantyRules.childCode("BH-261027-7K2QXM", 12));
+    }
+
+    @Test
+    void intakeStatusIsTheLeastAdvancedComponentIgnoringCanceled() {
+        assertEquals(RECEIVED, WarrantyRules.intakeStatus(List.of(RECEIVED, READY_FOR_RETURN)));
+        assertEquals(REPAIRING, WarrantyRules.intakeStatus(List.of(READY_FOR_RETURN, REPAIRING, WAITING_FOR_PARTS)));
+        assertEquals(READY_FOR_RETURN, WarrantyRules.intakeStatus(List.of(READY_FOR_RETURN, CANCELED)));
+        assertEquals(RETURNED, WarrantyRules.intakeStatus(List.of(RETURNED, CANCELED)));
+        assertEquals(CANCELED, WarrantyRules.intakeStatus(List.of(CANCELED, CANCELED)));
+    }
+
+    @Test
+    void wholeSetReturnsOnlyWhenEveryComponentIsReadyOrCanceled() {
+        assertTrue(WarrantyRules.canReturn(List.of(READY_FOR_RETURN, READY_FOR_RETURN)));
+        assertTrue(WarrantyRules.canReturn(List.of(READY_FOR_RETURN, CANCELED)));
+        assertFalse(WarrantyRules.canReturn(List.of(READY_FOR_RETURN, REPAIRING)));
+        // Không còn gì để trả: đã trả rồi, hoặc mọi linh kiện đã hủy.
+        assertFalse(WarrantyRules.canReturn(List.of(RETURNED, RETURNED)));
+        assertFalse(WarrantyRules.canReturn(List.of(CANCELED)));
     }
 }

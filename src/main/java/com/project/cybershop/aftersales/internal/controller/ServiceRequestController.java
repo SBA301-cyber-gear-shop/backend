@@ -3,7 +3,6 @@ package com.project.cybershop.aftersales.internal.controller;
 import com.project.cybershop.aftersales.api.dto.request.NoteRequest;
 import com.project.cybershop.aftersales.api.dto.request.RelinkCardRequest;
 import com.project.cybershop.aftersales.api.dto.request.ReplacementRequest;
-import com.project.cybershop.aftersales.api.dto.request.ServiceRequestCreateRequest;
 import com.project.cybershop.aftersales.api.dto.response.ServiceRequestDto;
 import com.project.cybershop.aftersales.api.dto.response.ServiceRequestSummaryDto;
 import com.project.cybershop.aftersales.api.dto.request.TransitionRequest;
@@ -15,7 +14,6 @@ import com.project.cybershop.shared.dto.ApiResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -32,14 +30,6 @@ public class ServiceRequestController {
     public ServiceRequestController(ServiceRequestService service, CurrentUser currentUser) {
         this.service = service;
         this.currentUser = currentUser;
-    }
-
-    @PostMapping
-    @Operation(summary = "Tạo phiếu tiếp nhận cho một thẻ bảo hành còn hiệu lực")
-    public ResponseEntity<ApiResponseDTO<ServiceRequestDto>> create(@Valid @RequestBody ServiceRequestCreateRequest request) {
-        Principal actor = currentUser.require(Actor.STAFF, Actor.ADMIN);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponseDTO.success("Đã tạo phiếu tiếp nhận", service.create(request, actor)));
     }
 
     @GetMapping
