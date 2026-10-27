@@ -1,5 +1,6 @@
 package com.project.cybershop.aftersales.internal.controller;
 
+import com.project.cybershop.aftersales.api.dto.response.MyServiceIntakeDto;
 import com.project.cybershop.aftersales.api.dto.response.MyWarrantyCardDto;
 import com.project.cybershop.aftersales.internal.service.CurrentUser;
 import com.project.cybershop.aftersales.internal.service.WarrantyCardService;
@@ -32,5 +33,12 @@ public class MyWarrantyController {
         // Chỉ trả dữ liệu của chính người gọi, nên biết mã phiếu của người khác cũng không xem được.
         Integer userId = currentUser.require().id();
         return ResponseEntity.ok(ApiResponseDTO.success("Lấy thẻ bảo hành thành công", cardService.myCards(userId)));
+    }
+
+    @GetMapping("/service-intakes")
+    @Operation(summary = "Các lần gửi bảo hành của tôi: trạng thái chung của bộ máy và kết quả từng linh kiện")
+    public ResponseEntity<ApiResponseDTO<List<MyServiceIntakeDto>>> myIntakes() {
+        Integer userId = currentUser.require().id();
+        return ResponseEntity.ok(ApiResponseDTO.success("Lấy yêu cầu bảo hành thành công", cardService.myIntakes(userId)));
     }
 }

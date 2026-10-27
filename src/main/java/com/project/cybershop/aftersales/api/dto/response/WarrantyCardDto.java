@@ -24,6 +24,11 @@ public class WarrantyCardDto {
     private String variantName;
     private String sku;
     private String orderCode;
+    private Integer orderId;
+    /** Cấu hình PC (pc_customs) mà linh kiện này thuộc về; trống là mua lẻ. */
+    private Integer pcCustomId;
+    /** Thẻ khớp trực tiếp với từ khóa tra cứu; các thẻ khác cùng đơn được trả kèm để thấy cả bộ máy. */
+    private boolean matched;
     private String customerName;
     private String customerPhone;
     private String pickupName;

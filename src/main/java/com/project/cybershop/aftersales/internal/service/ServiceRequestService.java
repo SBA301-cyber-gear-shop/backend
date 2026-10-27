@@ -4,7 +4,6 @@ import com.project.cybershop.aftersales.api.dto.response.AllowedTransitionDto;
 import com.project.cybershop.aftersales.api.dto.request.NoteRequest;
 import com.project.cybershop.aftersales.api.dto.request.RelinkCardRequest;
 import com.project.cybershop.aftersales.api.dto.request.ReplacementRequest;
-import com.project.cybershop.aftersales.api.dto.request.ServiceRequestCreateRequest;
 import com.project.cybershop.aftersales.api.dto.response.ServiceRequestDto;
 import com.project.cybershop.aftersales.api.dto.response.ServiceRequestEventDto;
 import com.project.cybershop.aftersales.api.dto.response.ServiceRequestSummaryDto;
@@ -16,6 +15,7 @@ import com.project.cybershop.aftersales.internal.entity.ServiceRequestStatus;
 import com.project.cybershop.aftersales.internal.entity.WarrantyCard;
 import com.project.cybershop.aftersales.internal.repository.OrderLookup;
 import com.project.cybershop.aftersales.internal.repository.OrderLookup.OrderInfo;
+import com.project.cybershop.aftersales.internal.repository.ServiceIntakeRepository;
 import com.project.cybershop.aftersales.internal.repository.ServiceRequestEventRepository;
 import com.project.cybershop.aftersales.internal.repository.ServiceRequestRepository;
 import com.project.cybershop.aftersales.internal.repository.WarrantyCardRepository;
@@ -51,7 +51,8 @@ public class ServiceRequestService {
     private static final List<ServiceRequestStatus> CLOSED = List.of(RETURNED, CANCELED);
     private static final Set<ServiceRequestStatus> IN_PROGRESS = EnumSet.of(INSPECTING, REPAIRING, WAITING_FOR_PARTS);
     private static final String OPEN_EXISTS = "Thiết bị đã có phiếu chưa đóng.";
-    private static final String STALE = "Phiếu đã được người khác cập nhật, vui lòng tải lại.";
+    static final String STALE = "Phiếu đã được người khác cập nhật, vui lòng tải lại.";
+    private static final String RETURN_BY_INTAKE = "Trả máy theo cả lần tiếp nhận để giao đủ bộ máy cho khách.";
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -62,6 +63,7 @@ public class ServiceRequestService {
     private final WarrantyCardService cardService;
     private final AftersalesMapper mapper;
     private final IdentityApi identityApi;
+    private final ServiceIntakeRepository intakes;
 
     public ServiceRequestService(ServiceRequestRepository requests,
                                  ServiceRequestEventRepository events,
@@ -69,7 +71,8 @@ public class ServiceRequestService {
                                  OrderLookup orderLookup,
                                  WarrantyCardService cardService,
                                  AftersalesMapper mapper,
-                                 IdentityApi identityApi) {
+                                 IdentityApi identityApi,
+                                 ServiceIntakeRepository intakes) {
         this.requests = requests;
         this.events = events;
         this.cards = cards;
@@ -77,40 +80,7 @@ public class ServiceRequestService {
         this.cardService = cardService;
         this.mapper = mapper;
         this.identityApi = identityApi;
-    }
-
-    @Transactional
-    public ServiceRequestDto create(ServiceRequestCreateRequest req, Principal actor) {
-        WarrantyCard card = card(req.getWarrantyCardId());
-        LocalDateTime now = WarrantyRules.now();
-        // Hiệu lực thẻ chỉ xét ở đây. Thẻ hết hạn trong lúc sửa không ảnh hưởng phiếu đang xử lý.
-        if (!WarrantyRules.isValidOn(card, now.toLocalDate())) {
-            throw new BusinessException("Thẻ không còn hiệu lực tại thời điểm tiếp nhận.");
-        }
-        if (requests.existsByWarrantyCardIdAndStatusNotIn(card.getId(), CLOSED)) {
-            throw new BusinessException(OPEN_EXISTS);
-        }
-        if (req.getExpectedReturnDate().isBefore(now.toLocalDate())) {
-            throw new BusinessException("Ngày hẹn trả không được trước ngày tiếp nhận.");
-        }
-
-        ServiceRequest request = new ServiceRequest();
-        request.setRequestCode(WarrantyRules.newRequestCode(now.toLocalDate(), RANDOM));
-        // Phiếu luôn thuộc về chủ đơn hàng, không lấy từ request để tránh gắn nhầm tài khoản.
-        request.setUserId(orderInfo(card).userId());
-        request.setWarrantyCardId(card.getId());
-        request.setContactName(req.getContactName().trim());
-        request.setContactPhone(req.getContactPhone().trim());
-        request.setIssueDescription(req.getIssueDescription().trim());
-        request.setConditionNote(req.getConditionNote().trim());
-        request.setAccessoriesNote(req.getAccessoriesNote().trim());
-        request.setExpectedReturnDate(req.getExpectedReturnDate());
-        request.setStatus(RECEIVED);
-        request.setPublicNote("Đã tiếp nhận thiết bị.");
-        request.setCreatedAt(now);
-        save(request);
-        log(request, actor, null, "Tiếp nhận thiết bị tại quầy.", request.getPublicNote(), now);
-        return detail(request, actor);
+        this.intakes = intakes;
     }
 
     @Transactional(readOnly = true)
@@ -133,9 +103,19 @@ public class ServiceRequestService {
         if (req.getVersion() != null && !req.getVersion().equals(request.getVersion())) {
             throw new BusinessException(STALE);
         }
-        ServiceRequestStatus from = request.getStatus();
         ServiceRequestStatus to = ServiceRequestStatus.fromCode(req.getToStatus());
-        Resolution resolution = Resolution.fromCodeOrNull(req.getResolution());
+        if (to == RETURNED) {
+            throw new BusinessException(RETURN_BY_INTAKE);
+        }
+        move(request, to, Resolution.fromCodeOrNull(req.getResolution()), req.getInternalNote(),
+                req.getPublicNote(), req.getExpectedReturnDate(), actor);
+        return detail(request, actor);
+    }
+
+    /** Một bước chuyển trạng thái của phiếu con, dùng chung cho thao tác lẻ và thao tác theo cả lần tiếp nhận. */
+    void move(ServiceRequest request, ServiceRequestStatus to, Resolution resolution, String internalNoteText,
+              String publicNoteText, LocalDate expectedReturnDate, Principal actor) {
+        ServiceRequestStatus from = request.getStatus();
         TransitionPolicy.check(from, to, resolution, actor.actor());
 
         WarrantyCard card = card(request.getWarrantyCardId());
@@ -147,8 +127,8 @@ public class ServiceRequestService {
         if (reinspectsReplaced(request, to)) {
             throw new BusinessException("Thiết bị đã được đổi. Nếu thiết bị mới có lỗi, trả máy rồi tạo phiếu trên thẻ của thiết bị mới.");
         }
-        String internalNote = req.getInternalNote().trim();
-        String publicNote = blankToNull(req.getPublicNote());
+        String internalNote = internalNoteText.trim();
+        String publicNote = blankToNull(publicNoteText);
         if (to == READY_FOR_RETURN && publicNote == null) {
             throw new BusinessException("Nhập nội dung thông báo cho khách khi chuyển sang chờ trả.");
         }
@@ -176,10 +156,18 @@ public class ServiceRequestService {
             }
         }
         request.setStatus(to);
-        apply(request, internalNote, publicNote, req.getExpectedReturnDate());
+        apply(request, internalNote, publicNote, expectedReturnDate);
         save(request);
         log(request, actor, from, internalNote, publicNote, now);
-        return detail(request, actor);
+    }
+
+    /** Lưu phiếu con mới và ghi dòng lịch sử đầu tiên; chặn khi thẻ đã có phiếu đang mở. */
+    void open(ServiceRequest request, Principal actor, String internalNote, LocalDateTime now) {
+        if (requests.existsByWarrantyCardIdAndStatusNotIn(request.getWarrantyCardId(), CLOSED)) {
+            throw new BusinessException(OPEN_EXISTS);
+        }
+        save(request);
+        log(request, actor, null, internalNote, request.getPublicNote(), now);
     }
 
     @Transactional
@@ -281,12 +269,12 @@ public class ServiceRequestService {
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy phiếu bảo hành: " + id));
     }
 
-    private WarrantyCard card(Integer id) {
+    WarrantyCard card(Integer id) {
         return cards.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thẻ bảo hành: " + id));
     }
 
-    private OrderInfo orderInfo(WarrantyCard card) {
+    OrderInfo orderInfo(WarrantyCard card) {
         OrderInfo info = orderLookup.byCardIds(List.of(card.getId())).get(card.getId());
         if (info == null) {
             throw new BusinessException("Thẻ bảo hành chưa gắn với đơn hàng hợp lệ.");
@@ -294,7 +282,7 @@ public class ServiceRequestService {
         return info;
     }
 
-    private static LocalDate receivedDay(ServiceRequest request) {
+    static LocalDate receivedDay(ServiceRequest request) {
         return (request.getCreatedAt() == null ? WarrantyRules.now() : request.getCreatedAt()).toLocalDate();
     }
 
@@ -333,6 +321,10 @@ public class ServiceRequestService {
             if (String.valueOf(e.getMostSpecificCause().getMessage()).contains("uq_service_requests_open_card")) {
                 throw new BusinessException(OPEN_EXISTS);
             }
+            // Hai người cùng thêm linh kiện vào một lần tiếp nhận sẽ trùng số thứ tự phiếu con.
+            if (String.valueOf(e.getMostSpecificCause().getMessage()).contains("request_code")) {
+                throw new BusinessException(STALE);
+            }
             throw e;
         }
     }
@@ -353,6 +345,7 @@ public class ServiceRequestService {
 
     private ServiceRequestDto detail(ServiceRequest request, Principal actor) {
         ServiceRequestDto dto = mapper.toDetail(request);
+        intakes.findById(request.getIntakeId()).ifPresent(intake -> dto.setIntakeCode(intake.getIntakeCode()));
         dto.setCard(cardService.toDtos(List.of(card(request.getWarrantyCardId()))).get(0));
 
         List<ServiceRequestEvent> history = events.findByServiceRequestIdOrderByCreatedAtAscIdAsc(request.getId());
@@ -368,7 +361,8 @@ public class ServiceRequestService {
 
         ServiceRequestStatus status = request.getStatus();
         dto.setAllowedTransitions(TransitionPolicy.allowedFor(status, actor.actor()).stream()
-                .filter(rule -> !reinspectsReplaced(request, rule.to()))
+                // Trả máy làm ở cấp cả lần tiếp nhận (ServiceIntakeService.returnAll).
+                .filter(rule -> rule.to() != RETURNED && !reinspectsReplaced(request, rule.to()))
                 .map(rule -> new AllowedTransitionDto(rule.to().code(),
                         rule.resolutions().stream().map(Resolution::code).toList()))
                 .toList());

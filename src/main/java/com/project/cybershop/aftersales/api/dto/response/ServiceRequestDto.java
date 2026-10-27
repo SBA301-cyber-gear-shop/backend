@@ -16,6 +16,9 @@ import java.util.List;
 public class ServiceRequestDto {
     private Integer id;
     private String requestCode;
+    /** Lần tiếp nhận chứa phiếu này; các phiếu cùng lần là các linh kiện khách mang tới cùng lúc. */
+    private Integer intakeId;
+    private String intakeCode;
     private String status;
     private String resolution;
     private String issueDescription;

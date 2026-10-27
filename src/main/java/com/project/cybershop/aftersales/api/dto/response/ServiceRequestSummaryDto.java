@@ -15,6 +15,8 @@ import java.time.LocalDateTime;
 public class ServiceRequestSummaryDto {
     private Integer id;
     private String requestCode;
+    private Integer intakeId;
+    private String intakeCode;
     private String status;
     private String resolution;
     private String issueDescription;
@@ -26,4 +28,5 @@ public class ServiceRequestSummaryDto {
     private Integer warrantyCardId;
     private String serialNumber;
     private String productName;
+    private String orderCode;
 }

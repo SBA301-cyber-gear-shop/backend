@@ -1,5 +1,6 @@
 package com.project.cybershop.aftersales.internal.service;
 
+import com.project.cybershop.aftersales.internal.entity.ServiceRequestStatus;
 import com.project.cybershop.aftersales.internal.entity.WarrantyCard;
 
 import java.time.LocalDate;
@@ -7,6 +8,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.random.RandomGenerator;
 
@@ -51,6 +54,29 @@ public final class WarrantyRules {
             code.append(CODE_ALPHABET.charAt(random.nextInt(CODE_ALPHABET.length())));
         }
         return code.toString();
+    }
+
+    /** Mã phiếu con của một linh kiện: mã lần tiếp nhận kèm số thứ tự, ví dụ BH-261027-7K2QXM-01. */
+    public static String childCode(String intakeCode, int index) {
+        return String.format("%s-%02d", intakeCode, index);
+    }
+
+    /**
+     * Trạng thái chung của cả lần tiếp nhận: linh kiện đi chậm nhất quyết định, bỏ qua linh kiện đã hủy.
+     * Thứ tự khai báo của ServiceRequestStatus chính là thứ tự tiến độ.
+     */
+    public static ServiceRequestStatus intakeStatus(Collection<ServiceRequestStatus> components) {
+        return components.stream()
+                .filter(s -> s != ServiceRequestStatus.CANCELED)
+                .min(Comparator.naturalOrder())
+                .orElse(ServiceRequestStatus.CANCELED);
+    }
+
+    /** Trả cả bộ máy khi mọi linh kiện đã xong (chờ trả hoặc đã hủy) và còn ít nhất một linh kiện chờ trả. */
+    public static boolean canReturn(Collection<ServiceRequestStatus> components) {
+        return components.contains(ServiceRequestStatus.READY_FOR_RETURN)
+                && components.stream().allMatch(s -> s == ServiceRequestStatus.READY_FOR_RETURN
+                        || s == ServiceRequestStatus.CANCELED);
     }
 
     public static String normalizeSerial(String serial) {

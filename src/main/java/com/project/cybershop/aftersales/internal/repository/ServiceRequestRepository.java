@@ -17,4 +17,8 @@ public interface ServiceRequestRepository extends JpaRepository<ServiceRequest, 
     List<ServiceRequest> findByWarrantyCardIdInOrderByCreatedAtDescIdDesc(Collection<Integer> cardIds);
 
     boolean existsByWarrantyCardIdAndStatusNotIn(Integer cardId, Collection<ServiceRequestStatus> statuses);
+
+    List<ServiceRequest> findByIntakeIdOrderByIdAsc(Integer intakeId);
+
+    List<ServiceRequest> findByIntakeIdInOrderByIdAsc(Collection<Integer> intakeIds);
 }
