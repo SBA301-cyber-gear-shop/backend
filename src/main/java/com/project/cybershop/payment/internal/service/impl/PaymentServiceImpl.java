@@ -32,7 +32,7 @@ public class PaymentServiceImpl implements PaymentService {
     public Payment get(Integer orderId) {
         var payments = jdbc.query("SELECT status,method_type,amount,paid_at FROM payments WHERE order_id=?",
                 (rs, i) -> new Payment(rs.getString(1), rs.getString(2), rs.getBigDecimal(3), rs.getObject(4, LocalDateTime.class)), orderId);
-        if (payments.size() != 1) throw new BusinessException("Không tìm thấy khoản thanh toán hợp lệ của đơn.");
+        if (payments.isEmpty()) { return new Payment("PENDING", "cash", BigDecimal.ZERO, null); }
         return payments.get(0);
     }
 
