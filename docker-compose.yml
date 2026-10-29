@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:alpine
     container_name: cybershop-postgres
     restart: unless-stopped
     ports:
@@ -10,8 +10,8 @@ services:
       POSTGRES_USER: ${DB_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ../cyber-gear-shop (3).sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - postgres_data:/var/lib/postgresql
+      - ../neon_dump.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks:
       - cybershop-network
 

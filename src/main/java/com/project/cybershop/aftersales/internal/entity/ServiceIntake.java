@@ -22,7 +22,7 @@ public class ServiceIntake {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
-    @Column(name = "intake_code", nullable = false, length = 50)
+    @Column(name = "intake_code", nullable = false, length = 50, unique = true)
     private String intakeCode;
 
     @Column(name = "order_id", nullable = false)

@@ -3,12 +3,16 @@ spring:
     name: cybershop
 
   # ==========================================
-  # DATABASE (Neon PostgreSQL Cloud)
+  # DATABASE (Local Docker PostgreSQL)
   # ==========================================
   datasource:
-    url: jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech:5432/neondb?sslmode=require
-    username: neondb_owner
-    password: npg_E3lTM5aYOpNA
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/cybershop}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    # Cloud Neon (Uncomment if needed):
+    # url: jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech:5432/neondb?sslmode=require
+    # username: neondb_owner
+    # password: npg_E3lTM5aYOpNA
     driver-class-name: org.postgresql.Driver
     hikari:
       connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
@@ -51,6 +55,6 @@ app:
     expiration-ms: 86400000
   ai:
     provider: gemini
-    api-key: ${AI_API_KEY:}
+    api-key: ${AI_API_KEY:AIzaSyC0YE_xzWNMkSMTK5vcEAqhAZYL8X4a7zk}
     model: gemini-flash-lite-latest
     timeout-ms: 8000
