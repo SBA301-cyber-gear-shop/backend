@@ -281,4 +281,48 @@ class PurchaseApiTests {
                 .andExpect(status().isBadRequest());
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM promotion_usages", Integer.class));
     }
+
+    @Test
+    void partialCheckoutValidatesAndOnlyClearsPurchasedItems() throws Exception {
+        addItem(101, 1);
+        addItem(102, 1);
+
+        // 1. Validate only variant 101
+        mvc.perform(post("/api/checkout/validate").header("Authorization", token)
+                .contentType("application/json")
+                .content("""
+                        {"itemVariantIds":[101]}
+                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].productVariantId").value(101))
+                .andExpect(jsonPath("$.totalAmount").value(1200000));
+
+        // 2. Place order for only variant 101
+        mvc.perform(post("/api/orders").header("Authorization", token)
+                .header("Idempotency-Key", java.util.UUID.randomUUID().toString())
+                .contentType("application/json")
+                .content("""
+                        {
+                            "pickupName":"Khách Hàng",
+                            "pickupPhone":"0900000128",
+                            "note":"Giao nhanh",
+                            "method":"store",
+                            "expectedTotal":1200000,
+                            "expectedDiscount":0,
+                            "itemVariantIds":[101]
+                        }
+                        """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.totalAmount").value(1200000));
+
+        // 3. Verify cart still contains variant 102
+        Integer remainingCartItems = jdbc.queryForObject(
+                "SELECT count(*) FROM cart_items WHERE product_variant_id = 102", Integer.class);
+        assertEquals(1, remainingCartItems);
+
+        Integer purchasedCartItems = jdbc.queryForObject(
+                "SELECT count(*) FROM cart_items WHERE product_variant_id = 101", Integer.class);
+        assertEquals(0, purchasedCartItems);
+    }
 }

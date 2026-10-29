@@ -95,13 +95,23 @@ public class OrderServiceImpl implements OrderService {
                 .orElseThrow(() -> new BusinessException("Giỏ hàng đang trống."));
 
         List<CartLineProjection> cartItems = cartItemRepository.findForCheckout(cartId);
+        if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
+            Set<Integer> selectedSet = new HashSet<>(request.itemVariantIds());
+            cartItems = cartItems.stream()
+                    .filter(i -> selectedSet.contains(i.getProductVariantId()))
+                    .toList();
+            if (cartItems.isEmpty()) {
+                throw new BusinessException("Không có sản phẩm nào được chọn trong giỏ hàng.");
+            }
+        }
         Map<Integer, Integer> quantities = groupQuantities(cartItems);
         catalogApi.lockVariantsForPurchase(new ArrayList<>(quantities.keySet()));
 
         CheckoutDetailsResponse checkout = checkoutDetailsService.preview(
                 email,
                 new CheckoutDetailsRequest(
-                        request.pickupName(), request.pickupPhone(), request.note(), request.promotionCode()
+                        request.pickupName(), request.pickupPhone(), request.note(), request.promotionCode(),
+                        request.itemVariantIds()
                 )
         );
 
@@ -119,7 +129,11 @@ public class OrderServiceImpl implements OrderService {
         createOrderItems(order.getId(), quantities);
         promotionApi.reserve(voucher, customer.getId(), order.getId(), finalAmount.signum() == 0);
         paymentApi.createCounterPayment(order.getId(), finalAmount);
-        clearPurchasedCart(cartId);
+        if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
+            cartItemRepository.deleteByCartIdAndProductVariantIdIn(cartId, quantities.keySet());
+        } else {
+            clearPurchasedCart(cartId);
+        }
 
         return toResponse(order);
     }

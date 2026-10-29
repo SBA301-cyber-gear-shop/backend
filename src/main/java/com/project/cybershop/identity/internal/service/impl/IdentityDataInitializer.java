@@ -41,10 +41,10 @@ public class IdentityDataInitializer implements CommandLineRunner {
         }
 
         // 2. Seed Demo Accounts
-        // seedDemoUser("admin@techzone.demo", "0900000131", "Quản trị viên", "ADMIN");
-        // seedDemoUser("staff@techzone.demo", "0900000129", "Nhân viên cửa hàng", "STAFF");
-        // seedDemoUser("technician@techzone.demo", "0900000130", "Kỹ thuật viên", "TECHNICIAN");
-        // seedDemoUser("customer@techzone.demo", "0900000128", "Nguyễn Minh Anh", "CUSTOMER");
+        seedDemoUser("admin@techzone.demo", "0900000131", "Quản trị viên", "ADMIN");
+        seedDemoUser("staff@techzone.demo", "0900000129", "Nhân viên cửa hàng", "STAFF");
+        seedDemoUser("technician@techzone.demo", "0900000130", "Kỹ thuật viên", "TECHNICIAN");
+        seedDemoUser("customer@techzone.demo", "0900000128", "Nguyễn Minh Anh", "CUSTOMER");
     }
 
     private void seedDemoUser(String email, String phone, String fullName, String roleName) {

@@ -14,7 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -25,9 +27,14 @@ public class CheckoutServiceImpl implements CheckoutService {
     private final CartRepository cartRepository;
     private final CheckoutMapper checkoutMapper;
 
-    // Kiểm tra giỏ và tính tổng tiền; chưa tạo đơn hoặc thay đổi tồn kho.
     @Override
     public CheckoutPreviewResponse validate(String loginEmail) {
+        return validate(loginEmail, null);
+    }
+
+    // Kiểm tra giỏ và tính tổng tiền; chưa tạo đơn hoặc thay đổi tồn kho.
+    @Override
+    public CheckoutPreviewResponse validate(String loginEmail, List<Integer> itemVariantIds) {
         Integer userId = checkoutRepository.findActiveUserId(loginEmail)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy tài khoản đang hoạt động."));
 
@@ -37,6 +44,16 @@ public class CheckoutServiceImpl implements CheckoutService {
         List<CheckoutItemProjection> cartItems = checkoutRepository.findItemsForPreview(cart.getId());
         if (cartItems.isEmpty()) {
             throw new BusinessException("Giỏ hàng đang trống.");
+        }
+
+        if (itemVariantIds != null && !itemVariantIds.isEmpty()) {
+            Set<Integer> allowed = new HashSet<>(itemVariantIds);
+            cartItems = cartItems.stream()
+                    .filter(item -> allowed.contains(item.getProductVariantId()))
+                    .toList();
+            if (cartItems.isEmpty()) {
+                throw new BusinessException("Không có sản phẩm nào được chọn trong giỏ hàng.");
+            }
         }
 
         List<CheckoutItemResponse> items = cartItems.stream()

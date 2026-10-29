@@ -1,4 +1,3 @@
-
 package com.project.cybershop.order.internal.repository;
 
 import com.project.cybershop.order.internal.entity.CartItem;
@@ -8,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -44,4 +44,8 @@ public interface CartItemRepository extends JpaRepository<CartItem, Integer> {
     @Modifying(flushAutomatically = true)
     @Query(value = "DELETE FROM cart_items WHERE cart_id = :cartId", nativeQuery = true)
     void clearAfterCheckout(@Param("cartId") Integer cartId);
+
+    @Modifying(flushAutomatically = true)
+    @Query(value = "DELETE FROM cart_items WHERE cart_id = :cartId AND product_variant_id IN (:variantIds)", nativeQuery = true)
+    void deleteByCartIdAndProductVariantIdIn(@Param("cartId") Integer cartId, @Param("variantIds") Collection<Integer> variantIds);
 }
