@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     volumes:
       - postgres_data:/var/lib/postgresql
-      - ../neon_dump.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ../DB/docker-local-seed.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks:
       - cybershop-network
 
