@@ -3,16 +3,22 @@ package com.project.cybershop.pcbuild.internal.controller;
 import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.pcbuild.api.dto.request.AiBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.ReplacementQueryRequest;
 import com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.AiBuildResponse;
+import com.project.cybershop.pcbuild.api.dto.response.BuildOptionsResponse;
 import com.project.cybershop.pcbuild.api.dto.response.CompatibleReplacementResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildDetailResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildSummaryResponse;
+import com.project.cybershop.pcbuild.api.dto.response.ValidateBuildResponse;
 import com.project.cybershop.pcbuild.internal.service.AiPcBuilderService;
 import com.project.cybershop.pcbuild.internal.service.PcCustomService;
+import com.project.cybershop.pcbuild.internal.support.RateLimiter;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -34,34 +40,48 @@ public class PcBuildController {
     private final AiPcBuilderService aiPcBuilderService;
     private final PcCustomService pcCustomService;
     private final IdentityApi identityApi;
+    private final RateLimiter rateLimiter;
 
     @PostMapping("/ai-suggest")
     @Operation(summary = "Đề xuất cấu hình PC bằng AI dựa trên Database thực tế")
     public ResponseEntity<ApiResponseDTO<AiBuildResponse>> suggestBuild(
             @Valid @RequestBody AiBuildRequest request,
-            Principal principal
+            Principal principal,
+            HttpServletRequest httpRequest
     ) {
+        rateLimiter.acquire(RateLimiter.Bucket.AI_SUGGEST, clientKey(principal, httpRequest));
         Integer userId = resolveUserId(principal);
         AiBuildResponse response = aiPcBuilderService.processAiBuild(request, userId);
         return ResponseEntity.ok(ApiResponseDTO.success("Đã tạo đề xuất cấu hình PC bằng AI thành công", response));
     }
 
-    @GetMapping("/compatible-replacements")
-    @Operation(summary = "Lấy danh sách linh kiện thay thế tương thích thông minh")
-    public ResponseEntity<ApiResponseDTO<List<CompatibleReplacementResponse>>> getReplacements(
-            @RequestParam String role,
-            @RequestParam(required = false) Integer currentCpuId,
-            @RequestParam(required = false) Integer currentMbId,
-            @RequestParam(required = false) Integer currentRamId,
-            @RequestParam(required = false) Integer currentGpuId,
-            @RequestParam(required = false) Integer currentCaseId,
-            @RequestParam(required = false) Integer currentCoolerId,
-            @RequestParam(required = false) Integer currentPsuId
+    @GetMapping("/options")
+    @Operation(summary = "Giới hạn ngân sách, từ điển metadata và câu gợi ý nhu cầu cho form xây dựng cấu hình")
+    public ResponseEntity<ApiResponseDTO<BuildOptionsResponse>> options(Principal principal, HttpServletRequest httpRequest) {
+        rateLimiter.acquire(RateLimiter.Bucket.OPTIONS, clientKey(principal, httpRequest));
+        return ResponseEntity.ok(ApiResponseDTO.success(aiPcBuilderService.options()));
+    }
+
+    @PostMapping("/validate")
+    @Operation(summary = "Kiểm tra tương thích, ngân sách và tồn kho của toàn bộ cấu hình (giá lấy từ server)")
+    public ResponseEntity<ApiResponseDTO<ValidateBuildResponse>> validateBuild(
+            @Valid @RequestBody ValidateBuildRequest request,
+            Principal principal,
+            HttpServletRequest httpRequest
     ) {
-        List<CompatibleReplacementResponse> list = (currentRamId == null && currentGpuId == null && currentCaseId == null && currentCoolerId == null && currentPsuId == null)
-                ? pcCustomService.getCompatibleReplacements(role, currentCpuId, currentMbId)
-                : pcCustomService.getCompatibleReplacements(role, currentCpuId, currentMbId, currentRamId, currentGpuId, currentCaseId, currentCoolerId, currentPsuId);
-        return ResponseEntity.ok(ApiResponseDTO.success(list));
+        rateLimiter.acquire(RateLimiter.Bucket.VALIDATE, clientKey(principal, httpRequest));
+        return ResponseEntity.ok(ApiResponseDTO.success(pcCustomService.validateBuild(request)));
+    }
+
+    @PostMapping("/compatible-replacements")
+    @Operation(summary = "Danh sách linh kiện thay thế, mỗi ứng viên được kiểm trên toàn bộ cấu hình hiện tại")
+    public ResponseEntity<ApiResponseDTO<List<CompatibleReplacementResponse>>> queryReplacements(
+            @Valid @RequestBody ReplacementQueryRequest request,
+            Principal principal,
+            HttpServletRequest httpRequest
+    ) {
+        rateLimiter.acquire(RateLimiter.Bucket.REPLACEMENTS, clientKey(principal, httpRequest));
+        return ResponseEntity.ok(ApiResponseDTO.success(pcCustomService.getCompatibleReplacements(request)));
     }
 
     @PostMapping("/save")
@@ -82,26 +102,6 @@ public class PcBuildController {
         }
         Integer buildId = pcCustomService.saveNewBuild(request, userId);
         return ResponseEntity.ok(ApiResponseDTO.success("Đã lưu cấu hình vào danh sách yêu thích của bạn", buildId));
-    }
-
-    @PostMapping("/{buildId}/save")
-    @Operation(summary = "Lưu cấu hình PC vào tài khoản khách hàng")
-    public ResponseEntity<ApiResponseDTO<String>> saveBuild(
-            @PathVariable Integer buildId,
-            Principal principal
-    ) {
-        Integer userId = resolveUserId(principal);
-        if (userId == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
-                    ApiResponseDTO.<String>builder()
-                            .status(HttpStatus.UNAUTHORIZED.value())
-                            .message("Vui lòng đăng nhập để lưu cấu hình")
-                            .data(null)
-                            .build()
-            );
-        }
-        pcCustomService.saveBuildForUser(buildId, userId);
-        return ResponseEntity.ok(ApiResponseDTO.success("Đã lưu cấu hình vào danh sách yêu thích của bạn", "OK"));
     }
 
     @GetMapping("/my-builds")
@@ -161,6 +161,17 @@ public class PcBuildController {
         }
         pcCustomService.deleteSavedBuild(buildId, userId);
         return ResponseEntity.ok(ApiResponseDTO.success("Đã xóa cấu hình PC thành công", null));
+    }
+
+    /**
+     * Khóa rate limit: email của user đã đăng nhập (không tra DB, giữ 0 câu SQL cho /validate, AC13),
+     * nếu không thì IP kết nối. Không đọc X-Forwarded-For vì client tự đặt được (DD 11.1, U13).
+     */
+    private static String clientKey(Principal principal, HttpServletRequest httpRequest) {
+        if (principal != null && principal.getName() != null) {
+            return "user:" + principal.getName();
+        }
+        return "ip:" + httpRequest.getRemoteAddr();
     }
 
     private Integer resolveUserId(Principal principal) {

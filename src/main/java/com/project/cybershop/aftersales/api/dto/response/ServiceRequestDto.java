@@ -40,4 +40,6 @@ public class ServiceRequestDto {
     private boolean canAddNote;
     private boolean canRelinkCard;
     private boolean canReplaceDevice;
+    /** Còn hàng cùng phiên bản trong kho để lấy làm thiết bị thay thế. */
+    private boolean replacementInStock;
 }

@@ -1,0 +1,7 @@
+# Chỉ bật khi cần gỡ lỗi SQL: .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"
+spring:
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true

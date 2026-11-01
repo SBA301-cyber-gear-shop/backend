@@ -2,6 +2,7 @@ package com.project.cybershop.catalog.internal.service;
 
 import com.project.cybershop.catalog.api.dto.request.AttributeValueInputDto;
 import com.project.cybershop.catalog.api.dto.request.CreateVariantDto;
+import com.project.cybershop.catalog.api.dto.request.UpdateProductRequest;
 import com.project.cybershop.catalog.api.dto.request.UpdateVariantRequest;
 import com.project.cybershop.catalog.api.dto.response.ProductVariantResponse;
 import com.project.cybershop.catalog.internal.entity.*;
@@ -176,6 +177,70 @@ class ProductServiceTest {
 
     @Test
     @DisplayName("Cập nhật biến thể thành công")
+    void testUpdateProduct_ActiveWithoutRequiredSpec_KeepsDraft() {
+        stubDraftUpdateMissingPrimarySpec();
+        UpdateProductRequest request = new UpdateProductRequest("RAM", 1, 1, 36, "", ProductStatus.ACTIVE);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> productService.updateProduct(100, request));
+
+        assertTrue(ex.getMessage().contains("Socket"));
+        assertEquals(ProductStatus.DRAFT, mockProduct.getStatus());
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void testUpdateProduct_NoStatus_StaysDraft() {
+        stubDraftUpdateMissingPrimarySpec();
+        when(productRepository.save(any(Product.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        productService.updateProduct(100, new UpdateProductRequest("RAM mới", 1, 1, 36, "", null));
+
+        assertEquals(ProductStatus.DRAFT, mockProduct.getStatus());
+        assertEquals("RAM mới", mockProduct.getName());
+    }
+
+    private void stubDraftUpdateMissingPrimarySpec() {
+        mockProduct.setStatus(ProductStatus.DRAFT);
+        mockProduct.setVariants(List.of(mockVariant));
+        Brand brand = mock(Brand.class);
+        Category category = mockProduct.getCategory();
+        category.setId(1);
+        Specification required = mock(Specification.class);
+        lenient().when(required.getId()).thenReturn(7);
+        lenient().when(required.getName()).thenReturn("Socket");
+        CategorySpecification primary = mock(CategorySpecification.class);
+        lenient().when(primary.getSpecification()).thenReturn(required);
+        when(productRepository.findById(100)).thenReturn(Optional.of(mockProduct));
+        when(brandRepository.findById(1)).thenReturn(Optional.of(brand));
+        when(categoryRepository.findById(1)).thenReturn(Optional.of(category));
+        lenient().when(categorySpecRepository.findPrimarySpecsByCategoryId(1)).thenReturn(List.of(primary));
+    }
+
+    @Test
+    void testUpdateVariant_NullAttributes_KeepsExisting() {
+        when(productRepository.existsById(100)).thenReturn(true);
+        when(productVariantRepository.findWithAttributesById(200)).thenReturn(Optional.of(mockVariant));
+        when(productVariantRepository.findBySerialCode("SKU-X")).thenReturn(Optional.empty());
+        when(productVariantRepository.save(any(ProductVariant.class))).thenAnswer(inv -> inv.getArgument(0));
+        SpecificationValue existing = mock(SpecificationValue.class);
+        mockVariant.getAttributeValues().add(existing);
+
+        productService.updateVariant(100, 200, new UpdateVariantRequest(
+                "SKU-X", "Tên", null, BigDecimal.valueOf(100), null, 1, null, null));
+
+        assertEquals(List.of(existing), mockVariant.getAttributeValues());
+    }
+
+    @Test
+    void testAddVariant_NegativeOriginalOrTooLargePrice_ThrowsException() {
+        when(productRepository.findById(100)).thenReturn(Optional.of(mockProduct));
+        assertThrows(BusinessException.class, () -> productService.addVariant(100, new CreateVariantDto(
+                "SKU-N", "x", null, BigDecimal.valueOf(100), BigDecimal.valueOf(-1), 1, null, null)));
+        assertThrows(BusinessException.class, () -> productService.addVariant(100, new CreateVariantDto(
+                "SKU-L", "x", null, BigDecimal.valueOf(10_000_000_000L), null, 1, null, null)));
+    }
+
+    @Test
     void testUpdateVariant_Success() {
         when(productRepository.existsById(100)).thenReturn(true);
         when(productVariantRepository.findWithAttributesById(200)).thenReturn(Optional.of(mockVariant));

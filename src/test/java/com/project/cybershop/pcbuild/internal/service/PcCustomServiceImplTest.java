@@ -2,37 +2,50 @@ package com.project.cybershop.pcbuild.internal.service.impl;
 
 import com.project.cybershop.catalog.api.CatalogPublicApi;
 import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.pcbuild.api.dto.request.ReplacementQueryRequest;
+import com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.CompatibleReplacementResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildDetailResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildSummaryResponse;
+import com.project.cybershop.pcbuild.api.dto.response.ValidateBuildResponse;
 import com.project.cybershop.pcbuild.internal.entity.PcCustom;
 import com.project.cybershop.pcbuild.internal.entity.PcCustomItem;
 import com.project.cybershop.pcbuild.internal.repository.PcCustomRepository;
-import com.project.cybershop.pcbuild.internal.service.HardwareCompatibilityValidator;
+import com.project.cybershop.pcbuild.internal.service.CandidateRepositoryFacade;
 import com.project.cybershop.pcbuild.internal.service.PcCustomService;
+import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.RULES;
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.part;
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.snapshot;
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.validDesktop;
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.withSpec;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("PcCustomServiceImpl - Kiểm thử lưu cấu hình và lọc linh kiện thay thế thông minh")
+@DisplayName("PcCustomServiceImpl - Kiểm thử lưu cấu hình, /validate và linh kiện thay thế qua CompatibilityEngine")
 class PcCustomServiceImplTest {
 
     @Mock
@@ -42,39 +55,56 @@ class PcCustomServiceImplTest {
     private CatalogPublicApi catalogPublicApi;
 
     @Mock
-    private HardwareCompatibilityValidator validator;
+    private CandidateRepositoryFacade candidateRepositoryFacade;
+
+    // Engine thật: thuần bộ nhớ nên không cần mock
+    @Spy
+    private RuleBasedCompatibilityEngine compatibilityEngine = new RuleBasedCompatibilityEngine();
 
     @InjectMocks
     private PcCustomServiceImpl pcCustomService;
 
-    @Test
-    @DisplayName("Lưu cấu hình thành công: Gán userId cho PcCustom")
-    void shouldSaveBuildForUserSuccessfully() {
-        PcCustom custom = new PcCustom();
-        custom.setId(10);
+    // Bộ desktop chuẩn (variant 1–8, tổng 27.000.000) cùng 2 bo thay thế để thử replacements
+    private Map<String, ComponentCandidateDTO> desktop;
+    private ComponentCandidateDTO boardCompatible;
+    private ComponentCandidateDTO boardWrongSocket;
 
-        when(pcCustomRepository.findById(10)).thenReturn(Optional.of(custom));
+    @BeforeEach
+    void setUpBuild() {
+        desktop = validDesktop();
+        boardCompatible = withSpec(part(201, "mainboard", "B650M Pro", 3_500_000, desktop.get("mainboard").getSpecValuesById()), 1, "AM5");
+        boardWrongSocket = withSpec(part(202, "mainboard", "B760M LGA1700", 2_500_000, desktop.get("mainboard").getSpecValuesById()), 1, "LGA1700");
+    }
 
-        pcCustomService.saveBuildForUser(10, 1);
+    private void stubSnapshotWithDesktop() {
+        List<ComponentCandidateDTO> candidates = new ArrayList<>(desktop.values());
+        candidates.add(boardCompatible);
+        candidates.add(boardWrongSocket);
+        when(candidateRepositoryFacade.snapshot()).thenReturn(snapshot(RULES, candidates));
+    }
 
-        assertThat(custom.getUserId()).isEqualTo(1);
-        verify(pcCustomRepository).save(custom);
+    private List<ValidateBuildRequest.ItemPart> desktopItems() {
+        List<ValidateBuildRequest.ItemPart> items = new ArrayList<>();
+        for (String role : List.of("cpu", "mainboard", "ram", "gpu", "ssd", "psu", "case", "cooler")) {
+            items.add(new ValidateBuildRequest.ItemPart(role, desktop.get(role).getVariantId(), 1));
+        }
+        return items;
+    }
+
+    private List<SavePcBuildRequest.SavePartItem> desktopSaveItems() {
+        return desktopItems().stream()
+                .map(item -> SavePcBuildRequest.SavePartItem.builder().variantId(item.getVariantId())
+                        .role(item.getRole()).quantity(item.getQuantity()).unitPrice(BigDecimal.ONE).build())
+                .toList();
     }
 
     @Test
-    @DisplayName("Lưu mới cấu hình từ request: Tạo PcCustom và PcCustomItems gắn với userId")
-    void shouldSaveNewBuildSuccessfully() {
-        var req = com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest.builder()
-                .buildName("Gaming Rig")
-                .totalPrice(new BigDecimal("15000000"))
-                .items(List.of(
-                        com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest.SavePartItem.builder()
-                                .variantId(101).role("cpu").quantity(1).unitPrice(new BigDecimal("5000000")).build(),
-                        com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest.SavePartItem.builder()
-                                .variantId(201).role("mainboard").quantity(1).unitPrice(new BigDecimal("3000000")).build()
-                ))
-                .build();
-
+    @DisplayName("B17: Lưu mới cấu hình lấy giá mới theo id từ catalog, bỏ qua totalPrice/unitPrice client gửi")
+    void shouldSaveNewBuildWithCatalogPrices() {
+        var req = SavePcBuildRequest.builder().buildName("Gaming Rig").totalPrice(BigDecimal.ONE)
+                .items(desktopSaveItems()).build();
+        when(catalogPublicApi.getCandidatesByIds(any())).thenReturn(new ArrayList<>(desktop.values()));
+        stubSnapshotWithDesktop();
         when(pcCustomRepository.save(any())).thenAnswer(inv -> {
             PcCustom c = inv.getArgument(0);
             c.setId(88);
@@ -84,55 +114,127 @@ class PcCustomServiceImplTest {
         Integer savedId = pcCustomService.saveNewBuild(req, 15);
 
         assertThat(savedId).isEqualTo(88);
-        verify(pcCustomRepository).save(any(PcCustom.class));
+        ArgumentCaptor<PcCustom> captor = ArgumentCaptor.forClass(PcCustom.class);
+        verify(pcCustomRepository).save(captor.capture());
+        PcCustom saved = captor.getValue();
+        assertThat(saved.getUserId()).isEqualTo(15);
+        assertThat(saved.getTotalPrice()).isEqualByComparingTo("27000000");
+        assertThat(saved.getItems()).extracting(PcCustomItem::getUnitPrice)
+                .usingElementComparator(BigDecimal::compareTo)
+                .contains(new BigDecimal("5000000"), new BigDecimal("9000000"))
+                .doesNotContain(BigDecimal.ONE);
+        verify(catalogPublicApi, never()).getCandidateMapByIds(any());
     }
 
     @Test
-    @DisplayName("Lưu cấu hình thất bại khi ID không tồn tại -> Ném ResourceNotFoundException")
-    void shouldThrowExceptionWhenBuildNotFound() {
-        when(pcCustomRepository.findById(99)).thenReturn(Optional.empty());
+    @DisplayName("B17: Lưu cấu hình có linh kiện không tồn tại -> Ném BusinessException, không lưu")
+    void shouldRejectSaveWhenVariantNotInCatalog() {
+        var req = SavePcBuildRequest.builder()
+                .items(List.of(SavePcBuildRequest.SavePartItem.builder()
+                        .variantId(999).role("cpu").quantity(1).build()))
+                .build();
+        when(catalogPublicApi.getCandidatesByIds(any())).thenReturn(List.of());
 
-        assertThatThrownBy(() -> pcCustomService.saveBuildForUser(99, 1))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("Không tìm thấy cấu hình");
+        assertThatThrownBy(() -> pcCustomService.saveNewBuild(req, 15))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("#999");
+        verify(pcCustomRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("Lọc linh kiện thay thế: Đánh dấu tương thích chính xác dựa trên Socket CPU và Mainboard")
-    void shouldReturnReplacementsWithCompatibilityFlag() {
-        ComponentCandidateDTO currentCpu = ComponentCandidateDTO.builder()
-                .variantId(101)
-                .categorySlug("cpu")
-                .specs(Map.of("Socket", "LGA1700"))
-                .build();
+    @DisplayName("Lưu build không tương thích -> 422 BUILD_INCOMPATIBLE kèm checks, không lưu")
+    void shouldRejectIncompatibleBuildOnSave() {
+        desktop.put("mainboard", boardWrongSocket);
+        var req = SavePcBuildRequest.builder().items(desktopSaveItems()).build();
+        when(catalogPublicApi.getCandidatesByIds(any())).thenReturn(new ArrayList<>(desktop.values()));
+        stubSnapshotWithDesktop();
 
-        ComponentCandidateDTO mbCompat = ComponentCandidateDTO.builder()
-                .variantId(201)
-                .categorySlug("mainboard")
-                .productName("Mainboard LGA1700")
-                .price(new BigDecimal("3000000"))
-                .specs(Map.of("Socket", "LGA1700"))
-                .build();
+        assertThatThrownBy(() -> pcCustomService.saveNewBuild(req, 15))
+                .isInstanceOf(BuildRuleException.class)
+                .satisfies(error -> {
+                    BuildRuleException exception = (BuildRuleException) error;
+                    assertThat(exception.getCode()).isEqualTo("BUILD_INCOMPATIBLE");
+                    assertThat(exception.getHttpStatus().value()).isEqualTo(422);
+                    assertThat(exception.getData()).isInstanceOf(Map.class);
+                    assertThat(((Map<?, ?>) exception.getData()).containsKey("checks")).isTrue();
+                });
+        verify(pcCustomRepository, never()).save(any());
+    }
 
-        ComponentCandidateDTO mbIncompat = ComponentCandidateDTO.builder()
-                .variantId(202)
-                .categorySlug("mainboard")
-                .productName("Mainboard AM5")
-                .price(new BigDecimal("2500000"))
-                .specs(Map.of("Socket", "AM5"))
-                .build();
+    @Test
+    @DisplayName("/validate: giá từ snapshot, budgetFit đúng, không truy vấn catalog khi mọi món còn hàng")
+    void shouldValidateBuildFromSnapshot() {
+        stubSnapshotWithDesktop();
+        ValidateBuildRequest request = new ValidateBuildRequest(new BigDecimal("28000000"), desktopItems());
 
-        when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(List.of(mbCompat, mbIncompat));
-        when(catalogPublicApi.getCandidateMapByIds(any())).thenReturn(Map.of(101, currentCpu));
+        ValidateBuildResponse response = pcCustomService.validateBuild(request);
 
-        List<CompatibleReplacementResponse> res = pcCustomService.getCompatibleReplacements("mainboard", 101, null);
+        assertThat(response.isCompatible()).isTrue();
+        assertThat(response.getTotalPrice()).isEqualByComparingTo("27000000");
+        assertThat(response.getBudgetFit().getStatus()).isEqualTo("IN_WINDOW");
+        assertThat(response.getBudgetFit().getPercent()).isEqualByComparingTo("96.4");
+        assertThat(response.getBudgetFit().getLeftover()).isEqualByComparingTo("1000000");
+        assertThat(response.getItems()).hasSize(8);
+        assertThat(response.getRequiredPsuW()).isEqualTo(650);
+        verifyNoInteractions(catalogPublicApi);
+    }
 
-        assertThat(res).hasSize(2);
-        // Linh kiện tương thích được xếp trước
-        assertThat(res.get(0).getVariantId()).isEqualTo(201);
-        assertThat(res.get(0).isCompatible()).isTrue();
-        assertThat(res.get(1).getVariantId()).isEqualTo(202);
-        assertThat(res.get(1).isCompatible()).isFalse();
+    @Test
+    @DisplayName("/validate: tổng vượt ngân sách -> J8a fail, budgetFit OVER")
+    void shouldReportOverBudget() {
+        stubSnapshotWithDesktop();
+
+        ValidateBuildResponse response = pcCustomService.validateBuild(
+                new ValidateBuildRequest(new BigDecimal("26000000"), desktopItems()));
+
+        assertThat(response.isCompatible()).isFalse();
+        assertThat(response.getBudgetFit().getStatus()).isEqualTo("OVER");
+        assertThat(response.getBudgetFit().getLeftover()).isEqualByComparingTo("-1000000");
+        assertThat(response.getChecks().get(0).getKey()).isEqualTo("J8a");
+    }
+
+    @Test
+    @DisplayName("/validate: món hết hàng và id không tồn tại -> check STOCK fail, không ném lỗi")
+    void shouldReportStockProblemsAsChecks() {
+        stubSnapshotWithDesktop();
+        ComponentCandidateDTO soldOutPsu = part(600, "psu", "PSU hết hàng", 2_000_000, Map.of(14, "750"));
+        when(catalogPublicApi.getCandidatesByIds(List.of(600, 777))).thenReturn(List.of(soldOutPsu));
+        List<ValidateBuildRequest.ItemPart> items = new ArrayList<>(desktopItems());
+        items.set(5, new ValidateBuildRequest.ItemPart("psu", 600, 1));
+        items.add(new ValidateBuildRequest.ItemPart("ssd", 777, 1));
+
+        ValidateBuildResponse response = pcCustomService.validateBuild(new ValidateBuildRequest(null, items));
+
+        assertThat(response.isCompatible()).isFalse();
+        assertThat(response.getChecks()).filteredOn(check -> "STOCK".equals(check.getKey()))
+                .extracting(check -> check.getDetail())
+                .containsExactlyInAnyOrder("PSU hết hàng đã hết hàng hoặc ngừng kinh doanh", "Linh kiện #777 không tồn tại");
+        assertThat(response.getBudgetFit()).isNull();
+        assertThat(response.getItems()).hasSize(8);
+    }
+
+    @Test
+    @DisplayName("POST replacements: mỗi ứng viên được kiểm trên toàn bộ build bằng engine, tương thích xếp trước")
+    void shouldRankReplacementsWithEngine() {
+        stubSnapshotWithDesktop();
+        ReplacementQueryRequest request = ReplacementQueryRequest.builder()
+                .role("mainboard").budget(new BigDecimal("28000000")).items(desktopItems()).build();
+
+        List<CompatibleReplacementResponse> res = pcCustomService.getCompatibleReplacements(request);
+
+        // Bo hiện tại (tổng 27 tr) sát B = 28 tr hơn bo 201 (26,5 tr); bo lệch socket xếp cuối
+        assertThat(res).extracting(CompatibleReplacementResponse::getVariantId).containsExactly(2, 201, 202);
+        CompatibleReplacementResponse cheaper = res.get(1);
+        assertThat(cheaper.isCompatible()).isTrue();
+        assertThat(cheaper.getStatus()).isEqualTo("pass");
+        assertThat(cheaper.getPriceDelta()).isEqualByComparingTo("-500000");
+        assertThat(cheaper.getNewTotal()).isEqualByComparingTo("26500000");
+        assertThat(cheaper.getNewPercent()).isEqualByComparingTo("94.64");
+        CompatibleReplacementResponse wrongSocket = res.get(2);
+        assertThat(wrongSocket.isCompatible()).isFalse();
+        assertThat(wrongSocket.getFailedChecks()).containsExactly("R1");
+        assertThat(wrongSocket.getCompatibilityNote()).contains("Không tương thích");
+        verifyNoInteractions(catalogPublicApi);
     }
 
     @Test

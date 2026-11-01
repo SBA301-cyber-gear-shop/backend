@@ -129,7 +129,7 @@ public class CartServiceImpl implements CartService {
         List<CartResponse.CartItemResponse> items = new ArrayList<>();
         int totalQuantity = 0;
         BigDecimal totalAmount = BigDecimal.ZERO;
-        for (CartItem cartItem : cartItemRepository.findByCartId(cart.getId())) {
+        for (CartItem cartItem : cartItemRepository.findByCartIdOrderByIdAsc(cart.getId())) {
             validateQuantity(cartItem.getQuantity());
             PurchaseVariantResponse product = catalogApi.findActiveVariant(cartItem.getProductVariantId())
                     .orElse(null);

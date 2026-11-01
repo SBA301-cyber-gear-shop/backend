@@ -1,13 +1,18 @@
 package com.project.cybershop.catalog.internal.service;
 
+import com.project.cybershop.catalog.api.dto.CategorySpecDto;
 import com.project.cybershop.catalog.internal.entity.Brand;
 import com.project.cybershop.catalog.internal.entity.Category;
+import com.project.cybershop.catalog.internal.entity.CategorySpecification;
 import com.project.cybershop.catalog.internal.entity.Product;
 import com.project.cybershop.catalog.internal.entity.ProductVariant;
 import com.project.cybershop.catalog.internal.entity.Specification;
+import com.project.cybershop.catalog.internal.entity.SpecificationOption;
 import com.project.cybershop.catalog.internal.entity.SpecificationValue;
 import com.project.cybershop.catalog.internal.repository.BrandRepository;
+import com.project.cybershop.catalog.internal.repository.CategorySpecificationRepository;
 import com.project.cybershop.catalog.internal.repository.ProductVariantRepository;
+import com.project.cybershop.catalog.internal.repository.SpecificationOptionRepository;
 import com.project.cybershop.catalog.internal.repository.SpecificationValueRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,7 +25,11 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -35,6 +44,12 @@ class CatalogPublicApiImplTest {
 
     @Mock
     private BrandRepository brandRepository;
+
+    @Mock
+    private CategorySpecificationRepository categorySpecificationRepository;
+
+    @Mock
+    private SpecificationOptionRepository specificationOptionRepository;
 
     @InjectMocks
     private CatalogPublicApiImpl catalogPublicApi;
@@ -99,9 +114,7 @@ class CatalogPublicApiImplTest {
         assertThat(dto.getSpec("Socket")).isEqualTo("LGA1700");
     }
 
-    @Test
-    @DisplayName("getCandidateMapByIds: Lọc và trả về Map ứng viên theo danh sách ID yêu cầu")
-    void shouldReturnCandidateMapByIds() {
+    private ProductVariant gpuVariant(int stock) {
         Category category = new Category();
         category.setId(4);
         category.setSlug("gpu");
@@ -116,14 +129,74 @@ class CatalogPublicApiImplTest {
         pv.setId(104);
         pv.setProduct(product);
         pv.setPrice(new BigDecimal("7990000"));
+        pv.setStockQuantity(stock);
+        return pv;
+    }
 
-        when(variantRepository.findAllActiveInStock()).thenReturn(List.of(pv));
+    @Test
+    @DisplayName("getCandidateMapByIds: Truy vấn theo id (không tải cả kho, B18) và trả về Map ứng viên")
+    void shouldReturnCandidateMapByIds() {
+        // Từ giai đoạn 1 method này đọc theo id thay vì lọc toàn bộ kho còn hàng (DD 9.5, B18)
+        when(variantRepository.findAllById(any())).thenReturn(List.of(gpuVariant(5)));
         when(specValueRepository.findByProductVariantIdIn(anyList())).thenReturn(List.of());
 
         var map = catalogPublicApi.getCandidateMapByIds(List.of(104));
 
         assertThat(map).containsKey(104);
         assertThat(map.get(104).getProductName()).isEqualTo("RTX 4060");
+        verify(variantRepository, never()).findAllActiveInStock();
+    }
+
+    @Test
+    @DisplayName("getCandidatesByIds: Trả cả biến thể hết hàng để build đã lưu vẫn hiện tên (B18)")
+    void shouldReturnOutOfStockVariantsById() {
+        when(variantRepository.findAllById(any())).thenReturn(List.of(gpuVariant(0)));
+        when(specValueRepository.findByProductVariantIdIn(List.of(104))).thenReturn(List.of());
+
+        var candidates = catalogPublicApi.getCandidatesByIds(List.of(104, 104));
+
+        assertThat(candidates).singleElement().satisfies(dto -> {
+            assertThat(dto.getStockQuantity()).isZero();
+            assertThat(dto.getPrice()).isEqualByComparingTo("7990000");
+        });
+    }
+
+    @Test
+    @DisplayName("getCandidatesByIds: Danh sách rỗng -> không truy vấn DB")
+    void shouldNotQueryWhenIdsEmpty() {
+        assertThat(catalogPublicApi.getCandidatesByIds(List.of())).isEmpty();
+        verifyNoInteractions(variantRepository, specValueRepository);
+    }
+
+    @Test
+    @DisplayName("getSpecificationCatalog: Ghép cờ is_compatibility và option ENUM theo thông số")
+    void shouldBuildSpecificationCatalog() {
+        Category cpu = new Category();
+        cpu.setId(1);
+        cpu.setSlug("cpu");
+        cpu.setName("Bộ vi xử lý");
+        Specification socket = new Specification("Socket");
+        socket.setId(1);
+        Specification cores = new Specification("Core_Count");
+        cores.setId(22);
+
+        CategorySpecification required = new CategorySpecification(cpu, socket, true, true, true, true);
+        CategorySpecification optional = new CategorySpecification(cpu, cores, false, true, false, false);
+        when(categorySpecificationRepository.findAll()).thenReturn(List.of(required, optional));
+        when(specificationOptionRepository.findAll()).thenReturn(List.of(
+                new SpecificationOption(socket, "AM5", "AMD AM5"),
+                new SpecificationOption(socket, "LGA1700", "Intel LGA1700")));
+
+        var catalog = catalogPublicApi.getSpecificationCatalog();
+
+        assertThat(catalog).hasSize(2);
+        CategorySpecDto socketRow = catalog.get(0);
+        assertThat(socketRow.getCategorySlug()).isEqualTo("cpu");
+        assertThat(socketRow.getSpecificationName()).isEqualTo("Socket");
+        assertThat(socketRow.isCompatibility()).isTrue();
+        assertThat(socketRow.getOptions()).extracting(CategorySpecDto.Option::getCode).containsExactly("AM5", "LGA1700");
+        assertThat(catalog.get(1).isCompatibility()).isFalse();
+        assertThat(catalog.get(1).getOptions()).isEmpty();
     }
 
     @Test

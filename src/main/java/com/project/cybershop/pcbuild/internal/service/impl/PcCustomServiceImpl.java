@@ -2,64 +2,110 @@ package com.project.cybershop.pcbuild.internal.service.impl;
 
 import com.project.cybershop.catalog.api.CatalogPublicApi;
 import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.pcbuild.api.dto.request.ReplacementQueryRequest;
 import com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.response.BudgetFitResponse;
+import com.project.cybershop.pcbuild.api.dto.response.CompatibilityCheckResponse;
 import com.project.cybershop.pcbuild.api.dto.response.CompatibleReplacementResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildDetailResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildSummaryResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SelectedPartResponse;
+import com.project.cybershop.pcbuild.api.dto.response.ValidateBuildResponse;
 import com.project.cybershop.pcbuild.internal.entity.PcCustom;
 import com.project.cybershop.pcbuild.internal.entity.PcCustomItem;
+import com.project.cybershop.pcbuild.internal.model.BuildLine;
+import com.project.cybershop.pcbuild.internal.model.CompatibilitySnapshot;
+import com.project.cybershop.pcbuild.internal.model.EngineReport;
+import com.project.cybershop.pcbuild.internal.model.EvaluationContext;
 import com.project.cybershop.pcbuild.internal.repository.PcCustomRepository;
-import com.project.cybershop.pcbuild.internal.service.HardwareCompatibilityValidator;
+import com.project.cybershop.pcbuild.internal.service.CandidateRepositoryFacade;
+import com.project.cybershop.pcbuild.internal.service.CompatibilityEngine;
 import com.project.cybershop.pcbuild.internal.service.PcCustomService;
+import com.project.cybershop.pcbuild.internal.service.ProfileValidator;
+import com.project.cybershop.pcbuild.internal.model.ValidatedProfile;
+import com.project.cybershop.pcbuild.api.dto.profile.RequirementProfileDto;
+import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class PcCustomServiceImpl implements PcCustomService {
 
+    private static final BigDecimal BUDGET_WINDOW_MIN = new BigDecimal("0.90"); // [ĐÃ CHỐT] cận dưới cửa sổ ngân sách
+    private static final int DEFAULT_REPLACEMENT_LIMIT = 30;
+
     private final PcCustomRepository pcCustomRepository;
     private final CatalogPublicApi catalogPublicApi;
-    private final HardwareCompatibilityValidator validator;
+    private final CandidateRepositoryFacade candidateRepositoryFacade;
+    private final CompatibilityEngine compatibilityEngine;
+    private final ProfileValidator profileValidator;
 
-    @Override
-    @Transactional
-    public Integer saveNewBuild(SavePcBuildRequest request, Integer userId) {
-        PcCustom custom = new PcCustom();
-        custom.setUserId(userId);
-        custom.setTotalPrice(request.getTotalPrice());
-
-        if (request.getItems() != null) {
-            for (SavePcBuildRequest.SavePartItem itemDto : request.getItems()) {
-                PcCustomItem item = new PcCustomItem();
-                item.setPcCustom(custom);
-                item.setProductVariantId(itemDto.getVariantId());
-                item.setComponentRole(itemDto.getRole());
-                item.setQuantity(itemDto.getQuantity());
-                item.setUnitPrice(itemDto.getUnitPrice());
-                custom.getItems().add(item);
-            }
-        }
-
-        PcCustom saved = pcCustomRepository.save(custom);
-        return saved.getId();
+    // Hồ sơ client gửi là dữ liệu không tin cậy: luôn qua ProfileValidator (USER_EDITED) trước khi dùng
+    private ValidatedProfile validatedProfile(RequirementProfileDto profile, CompatibilitySnapshot snapshot) {
+        return profile == null ? null
+                : profileValidator.validate(profile, snapshot.dictionary(), ProfileValidator.SOURCE_USER_EDITED, null);
     }
 
     @Override
     @Transactional
-    public void saveBuildForUser(Integer buildId, Integer userId) {
-        PcCustom custom = pcCustomRepository.findById(buildId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy cấu hình #" + buildId));
+    public Integer saveNewBuild(SavePcBuildRequest request, Integer userId) {
+        List<SavePcBuildRequest.SavePartItem> items = request.getItems() != null ? request.getItems() : List.of();
+        // Giá đọc mới từ DB theo id (không qua cache), bỏ qua totalPrice/unitPrice client gửi (B17, DD 11.3)
+        Map<Integer, ComponentCandidateDTO> catalog = items.isEmpty()
+                ? Collections.emptyMap()
+                : catalogPublicApi.getCandidatesByIds(items.stream()
+                        .map(SavePcBuildRequest.SavePartItem::getVariantId).distinct().toList())
+                        .stream().collect(Collectors.toMap(ComponentCandidateDTO::getVariantId, Function.identity()));
+
+        List<BuildLine> lines = new ArrayList<>();
+        for (SavePcBuildRequest.SavePartItem itemDto : items) {
+            ComponentCandidateDTO candidate = catalog.get(itemDto.getVariantId());
+            if (candidate == null || candidate.getPrice() == null) {
+                throw new BusinessException("Linh kiện #" + itemDto.getVariantId() + " không tồn tại hoặc chưa có giá");
+            }
+            lines.add(new BuildLine(itemDto.getRole(), candidate, itemDto.getQuantity()));
+        }
+
+        // Luật và thông số bắt buộc lấy từ snapshot; không kiểm ngân sách khi lưu (DD 9.4)
+        EngineReport report = compatibilityEngine.evaluate(lines,
+                new EvaluationContext(null, EvaluationContext.Mode.USER, candidateRepositoryFacade.snapshot()));
+        if (!report.compatible()) {
+            throw new BuildRuleException("BUILD_INCOMPATIBLE", HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Cấu hình có linh kiện không tương thích, chưa thể lưu", Map.of("checks", report.checks()));
+        }
+
+        PcCustom custom = new PcCustom();
         custom.setUserId(userId);
-        pcCustomRepository.save(custom);
+        BigDecimal total = BigDecimal.ZERO;
+
+        for (SavePcBuildRequest.SavePartItem itemDto : items) {
+            ComponentCandidateDTO candidate = catalog.get(itemDto.getVariantId());
+            PcCustomItem item = new PcCustomItem();
+            item.setPcCustom(custom);
+            item.setProductVariantId(itemDto.getVariantId());
+            item.setComponentRole(itemDto.getRole());
+            item.setQuantity(itemDto.getQuantity());
+            item.setUnitPrice(candidate.getPrice());
+            custom.getItems().add(item);
+            total = total.add(candidate.getPrice().multiply(BigDecimal.valueOf(itemDto.getQuantity())));
+        }
+        custom.setTotalPrice(total);
+
+        PcCustom saved = pcCustomRepository.save(custom);
+        return saved.getId();
     }
 
     @Override
@@ -224,184 +270,233 @@ public class PcCustomServiceImpl implements PcCustomService {
         return "Cấu hình PC Custom #" + buildId;
     }
 
+    // Không @Transactional: chỉ đọc snapshot trong bộ nhớ, 0 câu SQL khi cache ấm (AC13)
     @Override
-    @Transactional(readOnly = true)
-    public List<CompatibleReplacementResponse> getCompatibleReplacements(
-            String role,
-            Integer currentCpuId,
-            Integer currentMbId,
-            Integer currentRamId,
-            Integer currentGpuId,
-            Integer currentCaseId,
-            Integer currentCoolerId,
-            Integer currentPsuId
-    ) {
-        List<ComponentCandidateDTO> candidates = catalogPublicApi.getActiveCandidatesForBuild();
-        List<Integer> idsToFetch = new java.util.ArrayList<>();
-        if (currentCpuId != null) idsToFetch.add(currentCpuId);
-        if (currentMbId != null) idsToFetch.add(currentMbId);
-        if (currentRamId != null) idsToFetch.add(currentRamId);
-        if (currentGpuId != null) idsToFetch.add(currentGpuId);
-        if (currentCaseId != null) idsToFetch.add(currentCaseId);
-        if (currentCoolerId != null) idsToFetch.add(currentCoolerId);
-        if (currentPsuId != null) idsToFetch.add(currentPsuId);
+    public ValidateBuildResponse validateBuild(ValidateBuildRequest request) {
+        CompatibilitySnapshot snapshot = candidateRepositoryFacade.snapshot();
+        ResolvedBuild build = resolveBuild(request.getItems(), snapshot);
+        EngineReport report = compatibilityEngine.evaluate(build.lines(),
+                        new EvaluationContext(request.getBudget(), validatedProfile(request.getProfile(), snapshot),
+                                EvaluationContext.Mode.USER, snapshot))
+                .withExtraChecks(build.stockChecks());
 
-        Map<Integer, ComponentCandidateDTO> map = idsToFetch.isEmpty()
-                ? Collections.emptyMap()
-                : catalogPublicApi.getCandidateMapByIds(idsToFetch);
+        return ValidateBuildResponse.builder()
+                .isCompatible(report.compatible())
+                .hasWarnings(report.hasWarnings())
+                .hasUnknown(report.hasUnknown())
+                .totalPrice(report.total())
+                .budgetFit(buildBudgetFit(report.total(), request.getBudget()))
+                .checks(report.checks())
+                .requiredPsuW(report.requiredPsuW())
+                .capacity(report.capacity())
+                .items(build.lines().stream().filter(Objects::nonNull).map(PcCustomServiceImpl::toSelectedPart).toList())
+                .build();
+    }
 
-        ComponentCandidateDTO cpu = currentCpuId != null ? map.get(currentCpuId) : null;
-        ComponentCandidateDTO mb = currentMbId != null ? map.get(currentMbId) : null;
-        ComponentCandidateDTO ram = currentRamId != null ? map.get(currentRamId) : null;
-        ComponentCandidateDTO gpu = currentGpuId != null ? map.get(currentGpuId) : null;
-        ComponentCandidateDTO pcCase = currentCaseId != null ? map.get(currentCaseId) : null;
-        ComponentCandidateDTO cooler = currentCoolerId != null ? map.get(currentCoolerId) : null;
-        ComponentCandidateDTO psu = currentPsuId != null ? map.get(currentPsuId) : null;
+    @Override
+    public List<CompatibleReplacementResponse> getCompatibleReplacements(ReplacementQueryRequest request) {
+        String role = normalizeRole(request.getRole());
+        CompatibilitySnapshot snapshot = candidateRepositoryFacade.snapshot(); // một lần cho mọi ứng viên
+        List<ValidateBuildRequest.ItemPart> items = request.getItems() != null ? request.getItems() : List.of();
+        List<BuildLine> currentLines = resolveBuild(items, snapshot).lines();
+        int targetIndex = findReplacementIndex(items, role, request.getLineIndex());
+        int quantity = targetIndex >= 0 && items.get(targetIndex).getQuantity() != null
+                ? items.get(targetIndex).getQuantity() : 1;
+        BigDecimal currentTotal = totalOf(currentLines);
+        BigDecimal budget = request.getBudget();
+        EvaluationContext ctx = new EvaluationContext(budget, validatedProfile(request.getProfile(), snapshot),
+                EvaluationContext.Mode.USER, snapshot);
+        Set<String> preExisting = preExistingIssues(currentLines, targetIndex, ctx);
 
-        return candidates.stream()
-                .filter(c -> c.getCategorySlug().equalsIgnoreCase(role))
-                .map(c -> {
-                    boolean ok = true;
-                    String note = "Tương thích tốt";
+        // DD 9.3: tương thích trước → không warning → |newTotal − B| tăng dần → giá tăng dần
+        Comparator<CompatibleReplacementResponse> order = Comparator
+                .comparing((CompatibleReplacementResponse response) -> !response.isCompatible())
+                .thenComparing(response -> !response.getWarningChecks().isEmpty());
+        if (budget != null) {
+            order = order.thenComparing(response -> response.getNewTotal().subtract(budget).abs());
+        }
+        order = order.thenComparing(CompatibleReplacementResponse::getPrice, Comparator.nullsLast(Comparator.naturalOrder()));
 
-                    // 1. Kiểm tra Socket CPU vs Mainboard
-                    if ("mainboard".equalsIgnoreCase(role) && cpu != null) {
-                        String cpuSocket = cpu.getSpec("Socket");
-                        String mbSocket = c.getSpec("Socket");
-                        if (cpuSocket != null && mbSocket != null && !cpuSocket.equalsIgnoreCase(mbSocket)) {
-                            ok = false;
-                            note = "Lệch socket với CPU (Cần " + cpuSocket + ")";
-                        }
-                    } else if ("cpu".equalsIgnoreCase(role) && mb != null) {
-                        String mbSocket = mb.getSpec("Socket");
-                        String cpuSocket = c.getSpec("Socket");
-                        if (mbSocket != null && cpuSocket != null && !mbSocket.equalsIgnoreCase(cpuSocket)) {
-                            ok = false;
-                            note = "Lệch socket với Bo mạch (Cần " + mbSocket + ")";
-                        }
+        int limit = request.getLimit() != null ? request.getLimit() : DEFAULT_REPLACEMENT_LIMIT;
+        return snapshot.candidates().stream()
+                .filter(candidate -> role.equalsIgnoreCase(candidate.getCategorySlug()))
+                .map(candidate -> {
+                    List<BuildLine> lines = new ArrayList<>(currentLines);
+                    BuildLine replacement = new BuildLine(role, candidate, quantity);
+                    if (targetIndex >= 0) {
+                        lines.set(targetIndex, replacement);
+                    } else {
+                        lines.add(replacement);
                     }
-
-                    // 2. Kiểm tra chuẩn RAM (Memory_Type: DDR4 / DDR5)
-                    if (ok && "ram".equalsIgnoreCase(role) && mb != null) {
-                        String mbRamType = mb.getSpec("Memory_Type");
-                        String ramType = c.getSpec("Memory_Type");
-                        if (mbRamType != null && ramType != null && !mbRamType.equalsIgnoreCase(ramType)) {
-                            ok = false;
-                            note = "Lệch chuẩn RAM: Bo mạch dùng " + mbRamType + " (RAM này là " + ramType + ")";
-                        }
-                    } else if (ok && "mainboard".equalsIgnoreCase(role) && ram != null) {
-                        String mbRamType = c.getSpec("Memory_Type");
-                        String ramType = ram.getSpec("Memory_Type");
-                        if (mbRamType != null && ramType != null && !mbRamType.equalsIgnoreCase(ramType)) {
-                            ok = false;
-                            note = "Lệch chuẩn RAM: Bo mạch này dùng " + mbRamType + " (RAM đang chọn là " + ramType + ")";
-                        }
-                    }
-
-                    // 3. Kiểm tra kích thước VGA trong Case
-                    if (ok && "gpu".equalsIgnoreCase(role) && pcCase != null) {
-                        try {
-                            int gpuLen = Integer.parseInt(c.getSpecOrDefault("Length_MM", "0"));
-                            int maxGpu = Integer.parseInt(pcCase.getSpecOrDefault("Max_GPU_Length_MM", "9999"));
-                            if (gpuLen > maxGpu && maxGpu > 0) {
-                                ok = false;
-                                note = "Card dài " + gpuLen + "mm vượt quá vỏ case (" + maxGpu + "mm)";
-                            }
-                        } catch (NumberFormatException ignored) {}
-                    } else if (ok && "case".equalsIgnoreCase(role) && gpu != null) {
-                        try {
-                            int gpuLen = Integer.parseInt(gpu.getSpecOrDefault("Length_MM", "0"));
-                            int maxGpu = Integer.parseInt(c.getSpecOrDefault("Max_GPU_Length_MM", "9999"));
-                            if (gpuLen > maxGpu && maxGpu > 0) {
-                                ok = false;
-                                note = "Vỏ case hỗ trợ VGA tối đa " + maxGpu + "mm (Card hiện tại dài " + gpuLen + "mm)";
-                            }
-                        } catch (NumberFormatException ignored) {}
-                    }
-
-                    // 4. Kiểm tra chiều cao Tản nhiệt CPU trong Case (cho tản khí)
-                    if (ok && "cooler".equalsIgnoreCase(role) && pcCase != null) {
-                        String coolerType = c.getSpecOrDefault("Cooler_Type", "Air");
-                        if (!"Liquid".equalsIgnoreCase(coolerType)) {
-                            try {
-                                int coolerHeight = Integer.parseInt(c.getSpecOrDefault("Height_MM", "0"));
-                                int maxCooler = Integer.parseInt(pcCase.getSpecOrDefault("Max_Cooler_Height_MM", "9999"));
-                                if (coolerHeight > maxCooler && maxCooler > 0) {
-                                    ok = false;
-                                    note = "Tản nhiệt cao " + coolerHeight + "mm cấn nắp vỏ case (Tối đa " + maxCooler + "mm)";
-                                }
-                            } catch (NumberFormatException ignored) {}
-                        }
-                    } else if (ok && "case".equalsIgnoreCase(role) && cooler != null) {
-                        String coolerType = cooler.getSpecOrDefault("Cooler_Type", "Air");
-                        if (!"Liquid".equalsIgnoreCase(coolerType)) {
-                            try {
-                                int coolerHeight = Integer.parseInt(cooler.getSpecOrDefault("Height_MM", "0"));
-                                int maxCooler = Integer.parseInt(c.getSpecOrDefault("Max_Cooler_Height_MM", "9999"));
-                                if (coolerHeight > maxCooler && maxCooler > 0) {
-                                    ok = false;
-                                    note = "Vỏ case hỗ trợ tản tối đa " + maxCooler + "mm (Tản hiện tại cao " + coolerHeight + "mm)";
-                                }
-                            } catch (NumberFormatException ignored) {}
-                        }
-                    }
-
-                    // 5. Kiểm tra Tản nhiệt có hỗ trợ Socket của CPU không
-                    if (ok && "cooler".equalsIgnoreCase(role) && cpu != null) {
-                        String supportedSockets = c.getSpecOrDefault("Supported_Sockets", "");
-                        String cpuSocket = cpu.getSpec("Socket");
-                        if (cpuSocket != null && !supportedSockets.isBlank() && !supportedSockets.toUpperCase().contains(cpuSocket.toUpperCase())) {
-                            ok = false;
-                            note = "Tản nhiệt không hỗ trợ socket " + cpuSocket;
-                        }
-                    }
-
-                    // 6. Kiểm tra Kích thước Mainboard (Form_Factor) có vừa Case không
-                    if (ok && "case".equalsIgnoreCase(role) && mb != null) {
-                        String supportedMb = c.getSpecOrDefault("Supported_Motherboards", "");
-                        String mbFormFactor = mb.getSpec("Form_Factor");
-                        if (mbFormFactor != null && !supportedMb.isBlank() && !supportedMb.toUpperCase().contains(mbFormFactor.toUpperCase())) {
-                            ok = false;
-                            note = "Vỏ case không hỗ trợ bo mạch chuẩn " + mbFormFactor;
-                        }
-                    } else if (ok && "mainboard".equalsIgnoreCase(role) && pcCase != null) {
-                        String supportedMb = pcCase.getSpecOrDefault("Supported_Motherboards", "");
-                        String mbFormFactor = c.getSpec("Form_Factor");
-                        if (mbFormFactor != null && !supportedMb.isBlank() && !supportedMb.toUpperCase().contains(mbFormFactor.toUpperCase())) {
-                            ok = false;
-                            note = "Bo mạch chuẩn " + mbFormFactor + " không vừa với vỏ case hiện tại";
-                        }
-                    }
-
-                    // 7. Kiểm tra Công suất nguồn (PSU)
-                    if (ok && "psu".equalsIgnoreCase(role)) {
-                        int cpuP = cpu != null ? Integer.parseInt(cpu.getSpecOrDefault("TDP_Power", "65")) : 65;
-                        int gpuP = gpu != null ? Integer.parseInt(gpu.getSpecOrDefault("TDP_Power", "115")) : 0;
-                        int estLoad = cpuP + gpuP + 80;
-                        int recWatt = (int) Math.round(estLoad * 1.30);
-                        try {
-                            int psuWatt = Integer.parseInt(c.getSpecOrDefault("Wattage", "0"));
-                            if (psuWatt > 0 && psuWatt < recWatt) {
-                                ok = false;
-                                note = "Nguồn " + psuWatt + "W không đủ tải an toàn (Cần tối thiểu " + recWatt + "W)";
-                            }
-                        } catch (NumberFormatException ignored) {}
-                    }
-
-                    return CompatibleReplacementResponse.builder()
-                            .variantId(c.getVariantId())
-                            .productName(c.getProductName())
-                            .variantName(c.getVariantName())
-                            .price(c.getPrice())
-                            .imageUrl(c.getImageUrl())
-                            .stockQuantity(c.getStockQuantity())
-                            .specs(c.getSpecs())
-                            .isCompatible(ok)
-                            .compatibilityNote(note)
-                            .build();
+                    return toReplacement(candidate, compatibilityEngine.evaluate(lines, ctx), preExisting, currentTotal, budget);
                 })
-                .sorted(Comparator.comparing(CompatibleReplacementResponse::isCompatible).reversed()
-                        .thenComparing(CompatibleReplacementResponse::getPrice))
+                .sorted(order)
+                .limit(limit)
                 .toList();
+    }
+
+    /** Dòng build đã tra giá và thông số (cùng thứ tự với items; null = biến thể không tồn tại) và các check STOCK. */
+    private record ResolvedBuild(List<BuildLine> lines, List<CompatibilityCheckResponse> stockChecks) {
+    }
+
+    private ResolvedBuild resolveBuild(List<ValidateBuildRequest.ItemPart> items, CompatibilitySnapshot snapshot) {
+        // Chỉ món ngoài snapshot (hết hàng, ngừng bán) mới phải tra DB; build bình thường không phát sinh SQL
+        List<Integer> outOfStockIds = items.stream()
+                .map(ValidateBuildRequest.ItemPart::getVariantId)
+                .filter(id -> snapshot.candidate(id).isEmpty())
+                .distinct()
+                .toList();
+        Map<Integer, ComponentCandidateDTO> outOfSnapshot = outOfStockIds.isEmpty()
+                ? Collections.emptyMap()
+                : catalogPublicApi.getCandidatesByIds(outOfStockIds).stream()
+                        .collect(Collectors.toMap(ComponentCandidateDTO::getVariantId, Function.identity()));
+
+        List<BuildLine> lines = new ArrayList<>();
+        List<CompatibilityCheckResponse> stockChecks = new ArrayList<>();
+        for (ValidateBuildRequest.ItemPart item : items) {
+            int quantity = item.getQuantity() != null ? item.getQuantity() : 1;
+            Optional<ComponentCandidateDTO> inStock = snapshot.candidate(item.getVariantId());
+            ComponentCandidateDTO part = inStock.orElse(outOfSnapshot.get(item.getVariantId()));
+            if (part == null) {
+                lines.add(null);
+                stockChecks.add(stockFail("Linh kiện #" + item.getVariantId() + " không tồn tại"));
+                continue;
+            }
+            lines.add(new BuildLine(item.getRole(), part, quantity));
+            if (inStock.isEmpty()) {
+                stockChecks.add(stockFail(part.getProductName() + " đã hết hàng hoặc ngừng kinh doanh"));
+            } else if (part.getStockQuantity() != null && part.getStockQuantity() < quantity) {
+                stockChecks.add(stockFail(part.getProductName() + " chỉ còn " + part.getStockQuantity() + " sản phẩm"));
+            }
+        }
+        return new ResolvedBuild(lines, stockChecks);
+    }
+
+    private static CompatibilityCheckResponse stockFail(String detail) {
+        return CompatibilityCheckResponse.of("STOCK", "Tình trạng hàng", "fail", detail);
+    }
+
+    private static int findReplacementIndex(List<ValidateBuildRequest.ItemPart> items, String role, Integer lineIndex) {
+        if (lineIndex != null) {
+            if (lineIndex >= items.size() || !role.equals(normalizeRole(items.get(lineIndex).getRole()))) {
+                throw new BusinessException("lineIndex " + lineIndex + " không trỏ tới dòng " + role + " trong build");
+            }
+            return lineIndex;
+        }
+        for (int index = 0; index < items.size(); index++) {
+            if (role.equals(normalizeRole(items.get(index).getRole()))) {
+                return index;
+            }
+        }
+        return -1; // build chưa có role này: thêm ứng viên làm dòng mới
+    }
+
+    /**
+     * Vấn đề đã có khi build chưa có dòng đang thay (ví dụ CPU tray chưa có tản) không phải lỗi của ứng viên:
+     * đánh giá build bỏ dòng đó một lần, ghi lại các check không pass để loại khỏi kết quả từng ứng viên.
+     */
+    private Set<String> preExistingIssues(List<BuildLine> currentLines, int targetIndex, EvaluationContext ctx) {
+        List<BuildLine> withoutTarget = new ArrayList<>(currentLines);
+        if (targetIndex >= 0) {
+            withoutTarget.set(targetIndex, null);
+        }
+        return compatibilityEngine.evaluate(withoutTarget, ctx).checks().stream()
+                .filter(check -> !"pass".equals(check.getStatus()))
+                .map(PcCustomServiceImpl::issueSignature)
+                .collect(Collectors.toSet());
+    }
+
+    private static String issueSignature(CompatibilityCheckResponse check) {
+        return check.getKey() + "|" + check.getStatus() + "|" + check.getDetail();
+    }
+
+    private static CompatibleReplacementResponse toReplacement(ComponentCandidateDTO candidate, EngineReport report,
+                                                               Set<String> preExisting, BigDecimal currentTotal,
+                                                               BigDecimal budget) {
+        // Bỏ CORE (build thiếu nhóm khác) và các vấn đề đã có trước khi thay
+        List<CompatibilityCheckResponse> checks = report.checks().stream()
+                .filter(check -> !"CORE".equals(check.getKey()))
+                .filter(check -> "pass".equals(check.getStatus()) || !preExisting.contains(issueSignature(check)))
+                .toList();
+        List<String> failed = keysWithStatus(checks, "fail");
+        List<String> warnings = keysWithStatus(checks, "warning");
+        boolean hasUnknown = checks.stream().anyMatch(check -> "unknown".equals(check.getStatus()));
+        String status = !failed.isEmpty() ? "fail" : !warnings.isEmpty() ? "warning" : hasUnknown ? "unknown" : "pass";
+        String note = checks.stream()
+                .filter(check -> "fail".equals(check.getStatus()))
+                .map(CompatibilityCheckResponse::getDetail)
+                .findFirst()
+                .orElse(hasUnknown ? "Chưa xác minh" : "Tương thích");
+
+        return CompatibleReplacementResponse.builder()
+                .variantId(candidate.getVariantId())
+                .productName(candidate.getProductName())
+                .variantName(candidate.getVariantName())
+                .price(candidate.getPrice())
+                .imageUrl(candidate.getImageUrl())
+                .stockQuantity(candidate.getStockQuantity())
+                .specs(candidate.getSpecs())
+                .isCompatible(failed.isEmpty())
+                .compatibilityNote(note)
+                .status(status)
+                .failedChecks(failed)
+                .warningChecks(warnings)
+                .priceDelta(report.total().subtract(currentTotal))
+                .newTotal(report.total())
+                .newPercent(budget != null
+                        ? report.total().multiply(BigDecimal.valueOf(100)).divide(budget, 2, RoundingMode.HALF_UP)
+                        : null)
+                .build();
+    }
+
+    private static List<String> keysWithStatus(List<CompatibilityCheckResponse> checks, String status) {
+        return checks.stream()
+                .filter(check -> status.equals(check.getStatus()))
+                .map(CompatibilityCheckResponse::getKey)
+                .distinct()
+                .toList();
+    }
+
+    private static BudgetFitResponse buildBudgetFit(BigDecimal total, BigDecimal budget) {
+        if (budget == null || budget.signum() <= 0) return null;
+        BigDecimal ratio = total.divide(budget, 4, RoundingMode.HALF_UP);
+        BigDecimal windowMin = budget.multiply(BUDGET_WINDOW_MIN).setScale(0, RoundingMode.CEILING);
+        String status = total.compareTo(budget) > 0 ? "OVER"
+                : total.compareTo(windowMin) >= 0 ? "IN_WINDOW" : "UNDER_WINDOW";
+        return BudgetFitResponse.builder()
+                .ratio(ratio)
+                .percent(ratio.multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP))
+                .status(status)
+                .windowMin(windowMin)
+                .windowMax(budget)
+                .leftover(budget.subtract(total))
+                .build();
+    }
+
+    private static SelectedPartResponse toSelectedPart(BuildLine line) {
+        ComponentCandidateDTO part = line.part();
+        BigDecimal unitPrice = part.getPrice() != null ? part.getPrice() : BigDecimal.ZERO;
+        return SelectedPartResponse.builder()
+                .role(line.role())
+                .variantId(part.getVariantId())
+                .productName(part.getProductName())
+                .variantName(part.getVariantName())
+                .imageUrl(part.getImageUrl())
+                .unitPrice(unitPrice)
+                .quantity(line.quantity())
+                .subtotal(unitPrice.multiply(BigDecimal.valueOf(line.quantity())))
+                .specs(part.getSpecs())
+                .build();
+    }
+
+    private static BigDecimal totalOf(List<BuildLine> lines) {
+        return lines.stream()
+                .filter(line -> line != null && line.part().getPrice() != null)
+                .map(line -> line.part().getPrice().multiply(BigDecimal.valueOf(line.quantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static String normalizeRole(String role) {
+        return role != null ? role.trim().toLowerCase(Locale.ROOT) : "";
     }
 }

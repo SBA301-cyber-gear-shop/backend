@@ -24,7 +24,7 @@ public class OrderOperationsController {
         return service.operations(auth.getName(), search, status);
     }
 
-    public record StatusRequest(@NotBlank @Size(max=30) String status) {}
+    public record StatusRequest(@NotBlank(message = "Vui lòng chọn trạng thái") @Size(max=30, message = "Trạng thái tối đa 30 ký tự") String status) {}
 
     @PatchMapping("/{code}/status")
     public OrderResponse advance(Authentication auth, @PathVariable String code, @Valid @RequestBody StatusRequest request) {

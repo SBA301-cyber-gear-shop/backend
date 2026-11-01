@@ -18,7 +18,7 @@ public class OrderLookup {
     public record OrderInfo(Integer cardId, Integer orderItemId, String productName, String variantName, String sku,
                             Integer warrantyPeriodMonths, Integer orderId, String orderCode, String pickupName,
                             String pickupPhone, Integer userId, String customerName, String customerPhone,
-                            Integer pcCustomId) {
+                            Integer pcCustomId, Integer variantId) {
     }
 
     // shortcut: đọc thẳng bảng của module order và identity vì order chưa có API, thay bằng OrderApi khi có.
@@ -44,7 +44,7 @@ public class OrderLookup {
         List<?> rows = em.createNativeQuery("""
                         SELECT wc.id AS card_id, oi.id AS order_item_id, oi.product_name, pv.variant_name, pv.serial_code,
                                oi.warranty_period_months, o.id AS order_id, o.order_code, o.pickup_name,
-                               o.pickup_phone, u.id AS user_id, u.full_name, u.phone, oi.pc_custom_id
+                               o.pickup_phone, u.id AS user_id, u.full_name, u.phone, oi.pc_custom_id, pv.id AS variant_id
                         """ + FROM + "WHERE wc.id IN (:ids)")
                 .setParameter("ids", cardIds)
                 .getResultList();
@@ -52,7 +52,7 @@ public class OrderLookup {
             Object[] r = (Object[]) row;
             OrderInfo info = new OrderInfo(number(r[0]), number(r[1]), (String) r[2], (String) r[3], (String) r[4],
                     number(r[5]), number(r[6]), (String) r[7], (String) r[8], (String) r[9], number(r[10]),
-                    (String) r[11], (String) r[12], number(r[13]));
+                    (String) r[11], (String) r[12], number(r[13]), number(r[14]));
             result.put(info.cardId(), info);
         }
         return result;

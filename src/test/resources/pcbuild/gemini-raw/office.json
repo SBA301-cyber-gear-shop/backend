@@ -1,0 +1,59 @@
+{
+  "summary": "Cau hinh may tinh van phòng, Excel va hop Zoom trong ngan sach 15 trieu dong",
+  "archetype": "OFFICE",
+  "roleWeights": {
+    "case": 0.05,
+    "cooler": 0.05,
+    "cpu": 0.3,
+    "gpu": 0,
+    "mainboard": 0.1,
+    "psu": 0.05,
+    "ram": 0.2,
+    "ssd": 0.25
+  },
+  "constraints": [],
+  "metrics": [
+    {
+      "metric": "TOTAL_RAM_GB",
+      "op": "GTE",
+      "value": 16,
+      "priority": 1,
+      "reason": "Dap ung tot nhu cau lam viec van phong nhieu tab va Excel nang"
+    }
+  ],
+  "preferences": [
+    {
+      "direction": "MAX",
+      "weight": 0.5,
+      "cap": 8,
+      "metric": null,
+      "reason": "So nhan CPU vua du cho van phong",
+      "role": "cpu",
+      "spec": "Core_Count",
+      "values": []
+    },
+    {
+      "direction": "MAX",
+      "weight": 0.8,
+      "cap": 32,
+      "metric": "TOTAL_RAM_GB",
+      "reason": "Gioi han RAM toi da cho nhu cau van phong",
+      "role": null,
+      "spec": null,
+      "values": []
+    }
+  ],
+  "confidence": 1,
+  "excludedRoles": [
+    {
+      "role": "gpu",
+      "reason": "Nhu cau van phong khong can card do hoa roi"
+    }
+  ],
+  "unmetNeeds": [],
+  "useCases": [
+    "Văn phòng",
+    "Excel",
+    "Họp Zoom"
+  ]
+}

@@ -10,9 +10,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CompatibilityCheckResponse {
-    private String key;
+    private String key;    // mã check ổn định: R1..R12, J1..J11, CORE, ROLE, DUP, STOCK
     private String label;
-    private String status; // pass, fail, warning
+    private String status; // pass, warning, unknown, fail
     private String detail;
     private Boolean valid;
 
@@ -20,7 +20,7 @@ public class CompatibilityCheckResponse {
         this.label = label;
         this.status = status;
         this.detail = detail;
-        this.valid = "pass".equalsIgnoreCase(status);
+        this.valid = isValidStatus(status);
     }
 
     public CompatibilityCheckResponse(String key, String label, boolean valid, String detail) {
@@ -31,7 +31,16 @@ public class CompatibilityCheckResponse {
         this.detail = detail;
     }
 
+    public static CompatibilityCheckResponse of(String key, String label, String status, String detail) {
+        return new CompatibilityCheckResponse(key, label, status, detail, isValidStatus(status));
+    }
+
+    // DD 7.2: chỉ fail mới là không hợp lệ; warning và unknown vẫn lắp được
     public boolean isValid() {
-        return Boolean.TRUE.equals(this.valid) || "pass".equalsIgnoreCase(this.status);
+        return status != null ? isValidStatus(status) : Boolean.TRUE.equals(valid);
+    }
+
+    private static boolean isValidStatus(String status) {
+        return !"fail".equalsIgnoreCase(status);
     }
 }

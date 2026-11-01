@@ -1,0 +1,72 @@
+{
+  "summary": "Cấu hình AI_DATA cao cấp với ngân sách lớn, chuyên huấn luyện mô hình AI và yêu cầu nhiều GPU.",
+  "archetype": "AI_DATA",
+  "roleWeights": {
+    "cpu": 0.12,
+    "mainboard": 0.04,
+    "ram": 0.18,
+    "ssd": 0.10
+  },
+  "constraints": [
+    {
+      "role": "gpu",
+      "spec": "Compute_Stack",
+      "op": "IN",
+      "priority": 1,
+      "reason": "Huấn luyện AI yêu cầu stack tính toán CUDA",
+      "values": ["CUDA"]
+    }
+  ],
+  "metrics": [
+    {
+      "metric": "TOTAL_VRAM_GB",
+      "op": "GTE",
+      "value": 48,
+      "priority": 1,
+      "reason": "Cần nhiều VRAM để train model AI lớn"
+    },
+    {
+      "metric": "GPU_COUNT",
+      "op": "GTE",
+      "value": 2,
+      "priority": 1,
+      "reason": "Khách yêu cầu nhiều GPU"
+    },
+    {
+      "metric": "TOTAL_RAM_GB",
+      "op": "GTE",
+      "value": 128,
+      "priority": 2,
+      "reason": "Hệ thống huấn luyện AI cần lượng RAM lớn"
+    }
+  ],
+  "preferences": [
+    {
+      "direction": "MAX",
+      "weight": 0.8,
+      "cap": 2048,
+      "metric": "TOTAL_RAM_GB",
+      "reason": "Ưu tiên dung lượng RAM lớn cho AI"
+    },
+    {
+      "direction": "MAX",
+      "weight": 0.8,
+      "cap": 4,
+      "metric": "GPU_COUNT",
+      "reason": "Hỗ trợ tối đa số lượng GPU"
+    }
+  ],
+  "confidence": 0.9,
+  "requiredRoles": [
+    {
+      "role": "gpu",
+      "priority": 1,
+      "reason": "Bắt buộc có GPU cho nhu cầu train AI"
+    }
+  ],
+  "unmetNeeds": [],
+  "useCases": [
+    "Train model AI lớn",
+    "Deep learning"
+  ]
+}

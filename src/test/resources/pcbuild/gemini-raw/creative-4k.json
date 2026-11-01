@@ -1,0 +1,60 @@
+{
+  "summary": "May tinh dung phim 4K bang DaVinci Resolve voi ngan sach 60 trieu dong",
+  "archetype": "CREATIVE",
+  "roleWeights": {
+    "cpu": 0.28,
+    "mainboard": 0.05,
+    "ram": 0.22,
+    "ssd": 0.12
+  },
+  "constraints": [
+    {
+      "role": "gpu",
+      "spec": "VRAM_GB",
+      "op": "GTE",
+      "priority": 2,
+      "reason": "Dung phim 4K yeu cau VRAM cao",
+      "value": 12
+    },
+    {
+      "role": "cpu",
+      "spec": "Core_Count",
+      "op": "GTE",
+      "priority": 2,
+      "reason": "Dung phim 4K can nhieu nhan CPU",
+      "value": 8
+    }
+  ],
+  "metrics": [
+    {
+      "metric": "TOTAL_RAM_GB",
+      "op": "GTE",
+      "value": 64,
+      "priority": 2,
+      "reason": "DaVinci Resolve 4K can toi thieu 64GB RAM"
+    }
+  ],
+  "preferences": [
+    {
+      "direction": "MAX",
+      "weight": 0.5,
+      "cap": 128,
+      "role": "cpu",
+      "spec": "Core_Count",
+      "values": []
+    }
+  ],
+  "confidence": 0.9,
+  "excludedRoles": [],
+  "requiredRoles": [
+    {
+      "role": "gpu",
+      "priority": 2,
+      "reason": "Can card do hoa cho DaVinci Resolve"
+    }
+  ],
+  "unmetNeeds": [],
+  "useCases": [
+    "Dung phim 4K"
+  ]
+}

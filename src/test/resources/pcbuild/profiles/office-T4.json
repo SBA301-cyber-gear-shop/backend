@@ -1,0 +1,148 @@
+{
+  "profileVersion" : 1,
+  "source" : "AI",
+  "summary" : "Hồ sơ mẫu OFFICE T4",
+  "archetype" : "OFFICE",
+  "useCases" : [ ],
+  "roleWeights" : {
+    "cpu" : 0.3,
+    "mainboard" : 0.1,
+    "ram" : 0.2,
+    "gpu" : 0.0,
+    "ssd" : 0.25,
+    "psu" : 0.05,
+    "case" : 0.05,
+    "cooler" : 0.05
+  },
+  "requiredRoles" : [ ],
+  "excludedRoles" : [ {
+    "role" : "gpu",
+    "priority" : 2,
+    "reason" : "Hồ sơ mẫu OFFICE T4"
+  } ],
+  "constraints" : [ ],
+  "metrics" : [ {
+    "id" : "m1",
+    "metric" : "TOTAL_RAM_GB",
+    "op" : "GTE",
+    "value" : 16.0,
+    "priority" : 2,
+    "reason" : "Hồ sơ mẫu OFFICE T4"
+  } ],
+  "preferences" : [ {
+    "id" : "p1",
+    "role" : "cpu",
+    "spec" : "Core_Count",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5,
+    "cap" : 8.0
+  }, {
+    "id" : "p2",
+    "role" : "cpu",
+    "spec" : "Boost_Clock_MHz",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5,
+    "cap" : 5100.0
+  }, {
+    "id" : "p3",
+    "role" : "mainboard",
+    "spec" : "M2_Slots",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.4
+  }, {
+    "id" : "p4",
+    "role" : "mainboard",
+    "spec" : "RAM_Slots",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.3
+  }, {
+    "id" : "p5",
+    "role" : "mainboard",
+    "spec" : "Has_WiFi",
+    "direction" : "PREFER",
+    "values" : [ "YES" ],
+    "weight" : 0.3
+  }, {
+    "id" : "p6",
+    "metric" : "TOTAL_RAM_GB",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.8,
+    "cap" : 32.0
+  }, {
+    "id" : "p7",
+    "role" : "ram",
+    "spec" : "Bus_Speed",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.2
+  }, {
+    "id" : "p8",
+    "metric" : "TOTAL_STORAGE_GB",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.7,
+    "cap" : 2000.0
+  }, {
+    "id" : "p9",
+    "role" : "ssd",
+    "spec" : "SSD_Interface",
+    "direction" : "PREFER",
+    "values" : [ "NVME_GEN4", "NVME_GEN5" ],
+    "weight" : 0.3
+  }, {
+    "id" : "p10",
+    "role" : "psu",
+    "spec" : "Efficiency_Rating",
+    "direction" : "PREFER",
+    "values" : [ "GOLD", "PLATINUM", "TITANIUM" ],
+    "weight" : 0.6
+  }, {
+    "id" : "p11",
+    "role" : "psu",
+    "spec" : "ATX_Version",
+    "direction" : "PREFER",
+    "values" : [ "ATX30", "ATX31" ],
+    "weight" : 0.4
+  }, {
+    "id" : "p12",
+    "role" : "case",
+    "spec" : "Max_GPU_Length_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  }, {
+    "id" : "p13",
+    "role" : "case",
+    "spec" : "Max_Radiator_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  }, {
+    "id" : "p14",
+    "role" : "cooler",
+    "spec" : "Radiator_Size_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  }, {
+    "id" : "p15",
+    "role" : "cooler",
+    "spec" : "Height_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  } ],
+  "balancePairs" : [ ],
+  "brands" : {
+    "prefer" : [ ],
+    "avoid" : [ ]
+  },
+  "unmetNeeds" : [ ],
+  "confidence" : 1.0,
+  "droppedItems" : [ ]
+}

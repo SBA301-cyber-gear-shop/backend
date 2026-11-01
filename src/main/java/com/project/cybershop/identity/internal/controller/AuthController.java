@@ -3,17 +3,18 @@ package com.project.cybershop.identity.internal.controller;
 import com.project.cybershop.identity.api.dto.response.AuthResponse;
 import com.project.cybershop.identity.api.dto.request.LoginRequest;
 import com.project.cybershop.identity.api.dto.request.RegisterRequest;
+import com.project.cybershop.identity.api.dto.request.UpdateProfileRequest;
 import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.identity.internal.service.AuthService;
 import com.project.cybershop.shared.config.JwtUtil;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
-import com.project.cybershop.shared.exception.BusinessException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -44,15 +45,28 @@ public class AuthController {
     @Operation(summary = "Lấy thông tin tài khoản hiện tại qua Bearer Token")
     public ResponseEntity<ApiResponseDTO<UserDto>> getCurrentUser(
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        UserDto userDto = authService.getCurrentUser(emailFromBearer(authHeader));
+        return ResponseEntity.ok(ApiResponseDTO.success("Lấy thông tin tài khoản thành công", userDto));
+    }
+
+    @PutMapping("/me")
+    @Operation(summary = "Cập nhật họ tên, số điện thoại và địa chỉ của tài khoản hiện tại")
+    public ResponseEntity<ApiResponseDTO<UserDto>> updateProfile(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @Valid @RequestBody UpdateProfileRequest request) {
+        UserDto userDto = authService.updateProfile(emailFromBearer(authHeader), request);
+        return ResponseEntity.ok(ApiResponseDTO.success("Cập nhật hồ sơ thành công", userDto));
+    }
+
+    // /api/auth/** là permitAll nên phải tự kiểm tra token ở đây.
+    private String emailFromBearer(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new BusinessException("Vui lòng cung cấp Authorization header Bearer token");
+            throw new BadCredentialsException("Bạn cần đăng nhập để tiếp tục.");
         }
         String token = authHeader.substring(7);
         if (!jwtUtil.validateToken(token)) {
-            throw new BusinessException("Token không hợp lệ hoặc đã hết hạn");
+            throw new BadCredentialsException("Token không hợp lệ hoặc đã hết hạn");
         }
-        String email = jwtUtil.getEmailFromToken(token);
-        UserDto userDto = authService.getCurrentUser(email);
-        return ResponseEntity.ok(ApiResponseDTO.success("Lấy thông tin tài khoản thành công", userDto));
+        return jwtUtil.getEmailFromToken(token);
     }
 }

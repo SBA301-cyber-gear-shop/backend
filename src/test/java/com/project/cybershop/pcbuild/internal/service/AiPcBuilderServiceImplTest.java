@@ -1,173 +1,204 @@
 package com.project.cybershop.pcbuild.internal.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.project.cybershop.catalog.api.CatalogPublicApi;
-import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.pcbuild.api.dto.profile.RequirementProfileDto;
 import com.project.cybershop.pcbuild.api.dto.request.AiBuildRequest;
-import com.project.cybershop.pcbuild.api.dto.response.AiBuildResponse;
-import com.project.cybershop.pcbuild.api.dto.response.CompatibilityCheckResponse;
-import com.project.cybershop.pcbuild.internal.entity.PcCustom;
-import com.project.cybershop.identity.api.IdentityApi;
-import com.project.cybershop.pcbuild.internal.repository.PcCustomRepository;
-import com.project.cybershop.pcbuild.internal.service.AiPcBuilderService;
-import com.project.cybershop.pcbuild.internal.service.BudgetHeuristicService;
-import com.project.cybershop.pcbuild.internal.service.HardwareCompatibilityValidator;
-import com.project.cybershop.pcbuild.internal.service.LlmClientService;
+import com.project.cybershop.pcbuild.internal.model.Archetype;
+import com.project.cybershop.pcbuild.internal.model.BuildTier;
+import com.project.cybershop.pcbuild.internal.model.CandidatePool;
+import com.project.cybershop.pcbuild.internal.model.CompatibilitySnapshot;
+import com.project.cybershop.pcbuild.internal.model.EngineReport;
+import com.project.cybershop.pcbuild.internal.model.SolverResult;
+import com.project.cybershop.pcbuild.internal.model.ValidatedProfile;
+import com.project.cybershop.pcbuild.internal.service.BuildExplainer;
+import com.project.cybershop.pcbuild.internal.service.BuildSolver;
+import com.project.cybershop.pcbuild.internal.service.CandidateRepositoryFacade;
+import com.project.cybershop.pcbuild.internal.service.CompatibilityEngine;
+import com.project.cybershop.pcbuild.internal.service.ProfileExtractor;
+import com.project.cybershop.pcbuild.internal.service.ProfilePresets;
+import com.project.cybershop.pcbuild.internal.service.ProfileValidator;
+import com.project.cybershop.pcbuild.internal.service.RequestValidator;
+import com.project.cybershop.pcbuild.internal.support.AiUnavailableException;
+import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.lines;
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.snapshot;
+import static com.project.cybershop.pcbuild.internal.PcBuildTestData.validDesktop;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("AiPcBuilderServiceImpl - Kiểm thử điều phối toàn luồng xử lý AI PC Builder")
+@MockitoSettings(strictness = Strictness.LENIENT)
+@DisplayName("AiPcBuilderServiceImpl - orchestrator /ai-suggest (DD 3.3)")
 class AiPcBuilderServiceImplTest {
 
-    @Mock
-    private CatalogPublicApi catalogPublicApi;
+    @Mock private CandidateRepositoryFacade facade;
+    @Mock private RequestValidator requestValidator;
+    @Mock private ProfileExtractor extractor;
+    @Mock private ProfilePresets presets;
+    @Mock private ProfileValidator validator;
+    @Mock private BuildSolver solver;
+    @Mock private BuildExplainer explainer;
+    @Mock private CompatibilityEngine engine;
 
-    @Mock
-    private BudgetHeuristicService heuristicService;
-
-    @Mock
-    private LlmClientService llmClientService;
-
-    @Mock
-    private HardwareCompatibilityValidator validator;
-
-    @Mock
-    private PcCustomRepository pcCustomRepository;
-
-    @Mock
-    private IdentityApi identityApi;
-
-    private ObjectMapper objectMapper = new ObjectMapper();
-
-    private AiPcBuilderServiceImpl aiPcBuilderService;
+    private AiPcBuilderServiceImpl service;
+    private final CompatibilitySnapshot snapshot = snapshot();
+    private final BigDecimal budget = BigDecimal.valueOf(30_000_000);
 
     @BeforeEach
     void setUp() {
-        aiPcBuilderService = new AiPcBuilderServiceImpl(
-                catalogPublicApi, heuristicService, llmClientService,
-                validator, pcCustomRepository, identityApi, objectMapper
-        );
+        service = new AiPcBuilderServiceImpl(facade, requestValidator, extractor, presets, validator, solver, explainer, engine,
+                Clock.systemUTC(), 14_000, 0.4, "gemini", "gemini-3.5-flash-lite");
+        when(facade.snapshot()).thenReturn(snapshot);
+        when(facade.buildPool(any(), any(), any())).thenReturn(new CandidatePool(Map.of(), Map.of()));
+        when(presets.fillMissing(any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
-    private ComponentCandidateDTO createSamplePart(int id, String slug, String name, BigDecimal price) {
-        return ComponentCandidateDTO.builder()
-                .variantId(id)
-                .categorySlug(slug)
-                .productName(name)
-                .variantName(name)
-                .price(price)
-                .imageUrl("https://example.com/part.jpg")
-                .specs(Map.of("Socket", "LGA1700", "RamStandard", "DDR5"))
+    private ValidatedProfile validated(RequirementProfileDto dto) {
+        return new ValidatedProfile(dto, Archetype.GAMING, List.of());
+    }
+
+    private void stubHappyPath(RequirementProfileDto dto) {
+        when(validator.validate(any(), any(), anyString(), any())).thenReturn(validated(dto));
+        EngineReport report = EngineReport.of(List.of(), 650, null, BigDecimal.valueOf(27_000_000));
+        when(solver.solve(any())).thenReturn(new SolverResult(lines(validDesktop()), BigDecimal.valueOf(27_000_000),
+                BigDecimal.valueOf(3_000_000), 0.7, report, null, List.of(), BigDecimal.valueOf(20_000_000), 4, List.of(), validated(dto)));
+        when(explainer.explain(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new BuildExplainer.Explanation("Máy game", "Cân bằng.", "Chơi tốt 2K.", Map.of(1, "CPU"), "OK"));
+        when(engine.evaluate(any(), any())).thenReturn(report);
+    }
+
+    private static RequirementProfileDto profile(double confidence) {
+        return RequirementProfileDto.builder().summary("Chơi game").archetype("GAMING").confidence(confidence)
+                .preferences(new java.util.ArrayList<>(List.of(com.project.cybershop.pcbuild.api.dto.profile.ProfilePreferenceDto.builder()
+                        .role("gpu").spec("Perf_Index_1440p").direction("MAX").weight(1.0).build())))
                 .build();
     }
 
     @Test
-    @DisplayName("Kho hàng rỗng -> Ném IllegalStateException báo lỗi lập tức")
-    void shouldThrowExceptionWhenCatalogIsEmpty() {
-        when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(List.of());
+    @DisplayName("Luồng đầy đủ: AI trích hồ sơ → solver → giải thích; response có budgetFit, metadata, lý do từng món")
+    void fullFlow() {
+        RequirementProfileDto dto = profile(0.9);
+        when(extractor.extract(anyString(), any(), any(), eq(BuildTier.T3), any(), any()))
+                .thenReturn(new ProfileExtractor.Extraction(dto, "OK"));
+        stubHappyPath(dto);
 
-        AiBuildRequest request = AiBuildRequest.builder()
-                .budget(new BigDecimal("20000000"))
-                .purpose("gaming")
-                .build();
+        var response = service.processAiBuild(AiBuildRequest.builder().budget(budget).purpose("Chơi game 2K").build(), 7);
 
-        assertThatThrownBy(() -> aiPcBuilderService.processAiBuild(request, 1))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Kho hàng hiện chưa có linh kiện nào");
-    }
-
-    @Test
-    @DisplayName("Tạo cấu hình AI thành công: Đầy đủ linh kiện, tương thích 100%, lưu DB DRAFT")
-    void shouldBuildPcSuccessfullyWhenAiSuggestsValidParts() {
-        ComponentCandidateDTO cpu = createSamplePart(101, "cpu", "Intel Core i5 13400F", new BigDecimal("4500000"));
-        ComponentCandidateDTO mb = createSamplePart(102, "mainboard", "B760M DDR5", new BigDecimal("3200000"));
-        List<ComponentCandidateDTO> candidates = List.of(cpu, mb);
-
-        when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(candidates);
-        when(heuristicService.filterCandidates(any(), any(), any(), any(), any(), any())).thenReturn(candidates);
-
-        LlmClientService.AiDraftProposal proposal = new LlmClientService.AiDraftProposal();
-        proposal.setBuildName("Cấu hình Test");
-        proposal.setAiReasoning("Tối ưu");
-        proposal.setPerformanceHighlight("Mượt mà");
-
-        var p1 = new LlmClientService.AiDraftProposal.PartSelection();
-        p1.setRole("cpu"); p1.setVariantId(101); p1.setQuantity(1); p1.setReason("CPU mạnh");
-        var p2 = new LlmClientService.AiDraftProposal.PartSelection();
-        p2.setRole("mainboard"); p2.setVariantId(102); p2.setQuantity(1); p2.setReason("Bo mạch tốt");
-        proposal.setSelectedParts(List.of(p1, p2));
-
-        when(llmClientService.generateBuildProposal(any(), any())).thenReturn(proposal);
-
-        HardwareCompatibilityValidator.ValidationReport validReport = new HardwareCompatibilityValidator.ValidationReport(
-                true,
-                List.of(new CompatibilityCheckResponse("socket", "Socket CPU & Mainboard", true, "Khớp LGA1700")),
-                List.of()
-        );
-        when(validator.validate(any(), any())).thenReturn(validReport);
-
-        AiBuildRequest request = AiBuildRequest.builder()
-                .budget(new BigDecimal("20000000"))
-                .purpose("gaming")
-                .build();
-
-        var response = aiPcBuilderService.processAiBuild(request, 12);
-
-        assertThat(response).isNotNull();
-        assertThat(response.getBuildId()).isNull();
         assertThat(response.isCompatible()).isTrue();
-        assertThat(response.getTotalPrice()).isEqualByComparingTo(new BigDecimal("7700000"));
-        assertThat(response.getItems()).hasSize(2);
-
-        verify(pcCustomRepository, never()).save(any());
+        assertThat(response.getTotalPrice()).isEqualByComparingTo("27000000");
+        assertThat(response.getBudgetFit().getStatus()).isEqualTo("IN_WINDOW");
+        assertThat(response.getBudgetFit().getLeftover()).isEqualByComparingTo("3000000");
+        assertThat(response.getMetadata().getExtractStatus()).isEqualTo("OK");
+        assertThat(response.getMetadata().getPromptVersions()).containsEntry("profile", "PROFILE_V1");
+        assertThat(response.getItems()).filteredOn(item -> item.getVariantId() == 1).singleElement()
+                .satisfies(item -> assertThat(item.getAiReason()).isEqualTo("CPU"));
+        assertThat(response.getItems()).filteredOn(item -> item.getVariantId() == 2).singleElement()
+                .satisfies(item -> assertThat(item.getAiReason()).isEqualTo("—"));
+        assertThat(response.getFloorPrice()).isEqualByComparingTo("20000000");
+        assertThat(response.getWarnings()).doesNotContain("PSU_HIGH_WATTAGE");
     }
 
     @Test
-    @DisplayName("Cấu hình AI phát hiện lỗi tương thích -> Trả về isCompatible=false và chi tiết cảnh báo")
-    void shouldReturnIncompatibleResponseWhenValidatorFails() {
-        ComponentCandidateDTO cpu = createSamplePart(101, "cpu", "Intel Core i5 13400F", new BigDecimal("4500000"));
-        when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(List.of(cpu));
-        when(heuristicService.filterCandidates(any(), any(), any(), any(), any(), any())).thenReturn(List.of(cpu));
+    @DisplayName("DD 6.5: engine báo J4b (nguồn cần > 1600 W) → warnings có mã PSU_HIGH_WATTAGE cho FE")
+    void highWattageBuildAddsWarningCode() {
+        RequirementProfileDto dto = profile(0.9);
+        when(extractor.extract(anyString(), any(), any(), any(), any(), any()))
+                .thenReturn(new ProfileExtractor.Extraction(dto, "OK"));
+        stubHappyPath(dto);
+        EngineReport heavy = EngineReport.of(List.of(com.project.cybershop.pcbuild.api.dto.response.CompatibilityCheckResponse
+                .of("J4b", "Nguồn công suất rất lớn", "warning", "Hệ thống cần nguồn trên 1600 W")), 1750, null,
+                BigDecimal.valueOf(27_000_000));
+        when(engine.evaluate(any(), any())).thenReturn(heavy);
 
-        LlmClientService.AiDraftProposal proposal = new LlmClientService.AiDraftProposal();
-        proposal.setBuildName("Lỗi Cấu hình");
-        var p1 = new LlmClientService.AiDraftProposal.PartSelection();
-        p1.setRole("cpu"); p1.setVariantId(101); p1.setQuantity(1);
-        proposal.setSelectedParts(List.of(p1));
-        when(llmClientService.generateBuildProposal(any(), any())).thenReturn(proposal);
+        var response = service.processAiBuild(AiBuildRequest.builder().budget(budget).purpose("Train AI 4 GPU").build(), 7);
 
-        HardwareCompatibilityValidator.ValidationReport invalidReport = new HardwareCompatibilityValidator.ValidationReport(
-                false,
-                List.of(new CompatibilityCheckResponse("socket", "Socket", false, "Lệch socket AM5 vs LGA1700")),
-                List.of("Lỗi socket")
-        );
-        when(validator.validate(any(), any())).thenReturn(invalidReport);
+        assertThat(response.getWarnings()).containsOnlyOnce("PSU_HIGH_WATTAGE");
+        assertThat(response.getRequiredPsuW()).isEqualTo(1750);
+    }
 
-        AiBuildRequest request = AiBuildRequest.builder()
-                .budget(new BigDecimal("10000000"))
-                .purpose("gaming")
-                .build();
+    @Test
+    @DisplayName("Khách gửi profile → không gọi extractProfile, extractStatus = USER_PROFILE, source = USER_EDITED")
+    void userProfileSkipsExtraction() {
+        RequirementProfileDto dto = profile(0.1);
+        stubHappyPath(dto);
 
-        var response = aiPcBuilderService.processAiBuild(request, null);
+        var response = service.processAiBuild(AiBuildRequest.builder().budget(budget).profile(dto).build(), null);
 
-        assertThat(response.isCompatible()).isFalse();
-        assertThat(response.getChecks().get(0).isValid()).isFalse();
-        verify(pcCustomRepository, never()).save(any());
+        verify(extractor, never()).extract(any(), any(), any(), any(), any(), any());
+        verify(validator).validate(any(), any(), eq(ProfileValidator.SOURCE_USER_EDITED), any());
+        assertThat(response.getMetadata().getExtractStatus()).isEqualTo("USER_PROFILE");
+    }
+
+    @Test
+    @DisplayName("AI trích hồ sơ lỗi → AiUnavailableException, không gọi solver")
+    void extractionFailureStopsBeforeSolver() {
+        when(extractor.extract(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new AiUnavailableException(AiUnavailableException.Detail.TIMEOUT));
+
+        assertThatThrownBy(() -> service.processAiBuild(AiBuildRequest.builder().budget(budget).purpose("Game").build(), null))
+                .isInstanceOf(AiUnavailableException.class);
+        verify(solver, never()).solve(any());
+    }
+
+    @Test
+    @DisplayName("confidence 0,2 + câu hỏi → 422 NEEDS_UNCLEAR có clarifyingQuestion, không gọi solver")
+    void unclearNeedsAskBack() {
+        RequirementProfileDto dto = profile(0.2);
+        dto.setClarifyingQuestion("Bạn dùng máy để làm gì?");
+        when(extractor.extract(any(), any(), any(), any(), any(), any())).thenReturn(new ProfileExtractor.Extraction(dto, "OK"));
+        when(validator.validate(any(), any(), anyString(), any())).thenReturn(validated(dto));
+
+        assertThatThrownBy(() -> service.processAiBuild(AiBuildRequest.builder().budget(budget).purpose("Máy tốt").build(), null))
+                .isInstanceOfSatisfying(BuildRuleException.class, error -> {
+                    assertThat(error.getCode()).isEqualTo("NEEDS_UNCLEAR");
+                    assertThat(error.getData()).isEqualTo(Map.of("clarifyingQuestion", "Bạn dùng máy để làm gì?"));
+                });
+        verify(solver, never()).solve(any());
+    }
+
+    @Test
+    @DisplayName("AI giải thích lỗi → ném lỗi, không trả bộ máy chưa có lời giải thích")
+    void explanationFailureReturnsNoBuild() {
+        RequirementProfileDto dto = profile(0.9);
+        when(extractor.extract(any(), any(), any(), any(), any(), any())).thenReturn(new ProfileExtractor.Extraction(dto, "CACHED"));
+        stubHappyPath(dto);
+        when(explainer.explain(any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new AiUnavailableException(AiUnavailableException.Detail.DEADLINE_EXCEEDED));
+
+        assertThatThrownBy(() -> service.processAiBuild(AiBuildRequest.builder().budget(budget).purpose("Game").build(), null))
+                .isInstanceOf(AiUnavailableException.class);
+    }
+
+    @Test
+    @DisplayName("Mỗi request lấy snapshot đúng 1 lần và kiểm đầu vào với floorPrice của snapshot đó")
+    void snapshotOncePerRequest() {
+        RequirementProfileDto dto = profile(0.9);
+        when(extractor.extract(any(), any(), any(), any(), any(), any())).thenReturn(new ProfileExtractor.Extraction(dto, "OK"));
+        stubHappyPath(dto);
+        when(solver.floorPrice(snapshot)).thenReturn(BigDecimal.valueOf(6_778_000));
+
+        service.processAiBuild(AiBuildRequest.builder().budget(budget).purpose("Game").build(), null);
+
+        verify(facade).snapshot();
+        verify(requestValidator).validate(any(), eq(BigDecimal.valueOf(6_778_000)));
     }
 }

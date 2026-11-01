@@ -1,186 +1,327 @@
 package com.project.cybershop.pcbuild.internal.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.project.cybershop.catalog.api.CatalogPublicApi;
-import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
-import com.project.cybershop.identity.api.IdentityApi;
+import com.project.cybershop.pcbuild.api.dto.profile.ProfileConstraintDto;
+import com.project.cybershop.pcbuild.api.dto.profile.ProfileMetricDto;
+import com.project.cybershop.pcbuild.api.dto.profile.RequirementProfileDto;
 import com.project.cybershop.pcbuild.api.dto.request.AiBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.response.AiBuildMetadataResponse;
 import com.project.cybershop.pcbuild.api.dto.response.AiBuildResponse;
-import com.project.cybershop.pcbuild.api.dto.response.CompatibilityCheckResponse;
+import com.project.cybershop.pcbuild.api.dto.response.BudgetFitResponse;
+import com.project.cybershop.pcbuild.api.dto.response.BuildOptionsResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SelectedPartResponse;
-import com.project.cybershop.pcbuild.internal.entity.*;
-import com.project.cybershop.pcbuild.internal.repository.PcCustomRepository;
+import com.project.cybershop.pcbuild.internal.model.BuildLine;
+import com.project.cybershop.pcbuild.internal.model.BuildTier;
+import com.project.cybershop.pcbuild.internal.model.CandidatePool;
+import com.project.cybershop.pcbuild.internal.model.CompatibilitySnapshot;
+import com.project.cybershop.pcbuild.internal.model.EngineReport;
+import com.project.cybershop.pcbuild.internal.model.EvaluationContext;
+import com.project.cybershop.pcbuild.internal.model.MetricKind;
+import com.project.cybershop.pcbuild.internal.model.SolverInput;
+import com.project.cybershop.pcbuild.internal.model.SolverResult;
+import com.project.cybershop.pcbuild.internal.model.ValidatedProfile;
 import com.project.cybershop.pcbuild.internal.service.AiPcBuilderService;
-import com.project.cybershop.pcbuild.internal.service.BudgetHeuristicService;
-import com.project.cybershop.pcbuild.internal.service.HardwareCompatibilityValidator;
-import com.project.cybershop.pcbuild.internal.service.LlmClientService;
-import com.project.cybershop.shared.exception.BusinessException;
-import lombok.RequiredArgsConstructor;
+import com.project.cybershop.pcbuild.internal.service.BuildExplainer;
+import com.project.cybershop.pcbuild.internal.service.BuildSolver;
+import com.project.cybershop.pcbuild.internal.service.CandidateRepositoryFacade;
+import com.project.cybershop.pcbuild.internal.service.CompatibilityEngine;
+import com.project.cybershop.pcbuild.internal.service.ProfileExtractor;
+import com.project.cybershop.pcbuild.internal.service.ProfilePresets;
+import com.project.cybershop.pcbuild.internal.service.ProfileValidator;
+import com.project.cybershop.pcbuild.internal.service.RequestValidator;
+import com.project.cybershop.pcbuild.internal.support.BuildMetrics;
+import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
+import com.project.cybershop.pcbuild.internal.support.ProfileMatcher;
+import com.project.cybershop.pcbuild.internal.support.TextNormalizer;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.*;
+import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
+/**
+ * Orchestrator /ai-suggest (DD 3.3). Không @Transactional (B06, DD 8.6): mọi lần đọc DB nằm trong lần nạp snapshot,
+ * kết thúc trước khi gọi AI. "Java chọn, AI giải thích": AI chỉ trích hồ sơ và viết lời giải thích.
+ */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class AiPcBuilderServiceImpl implements AiPcBuilderService {
 
-    private final CatalogPublicApi catalogPublicApi;
-    private final BudgetHeuristicService heuristicService;
-    private final LlmClientService llmClientService;
-    private final HardwareCompatibilityValidator validator;
-    private final PcCustomRepository pcCustomRepository;
-    private final IdentityApi identityApi;
-    private final ObjectMapper objectMapper;
+    private static final List<String> EXAMPLES = List.of(
+            "Chơi game 2K, thỉnh thoảng stream",
+            "Dựng phim 4K bằng DaVinci Resolve",
+            "Học và chạy thử model AI nhỏ",
+            "Văn phòng, Excel, họp online",
+            "Lập trình web, chạy Docker");
+    private static final BigDecimal WINDOW_MIN = new BigDecimal("0.90");
 
-    private static final String SYSTEM_PROMPT = """
-        BẠN LÀ MỘT KỸ SƯ TRƯỞNG THIẾT KẾ PHẦN CỨNG MÁY TÍNH CHO CYBERSHOP.
-        NHIỆM VỤ: Chọn ra 1 cấu hình PC tối ưu nhất từ DANH MỤC LINH KIỆN CÓ SẴN TRONG KHO theo yêu cầu khách hàng.
-        QUY TẮC BẮT BUỘC:
-        1. BẮT BUỘC PHẢI CHỌN ĐỦ CÁC NHÓM LINH KIỆN ĐỂ TẠO THÀNH BỘ MÁY HOÀN CHỈNH HOẠT ĐỘNG ĐƯỢC:
-           - 1 cpu (categorySlug: "cpu")
-           - 1 mainboard (categorySlug: "mainboard")
-           - 1 hoặc 2 thanh ram (categorySlug: "ram", đạt mục tiêu ramTargetGb)
-           - 1 ổ cứng ssd (categorySlug: "ssd", lưu trữ và cài hệ điều hành)
-           - 1 nguồn psu (categorySlug: "psu", công suất đủ gánh hệ thống)
-           - 1 vỏ case (categorySlug: "case", chứa vừa các linh kiện)
-           - 1 tản nhiệt cooler (categorySlug: "cooler", làm mát CPU)
-           - 1 card đồ họa gpu (categorySlug: "gpu", BẮT BUỘC với mục đích 'gaming', 'creative' hoặc CPU dòng F không có card tích hợp).
-           TUYỆT ĐỐI KHÔNG ĐƯỢC CHỈ CHỌN 1 LINH KIỆN HOẶC BỎ SÓT CÁC LINH KIỆN CỐT LÕI TRÊN!
-        2. QUY TẮC PHÂN LOẠI DANH MỤC (NGHIÊM NGẶT):
-           - MỖI ROLE BẮT BUỘC PHẢI CHỌN ĐÚNG LINH KIỆN CÓ 'categorySlug' TƯƠNG ỨNG:
-             + role "ram": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "ram". TUYỆT ĐỐI KHÔNG ĐƯỢC CHỌN ổ cứng SSD, GPU hay linh kiện khác cho role "ram"!
-             + role "ssd": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "ssd".
-             + role "cpu": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "cpu".
-             + role "mainboard": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "mainboard".
-             + role "gpu": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "gpu".
-             + role "psu": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "psu".
-             + role "case": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "case".
-             + role "cooler": CHỈ ĐƯỢC CHỌN linh kiện có categorySlug == "cooler".
-           - NẾU KHÁCH HÀNG YÊU CẦU MỘT THƯƠNG HIỆU MÀ TRONG KHO LINH KIỆN (availablePartsInStock) CỦA DANH MỤC ĐÓ KHÔNG CÓ:
-             Hãy chọn linh kiện tốt nhất hiện có trong danh mục đó và giải thích rõ trong 'aiReasoning', tuyệt đối không được lấy sản phẩm khác danh mục để thay thế!
-        3. CHỈ ĐƯỢC CHỌN 'variantId' có trong danh sách được cấp. TUYỆT ĐỐI KHÔNG BỊA ID HOẶC TÊN LINH KIỆN.
-        4. TỔNG GIÁ TIỀN của toàn bộ linh kiện phải <= Ngân sách của khách hàng.
-        5. TUÂN THỦ TƯƠNG THÍCH KỸ THUẬT:
-           - CPU và Mainboard PHẢI TRÙNG KHỚP Socket.
-           - RAM phải trùng chuẩn DDR4/DDR5 với Mainboard.
-           - Nguồn (PSU) >= (TDP CPU + TDP GPU + 80W) * 1.30.
-           - Vỏ Case phải vừa bo mạch chủ và vừa độ dài card đồ họa.
-        6. QUY ĐỊNH ĐỊNH DẠNG ĐẦU RA (BẮT BUỘC):
-           - CHỈ TRẢ VỀ DUY NHẤT 1 ĐỐI TƯỢNG JSON HỢP LỆ THEO ĐÚNG CẤU TRÚC SAU.
-           - TUYỆT ĐỐI KHÔNG VIẾT THÊM BẤT KỲ VĂN BẢN, LỜI MỞ ĐẦU, KẾT LUẬN HAY KÝ TỰ NÀO BÊN NGOÀI JSON:
-           {
-             "buildName": "Tên cấu hình tối ưu",
-             "aiReasoning": "Lời nhận xét phân tích vì sao chọn các linh kiện này",
-             "performanceHighlight": "Tóm tắt hiệu năng chơi game hoặc làm việc",
-             "selectedParts": [
-               { "role": "cpu", "variantId": 101, "quantity": 1, "reason": "Lý do lựa chọn CPU" },
-               { "role": "mainboard", "variantId": 118, "quantity": 1, "reason": "Lý do lựa chọn Mainboard" },
-               { "role": "ram", "variantId": 311, "quantity": 2, "reason": "Lý do lựa chọn RAM" },
-               { "role": "gpu", "variantId": 122, "quantity": 1, "reason": "Lý do lựa chọn GPU" },
-               { "role": "ssd", "variantId": 523, "quantity": 1, "reason": "Lý do lựa chọn SSD" },
-               { "role": "psu", "variantId": 424, "quantity": 1, "reason": "Lý do lựa chọn PSU" },
-               { "role": "case", "variantId": 125, "quantity": 1, "reason": "Lý do lựa chọn Case" },
-               { "role": "cooler", "variantId": 126, "quantity": 1, "reason": "Lý do lựa chọn Cooler" }
-             ]
-           }
-        """;
+    private final CandidateRepositoryFacade candidateRepositoryFacade;
+    private final RequestValidator requestValidator;
+    private final ProfileExtractor profileExtractor;
+    private final ProfilePresets profilePresets;
+    private final ProfileValidator profileValidator;
+    private final BuildSolver buildSolver;
+    private final BuildExplainer buildExplainer;
+    private final CompatibilityEngine compatibilityEngine;
+    private final Clock clock;
+    private final long requestDeadlineMs;
+    private final double needsUnclearConfidence;
+    private final String provider;
+    private final String model;
+
+    public AiPcBuilderServiceImpl(CandidateRepositoryFacade candidateRepositoryFacade, RequestValidator requestValidator,
+                                  ProfileExtractor profileExtractor, ProfilePresets profilePresets,
+                                  ProfileValidator profileValidator, BuildSolver buildSolver, BuildExplainer buildExplainer,
+                                  CompatibilityEngine compatibilityEngine, Clock clock,
+                                  @Value("${app.ai.request-deadline-ms:14000}") long requestDeadlineMs,
+                                  @Value("${app.pcbuild.needs-unclear-confidence:0.4}") double needsUnclearConfidence,
+                                  @Value("${app.ai.provider:gemini}") String provider,
+                                  @Value("${app.ai.model:gemini-3.5-flash-lite}") String model) {
+        this.candidateRepositoryFacade = candidateRepositoryFacade;
+        this.requestValidator = requestValidator;
+        this.profileExtractor = profileExtractor;
+        this.profilePresets = profilePresets;
+        this.profileValidator = profileValidator;
+        this.buildSolver = buildSolver;
+        this.buildExplainer = buildExplainer;
+        this.compatibilityEngine = compatibilityEngine;
+        this.clock = clock;
+        this.requestDeadlineMs = requestDeadlineMs;
+        this.needsUnclearConfidence = needsUnclearConfidence;
+        this.provider = provider;
+        this.model = model;
+    }
 
     @Override
-    @Transactional
     public AiBuildResponse processAiBuild(AiBuildRequest request, Integer currentUserId) {
-        // 1. Lấy toàn bộ linh kiện đang có trong kho & danh sách thương hiệu từ DB
-        List<ComponentCandidateDTO> allCandidates = catalogPublicApi.getActiveCandidatesForBuild();
-        if (allCandidates.isEmpty()) {
-            throw new IllegalStateException("Kho hàng hiện chưa có linh kiện nào đang hoạt động!");
+        Instant started = clock.instant();
+        // Một deadline chung cho mọi lời gọi AI của request (DD 8.5.1)
+        Instant deadline = started.plusMillis(requestDeadlineMs);
+        String requestId = UUID.randomUUID().toString();
+
+        CompatibilitySnapshot snapshot = candidateRepositoryFacade.snapshot();   // đúng một lần cho cả request
+        requestValidator.validate(request, buildSolver.floorPrice(snapshot));
+        BigDecimal budget = request.getBudget();
+        BuildTier tier = BuildTier.of(budget);
+
+        // Hồ sơ: khách gửi (không gọi AI) → cache → AI
+        long profileStarted = System.nanoTime();
+        RequirementProfileDto draft;
+        String extractStatus;
+        String source;
+        if (request.getProfile() != null) {
+            draft = request.getProfile();
+            extractStatus = "USER_PROFILE";
+            source = ProfileValidator.SOURCE_USER_EDITED;
+        } else {
+            ProfileExtractor.Extraction extraction = profileExtractor.extract(request.getPurpose(), request.getUserPrompt(),
+                    budget, tier, snapshot, deadline);
+            draft = extraction.draft();
+            extractStatus = extraction.status();
+            source = ProfileValidator.SOURCE_AI;
         }
-        List<String> allBrandNames = catalogPublicApi.getAllBrandNames();
-
-        // 2. Thu hẹp ứng viên theo Heuristic để tiết kiệm token
-        List<ComponentCandidateDTO> candidates = heuristicService.filterCandidates(
-                allCandidates, request.getBudget(), request.getPurpose(), request.getUserPrompt(), request.getRamGb(), allBrandNames
-        );
-
-        Map<Integer, ComponentCandidateDTO> candidateMap = new HashMap<>();
-        for (ComponentCandidateDTO c : allCandidates) {
-            candidateMap.put(c.getVariantId(), c);
+        ValidatedProfile profile = profileValidator.validate(profilePresets.fillMissing(draft, tier), snapshot.dictionary(),
+                source, request.getRamGb());
+        long profileMs = elapsedMs(profileStarted);
+        if (ProfileValidator.SOURCE_AI.equals(source)) {
+            rejectIfUnclear(profile);
         }
-
-        // 3. Chuẩn bị User Context gửi cho AI
-        String userContext;
-        try {
-            Map<String, Object> contextObj = Map.of(
-                "budget", request.getBudget(),
-                "purpose", request.getPurpose(),
-                "ramTargetGb", request.getRamGb(),
-                "scope", request.getScope(),
-                "userNotes", request.getUserPrompt() != null ? request.getUserPrompt() : "",
-                "availablePartsInStock", candidates
-            );
-            userContext = objectMapper.writeValueAsString(contextObj);
-        } catch (Exception e) {
-            userContext = "{}";
-        }
-
-        // 4. Gọi AI sinh cấu hình nháp
-        LlmClientService.AiDraftProposal proposal = llmClientService.generateBuildProposal(SYSTEM_PROMPT, userContext);
-
-        if (proposal == null || proposal.getSelectedParts() == null || proposal.getSelectedParts().isEmpty()) {
-            throw new BusinessException("AI chưa tìm thấy bộ linh kiện phù hợp với mức ngân sách và yêu cầu này trong kho. Vui lòng điều chỉnh ngân sách hoặc mô tả yêu cầu!");
+        if (!profile.profile().getDroppedItems().isEmpty()) {
+            log.info("ai-suggest requestId={} droppedItems={}", requestId, profile.profile().getDroppedItems());
         }
 
-        // 5. Map linh kiện đã chọn sang map kiểm định
-        Map<String, ComponentCandidateDTO> selectedMap = new HashMap<>();
-        List<SelectedPartResponse> selectedParts = new ArrayList<>();
-        BigDecimal totalCalculated = BigDecimal.ZERO;
+        // Java chọn bộ máy (tất định, tổng ≤ B)
+        long solverStarted = System.nanoTime();
+        CandidatePool pool = candidateRepositoryFacade.buildPool(snapshot, profile, budget);
+        SolverResult result = buildSolver.solve(new SolverInput(budget, profile, pool, snapshot));
+        long solverMs = elapsedMs(solverStarted);
 
-        for (LlmClientService.AiDraftProposal.PartSelection ps : proposal.getSelectedParts()) {
-            if (ps == null || ps.getVariantId() == null) continue;
-            ComponentCandidateDTO cand = candidateMap.get(ps.getVariantId());
-            if (cand != null) {
-                cand.setQuantity(ps.getQuantity() != null ? ps.getQuantity() : 1);
-                selectedMap.put(ps.getRole(), cand);
+        // AI giải thích; lỗi thì 503, không trả bộ máy chưa có lời giải thích [ĐÃ CHỐT]
+        long explainStarted = System.nanoTime();
+        BuildExplainer.Explanation explanation = buildExplainer.explain(result.profile(), result, budget,
+                request.getPurpose(), request.getUserPrompt(), snapshot, deadline);
+        long explainMs = elapsedMs(explainStarted);
 
-                BigDecimal subtotal = cand.getPrice().multiply(BigDecimal.valueOf(cand.getQuantity()));
-                totalCalculated = totalCalculated.add(subtotal);
+        // Kiểm lần cuối với hồ sơ gốc: mục đã hạ hiện thành warning P:*
+        EngineReport report = compatibilityEngine.evaluate(result.lines(),
+                new EvaluationContext(budget, profile, EvaluationContext.Mode.USER, snapshot));
 
-                selectedParts.add(SelectedPartResponse.builder()
-                        .role(ps.getRole())
-                        .variantId(cand.getVariantId())
-                        .productName(cand.getProductName())
-                        .variantName(cand.getVariantName())
-                        .imageUrl(cand.getImageUrl())
-                        .unitPrice(cand.getPrice())
-                        .quantity(cand.getQuantity())
-                        .subtotal(subtotal)
-                        .specs(cand.getSpecs())
-                        .aiReason(ps.getReason())
-                        .build());
-            }
+        long totalMs = Duration.between(started, clock.instant()).toMillis();
+        Map<String, Long> latency = new LinkedHashMap<>();
+        latency.put("profile", profileMs);
+        latency.put("solver", solverMs);
+        latency.put("explain", explainMs);
+        latency.put("total", totalMs);
+
+        List<String> warnings = new ArrayList<>(profile.warnings());
+        warnings.addAll(result.warnings());
+        // DD 6.5, Phụ lục B: nguồn cần > 1600 W (check J4b) được nêu thêm bằng mã ổn định để FE hiện lời nhắc ổ điện riêng
+        if (report.checks().stream().anyMatch(check -> "J4b".equals(check.getKey()))) {
+            warnings.add("PSU_HIGH_WATTAGE");
         }
 
-        if (selectedParts.isEmpty()) {
-            throw new BusinessException("AI chưa tìm thấy linh kiện tương thích trong kho đáp ứng đủ cấu hình này. Vui lòng thử lại với ngân sách hoặc nhu cầu khác!");
-        }
+        log.info("ai-suggest xong requestId={} user={} budget={} purposeHash={} archetype={} constraints={} metrics={} "
+                        + "relaxedItems={} total={} percent={} reasonCode={} extractStatus={} aiStatus={} latencyMs={} iterations={}",
+                requestId, currentUserId != null ? currentUserId : "anon", budget, hash(request.getPurpose()),
+                profile.archetype(), profile.constraints().size(), profile.metrics().size(), result.relaxedItems(),
+                result.total(), percent(result.total(), budget), result.reasonCode(), extractStatus,
+                explanation.aiStatus(), latency, result.iterations());
 
-        // 6. Kiểm định cứng qua Rule Engine
-        HardwareCompatibilityValidator.ValidationReport report = validator.validate(selectedMap, request.getBudget());
-
-        // Đề xuất AI chỉ trả về kết quả xem trước, KHÔNG tự ý lưu vào Database pc_customs
         return AiBuildResponse.builder()
                 .buildId(null)
-                .buildName(proposal.getBuildName())
+                .buildName(explanation.buildName())
                 .purpose(request.getPurpose())
-                .totalPrice(totalCalculated)
-                .budget(request.getBudget())
-                .aiReasoning(proposal.getAiReasoning())
-                .performanceHighlight(proposal.getPerformanceHighlight())
-                .isCompatible(report.isValid())
+                .totalPrice(result.total())
+                .budget(budget)
+                .aiReasoning(explanation.aiReasoning())
+                .performanceHighlight(explanation.performanceHighlight())
+                .isCompatible(report.compatible())
                 .checks(report.checks())
-                .items(selectedParts)
+                .items(items(result.lines(), explanation))
+                .reasonCode(result.reasonCode())
+                .budgetFit(budgetFit(result, budget))
+                .profile(withSatisfaction(profile, result.lines(), snapshot))
+                .relaxedItems(result.relaxedItems())
+                .warnings(warnings)
+                .capacity(report.capacity())
+                .requiredPsuW(report.requiredPsuW())
+                .floorPrice(result.floorPrice())
+                .metadata(AiBuildMetadataResponse.builder()
+                        .requestId(requestId)
+                        .generatedAt(OffsetDateTime.now(clock))
+                        .extractStatus(extractStatus)
+                        .aiStatus(explanation.aiStatus())
+                        .provider(provider)
+                        .model(model)
+                        .promptVersions(Map.of("profile", ProfileExtractor.PROMPT_VERSION, "explain", BuildExplainer.PROMPT_VERSION))
+                        .dictionaryVersion(snapshot.dictionaryVersion())
+                        .latencyMs(latency)
+                        .candidateCount(pool.size())
+                        .solverIterations(result.iterations())
+                        .build())
                 .build();
+    }
+
+    @Override
+    public BuildOptionsResponse options() {
+        CompatibilitySnapshot snapshot = candidateRepositoryFacade.snapshot();
+        List<BuildOptionsResponse.Tier> tiers = new ArrayList<>();
+        for (BuildTier tier : BuildTier.values()) {
+            tiers.add(new BuildOptionsResponse.Tier(tier.name(), tier.lowerBound(), tier.upperBound()));
+        }
+        return BuildOptionsResponse.builder()
+                .minBudget(requestValidator.minBudget())
+                .floorPrice(buildSolver.floorPrice(snapshot))
+                .maxBudget(requestValidator.maxBudget())
+                .dictionaryVersion(snapshot.dictionaryVersion())
+                .dictionary(snapshot.dictionary())
+                .examples(EXAMPLES)
+                .tiers(tiers)
+                .build();
+    }
+
+    // DD 5.6: confidence < 0,4 hoặc không còn mục nào dùng được sau khi kiểm → hỏi lại khách
+    private void rejectIfUnclear(ValidatedProfile profile) {
+        RequirementProfileDto dto = profile.profile();
+        boolean lowConfidence = dto.getConfidence() != null && dto.getConfidence() < needsUnclearConfidence;
+        boolean nothingUsable = dto.getConstraints().isEmpty() && dto.getMetrics().isEmpty() && dto.getPreferences().isEmpty();
+        if (lowConfidence || nothingUsable) {
+            String question = dto.getClarifyingQuestion() != null && !dto.getClarifyingQuestion().isBlank()
+                    ? dto.getClarifyingQuestion()
+                    : "Bạn sẽ dùng máy chủ yếu cho việc gì (chơi game, làm đồ họa, học tập…)?";
+            throw new BuildRuleException("NEEDS_UNCLEAR", HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Nhu cầu chưa đủ rõ để đề xuất cấu hình", Map.of("clarifyingQuestion", question));
+        }
+    }
+
+    private static List<SelectedPartResponse> items(List<BuildLine> lines, BuildExplainer.Explanation explanation) {
+        return lines.stream().map(line -> {
+            BigDecimal unitPrice = line.part().getPrice();
+            String reason = explanation.partReasons().get(line.part().getVariantId());
+            return SelectedPartResponse.builder()
+                    .role(line.role())
+                    .variantId(line.part().getVariantId())
+                    .productName(line.part().getProductName())
+                    .variantName(line.part().getVariantName())
+                    .imageUrl(line.part().getImageUrl())
+                    .unitPrice(unitPrice)
+                    .quantity(line.quantity())
+                    .subtotal(unitPrice.multiply(BigDecimal.valueOf(line.quantity())))
+                    .specs(line.part().getSpecs())
+                    .aiReason(reason != null && !reason.isBlank() ? reason : "—")
+                    .build();
+        }).toList();
+    }
+
+    private static BudgetFitResponse budgetFit(SolverResult result, BigDecimal budget) {
+        BigDecimal ratio = result.total().divide(budget, 4, RoundingMode.HALF_UP);
+        BigDecimal windowMin = budget.multiply(WINDOW_MIN).setScale(0, RoundingMode.CEILING);
+        String status;
+        if (result.total().compareTo(windowMin) >= 0) {
+            status = "IN_WINDOW";
+        } else if ("CATALOG_CEILING".equals(result.reasonCode())) {
+            status = "UNDER_CEILING";
+        } else if ("NEEDS_SATURATED".equals(result.reasonCode())) {
+            status = "UNDER_SATURATED";
+        } else {
+            status = "UNDER_RELAXED";
+        }
+        return BudgetFitResponse.builder()
+                .ratio(ratio)
+                .percent(ratio.multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP))
+                .status(status)
+                .windowMin(windowMin)
+                .windowMax(budget)
+                .leftover(result.leftover())
+                .build();
+    }
+
+    /** Hồ sơ gốc đã kiểm, kèm cờ satisfied của từng mục trên bộ máy đề xuất (mục đã hạ có thể false). */
+    private static RequirementProfileDto withSatisfaction(ValidatedProfile profile, List<BuildLine> lines, CompatibilitySnapshot snapshot) {
+        RequirementProfileDto dto = profile.profile();
+        Map<MetricKind, Integer> metrics = BuildMetrics.of(lines, snapshot);
+        List<ProfileConstraintDto> constraints = dto.getConstraints().stream().map(constraint -> {
+            List<BuildLine> roleLines = lines.stream().filter(line -> constraint.getRole().equals(line.role())).toList();
+            boolean satisfied = !roleLines.isEmpty() && roleLines.stream()
+                    .allMatch(line -> ProfileMatcher.matches(constraint, line.part(), snapshot));
+            return constraint.toBuilder().satisfied(satisfied).build();
+        }).toList();
+        List<ProfileMetricDto> metricItems = dto.getMetrics().stream()
+                .map(metric -> metric.toBuilder().satisfied(ProfileMatcher.matches(metric, metrics)).build())
+                .toList();
+        return dto.toBuilder().constraints(new ArrayList<>(constraints)).metrics(new ArrayList<>(metricItems)).build();
+    }
+
+    private static BigDecimal percent(BigDecimal total, BigDecimal budget) {
+        return total.multiply(BigDecimal.valueOf(100)).divide(budget, 1, RoundingMode.HALF_UP);
+    }
+
+    private static long elapsedMs(long startedNanos) {
+        return (System.nanoTime() - startedNanos) / 1_000_000;
+    }
+
+    // Không log nguyên văn nhu cầu (có thể chứa thông tin cá nhân), chỉ log hash (DD 11.5)
+    private static String hash(String text) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(TextNormalizer.normalize(text).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest).substring(0, 12);
+        } catch (NoSuchAlgorithmException e) {
+            return "n/a";
+        }
     }
 }

@@ -1,41 +1,40 @@
 package com.project.cybershop.pcbuild.internal.service;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.project.cybershop.pcbuild.api.dto.profile.RequirementProfileDto;
 import lombok.Data;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
 public interface LlmClientService {
 
+    /** Lời giải thích AI viết cho bộ máy solver đã chọn (DD 8.4). AI không chọn hay đổi linh kiện. */
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
-    class AiDraftProposal {
-        @JsonAlias({"build_name", "title", "name"})
+    class ExplanationDraft {
         private String buildName;
-
-        @JsonAlias({"ai_reasoning", "reasoning", "description"})
         private String aiReasoning;
-
-        @JsonAlias({"performance_highlight", "highlight"})
         private String performanceHighlight;
-
-        @JsonAlias({"selected_parts", "parts", "items", "components"})
-        private List<PartSelection> selectedParts = new ArrayList<>();
+        private List<PartReason> partReasons = new ArrayList<>();
 
         @Data
         @JsonIgnoreProperties(ignoreUnknown = true)
-        public static class PartSelection {
-            private String role;
-
-            @JsonAlias({"variant_id", "id", "variantId"})
+        public static class PartReason {
             private Integer variantId;
-
-            private Integer quantity = 1;
             private String reason;
         }
     }
 
-    AiDraftProposal generateBuildProposal(String systemPrompt, String userContextJson);
+    /**
+     * Trích hồ sơ yêu cầu (DD 8.3). Timeout mỗi lần gọi = min(profile-timeout-ms, thời gian còn lại tới deadline).
+     *
+     * @param deadline mốc chung của cả request /ai-suggest (bắt đầu + request-deadline-ms)
+     * @throws com.project.cybershop.pcbuild.internal.support.AiUnavailableException khi hết lần thử, hết deadline hoặc mạch ngắt
+     */
+    RequirementProfileDto extractProfile(String systemPrompt, String userJson, Instant deadline);
+
+    /** Viết lời giải thích (DD 8.4). Timeout mỗi lần gọi = min(timeout-ms, thời gian còn lại tới deadline). */
+    ExplanationDraft explainBuild(String systemPrompt, String userJson, Instant deadline);
 }

@@ -14,8 +14,8 @@ import java.util.Optional;
 @Repository
 public interface CartItemRepository extends JpaRepository<CartItem, Integer> {
 
-    // Lấy danh sách sản phẩm trong giỏ hàng
-    List<CartItem> findByCartId(Integer cartId);
+    // Sắp theo id để giữ thứ tự thêm vào giỏ: không có ORDER BY thì Postgres có thể trả dòng vừa UPDATE xuống cuối.
+    List<CartItem> findByCartIdOrderByIdAsc(Integer cartId);
 
     @Query(value = """
             SELECT product_variant_id AS "productVariantId", quantity AS "quantity"

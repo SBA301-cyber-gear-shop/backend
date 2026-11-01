@@ -1,0 +1,172 @@
+{
+  "profileVersion" : 1,
+  "source" : "AI",
+  "summary" : "Hồ sơ mẫu CREATIVE T2",
+  "archetype" : "CREATIVE",
+  "useCases" : [ ],
+  "roleWeights" : {
+    "cpu" : 0.28,
+    "mainboard" : 0.05,
+    "ram" : 0.22,
+    "gpu" : 0.25,
+    "ssd" : 0.12,
+    "psu" : 0.03,
+    "case" : 0.02,
+    "cooler" : 0.03
+  },
+  "requiredRoles" : [ ],
+  "excludedRoles" : [ ],
+  "constraints" : [ {
+    "id" : "c1",
+    "role" : "cpu",
+    "spec" : "Core_Count",
+    "op" : "GTE",
+    "value" : 6.0,
+    "values" : [ ],
+    "priority" : 2,
+    "reason" : "Hồ sơ mẫu CREATIVE T2"
+  } ],
+  "metrics" : [ {
+    "id" : "m1",
+    "metric" : "TOTAL_RAM_GB",
+    "op" : "GTE",
+    "value" : 32.0,
+    "priority" : 2,
+    "reason" : "Hồ sơ mẫu CREATIVE T2"
+  } ],
+  "preferences" : [ {
+    "id" : "p1",
+    "role" : "cpu",
+    "spec" : "Core_Count",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5,
+    "cap" : 128.0
+  }, {
+    "id" : "p2",
+    "role" : "cpu",
+    "spec" : "Boost_Clock_MHz",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  }, {
+    "id" : "p3",
+    "role" : "mainboard",
+    "spec" : "M2_Slots",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.4
+  }, {
+    "id" : "p4",
+    "role" : "mainboard",
+    "spec" : "RAM_Slots",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.3
+  }, {
+    "id" : "p5",
+    "role" : "mainboard",
+    "spec" : "Has_WiFi",
+    "direction" : "PREFER",
+    "values" : [ "YES" ],
+    "weight" : 0.3
+  }, {
+    "id" : "p6",
+    "metric" : "TOTAL_RAM_GB",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.8,
+    "cap" : 512.0
+  }, {
+    "id" : "p7",
+    "role" : "ram",
+    "spec" : "Bus_Speed",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.2
+  }, {
+    "id" : "p8",
+    "role" : "gpu",
+    "spec" : "Perf_Index_1440p",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.6
+  }, {
+    "id" : "p9",
+    "role" : "gpu",
+    "spec" : "VRAM_GB",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.2
+  }, {
+    "id" : "p10",
+    "metric" : "GPU_COUNT",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.2,
+    "cap" : 2.0
+  }, {
+    "id" : "p11",
+    "metric" : "TOTAL_STORAGE_GB",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.7
+  }, {
+    "id" : "p12",
+    "role" : "ssd",
+    "spec" : "SSD_Interface",
+    "direction" : "PREFER",
+    "values" : [ "NVME_GEN4", "NVME_GEN5" ],
+    "weight" : 0.3
+  }, {
+    "id" : "p13",
+    "role" : "psu",
+    "spec" : "Efficiency_Rating",
+    "direction" : "PREFER",
+    "values" : [ "GOLD", "PLATINUM", "TITANIUM" ],
+    "weight" : 0.6
+  }, {
+    "id" : "p14",
+    "role" : "psu",
+    "spec" : "ATX_Version",
+    "direction" : "PREFER",
+    "values" : [ "ATX30", "ATX31" ],
+    "weight" : 0.4
+  }, {
+    "id" : "p15",
+    "role" : "case",
+    "spec" : "Max_GPU_Length_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  }, {
+    "id" : "p16",
+    "role" : "case",
+    "spec" : "Max_Radiator_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  }, {
+    "id" : "p17",
+    "role" : "cooler",
+    "spec" : "Radiator_Size_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  }, {
+    "id" : "p18",
+    "role" : "cooler",
+    "spec" : "Height_MM",
+    "direction" : "MAX",
+    "values" : [ ],
+    "weight" : 0.5
+  } ],
+  "balancePairs" : [ ],
+  "brands" : {
+    "prefer" : [ ],
+    "avoid" : [ ]
+  },
+  "unmetNeeds" : [ ],
+  "confidence" : 1.0,
+  "droppedItems" : [ ]
+}

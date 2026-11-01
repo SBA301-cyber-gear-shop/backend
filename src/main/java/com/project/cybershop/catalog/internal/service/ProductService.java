@@ -26,6 +26,9 @@ import java.util.stream.Collectors;
 @Service
 public class ProductService {
 
+    // Cột giá là numeric(12,2).
+    private static final BigDecimal PRICE_LIMIT = BigDecimal.valueOf(10_000_000_000L);
+
     private final ProductRepository productRepository;
     private final ProductVariantRepository productVariantRepository;
     private final BrandRepository brandRepository;
@@ -63,6 +66,12 @@ public class ProductService {
     private void validateVariantPriceAndStock(BigDecimal price, BigDecimal originalPrice, Integer stockQuantity) {
         if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException("Giá bán phiên bản phải lớn hơn 0");
+        }
+        if (originalPrice != null && originalPrice.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException("Giá gốc không được âm");
+        }
+        if (price.compareTo(PRICE_LIMIT) >= 0 || (originalPrice != null && originalPrice.compareTo(PRICE_LIMIT) >= 0)) {
+            throw new BusinessException("Giá không được vượt quá 9.999.999.999 ₫");
         }
         if (stockQuantity != null && stockQuantity < 0) {
             throw new BusinessException("Số lượng tồn kho không được âm");
@@ -200,8 +209,13 @@ public class ProductService {
         variant.setStockQuantity(request.stockQuantity() != null ? request.stockQuantity() : 0);
         variant.setImageUrl(request.imageUrl());
 
-        variant.getAttributeValues().clear();
-        attachAttributes(variant, request.attributes());
+        // attributes = null là không gửi thông số: giữ nguyên, không xóa thông số đang có.
+        if (request.attributes() != null) {
+            variant.getAttributeValues().clear();
+            // Xóa dòng cũ trước khi thêm: uk_variant_spec chặn nếu Hibernate insert trước delete.
+            productVariantRepository.flush();
+            attachAttributes(variant, request.attributes());
+        }
 
         ProductVariant saved = productVariantRepository.save(variant);
         return catalogMapper.toVariantResponse(saved);
@@ -269,17 +283,14 @@ public class ProductService {
         return catalogMapper.toVariantResponse(variant);
     }
 
-    @Transactional
-    public ProductResponse publishProduct(Integer productId) {
-        Product product = productRepository.findWithDetailsById(productId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm với ID: " + productId));
-
+    // Điều kiện duy nhất để sản phẩm được ở trạng thái đang bán, dùng chung cho publish và cập nhật.
+    private void requirePublishable(Product product, Integer categoryId) {
         if (product.getVariants() == null || product.getVariants().isEmpty()) {
             throw new BusinessException("Sản phẩm phải có ít nhất 1 phiên bản (variant) để đăng bán");
         }
 
         List<CategorySpecification> primarySpecs = categorySpecRepository
-                .findPrimarySpecsByCategoryId(product.getCategory().getId());
+                .findPrimarySpecsByCategoryId(categoryId);
 
         if (!primarySpecs.isEmpty()) {
             Set<Integer> requiredSpecIds = primarySpecs.stream()
@@ -299,6 +310,14 @@ public class ProductService {
                 }
             }
         }
+    }
+
+    @Transactional
+    public ProductResponse publishProduct(Integer productId) {
+        Product product = productRepository.findWithDetailsById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm với ID: " + productId));
+
+        requirePublishable(product, product.getCategory().getId());
 
         product.setStatus(ProductStatus.ACTIVE);
         return catalogMapper.toProductResponse(productRepository.save(product));
@@ -342,6 +361,12 @@ public class ProductService {
 
         Category category = categoryRepository.findById(request.categoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy danh mục với ID: " + request.categoryId()));
+
+        ProductStatus nextStatus = request.status() != null ? request.status() : product.getStatus();
+        boolean categoryChanged = !category.getId().equals(product.getCategory().getId());
+        if (nextStatus == ProductStatus.ACTIVE && (product.getStatus() != ProductStatus.ACTIVE || categoryChanged)) {
+            requirePublishable(product, category.getId());
+        }
 
         product.setName(request.name().trim());
         product.setBrand(brand);

@@ -6,6 +6,7 @@ import com.project.cybershop.identity.internal.mapper.UserMapper;
 import com.project.cybershop.identity.api.dto.response.AuthResponse;
 import com.project.cybershop.identity.api.dto.request.LoginRequest;
 import com.project.cybershop.identity.api.dto.request.RegisterRequest;
+import com.project.cybershop.identity.api.dto.request.UpdateProfileRequest;
 import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.identity.internal.entity.Role;
 import com.project.cybershop.identity.internal.entity.User;
@@ -121,5 +122,26 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin tài khoản: " + email));
         return userMapper.toDto(user);
+    }
+
+    @Override
+    @Transactional
+    public UserDto updateProfile(String email, UpdateProfileRequest request) {
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin tài khoản: " + email));
+        if (!Boolean.TRUE.equals(user.getIsActive())) {
+            throw new BusinessException("Tài khoản của bạn đã bị khóa hoặc ngừng kích hoạt");
+        }
+
+        String phone = request.getPhone().trim();
+        if (!phone.equals(user.getPhone()) && userRepository.existsByPhone(phone)) {
+            throw new BusinessException("Số điện thoại '" + phone + "' đã được sử dụng");
+        }
+
+        user.setFullName(request.getFullName().trim());
+        user.setPhone(phone);
+        String address = request.getAddress();
+        user.setAddress(address == null || address.isBlank() ? null : address.trim());
+        return userMapper.toDto(userRepository.save(user));
     }
 }

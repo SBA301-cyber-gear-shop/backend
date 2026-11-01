@@ -21,6 +21,7 @@ import com.project.cybershop.aftersales.internal.repository.ServiceRequestReposi
 import com.project.cybershop.aftersales.internal.repository.WarrantyCardRepository;
 import com.project.cybershop.aftersales.internal.service.CurrentUser.Principal;
 import com.project.cybershop.aftersales.internal.mapper.AftersalesMapper;
+import com.project.cybershop.catalog.api.CatalogInternalApi;
 import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.shared.exception.BusinessException;
@@ -64,6 +65,7 @@ public class ServiceRequestService {
     private final AftersalesMapper mapper;
     private final IdentityApi identityApi;
     private final ServiceIntakeRepository intakes;
+    private final CatalogInternalApi catalogApi;
 
     public ServiceRequestService(ServiceRequestRepository requests,
                                  ServiceRequestEventRepository events,
@@ -72,7 +74,8 @@ public class ServiceRequestService {
                                  WarrantyCardService cardService,
                                  AftersalesMapper mapper,
                                  IdentityApi identityApi,
-                                 ServiceIntakeRepository intakes) {
+                                 ServiceIntakeRepository intakes,
+                                 CatalogInternalApi catalogApi) {
         this.requests = requests;
         this.events = events;
         this.cards = cards;
@@ -81,6 +84,7 @@ public class ServiceRequestService {
         this.mapper = mapper;
         this.identityApi = identityApi;
         this.intakes = intakes;
+        this.catalogApi = catalogApi;
     }
 
     @Transactional(readOnly = true)
@@ -233,7 +237,8 @@ public class ServiceRequestService {
         if (cards.existsBySerialNumberIgnoreCase(serial)) {
             throw new BusinessException("Serial đã có thẻ bảo hành.");
         }
-        Integer months = orderInfo(old).warrantyPeriodMonths();
+        OrderInfo order = orderInfo(old);
+        Integer months = order.warrantyPeriodMonths();
         LocalDateTime now = WarrantyRules.now();
 
         // Hạn của thiết bị mới tính lại từ ngày đổi, đủ số tháng bảo hành của sản phẩm.
@@ -248,10 +253,18 @@ public class ServiceRequestService {
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException("Serial đã có thẻ bảo hành, hoặc thiết bị này đã được đổi trước đó.");
         }
+        boolean fromStock = "stock".equals(req.getSource());
+        if (fromStock) {
+            // Lỗi ở đây hoặc ở các bước sau đều hoàn tác cả thẻ mới lẫn số tồn vì cùng một transaction.
+            try {
+                catalogApi.deductStock(order.variantId(), 1);
+            } catch (BusinessException e) {
+                throw new BusinessException("Phiên bản này đã hết hàng trong kho. Hãy chọn nguồn hãng gửi về.");
+            }
+        }
         old.setStatus(WarrantyCard.REPLACED);
 
-        // shortcut: chưa tự trừ tồn kho vì chưa có module catalog, ghi nguồn để Admin trừ tay.
-        String source = "stock".equals(req.getSource()) ? "hàng đang bán, Admin cần trừ tồn kho" : "hãng gửi về";
+        String source = fromStock ? "hàng đang bán, đã trừ 1 tồn kho" : "hãng gửi về";
         String internalNote = "Đổi thiết bị: " + old.getSerialNumber() + " sang " + serial
                 + ". Nguồn: " + source + ". " + req.getInternalNote().trim();
         ServiceRequestStatus from = request.getStatus();
@@ -370,6 +383,10 @@ public class ServiceRequestService {
         dto.setCanAddNote(technical && IN_PROGRESS.contains(status));
         dto.setCanRelinkCard(technical && status == INSPECTING);
         dto.setCanReplaceDevice(technical && status == REPAIRING);
+        if (dto.isCanReplaceDevice()) {
+            dto.setReplacementInStock(catalogApi.isVariantInStock(
+                    orderInfo(card(request.getWarrantyCardId())).variantId(), 1));
+        }
         return dto;
     }
 

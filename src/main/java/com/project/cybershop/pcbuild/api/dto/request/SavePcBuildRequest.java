@@ -1,5 +1,7 @@
 package com.project.cybershop.pcbuild.api.dto.request;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -17,9 +19,10 @@ import java.util.List;
 public class SavePcBuildRequest {
     private String buildName;
 
-    @NotNull(message = "Tổng tiền không được để trống")
+    // Tùy chọn và bị bỏ qua: server tự tính từ giá catalog (giữ để FE cũ không vỡ)
     private BigDecimal totalPrice;
 
+    @Valid
     @NotEmpty(message = "Danh sách linh kiện không được để trống")
     private List<SavePartItem> items;
 
@@ -34,9 +37,10 @@ public class SavePcBuildRequest {
         private String role;
 
         @NotNull(message = "Số lượng không được để trống")
+        @Min(value = 1, message = "Số lượng phải lớn hơn 0")
         private Integer quantity;
 
-        @NotNull(message = "Đơn giá không được để trống")
+        // Tùy chọn và bị bỏ qua: server tự lấy giá từ catalog
         private BigDecimal unitPrice;
     }
 }
