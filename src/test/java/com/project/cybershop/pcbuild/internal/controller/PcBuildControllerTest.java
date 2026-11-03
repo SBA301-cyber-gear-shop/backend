@@ -74,6 +74,9 @@ class PcBuildControllerTest {
     private PcCustomService pcCustomService;
 
     @MockitoBean
+    private com.project.cybershop.pcbuild.internal.service.PeripheralService peripheralService;
+
+    @MockitoBean
     private IdentityApi identityApi;
 
     @MockitoBean
@@ -415,6 +418,88 @@ class PcBuildControllerTest {
                 .andExpect(jsonPath("$.data.minBudget").value(8000000))
                 .andExpect(jsonPath("$.data.floorPrice").value(6778000))
                 .andExpect(jsonPath("$.data.examples[0]").value("Chơi game 2K"));
+    }
+
+    private static final String PERIPHERAL_BODY =
+            "{\"budget\":30000000,\"archetype\":\"GAMING\",\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":1}]}";
+
+    @Test
+    @DisplayName("POST /peripherals: hợp lệ -> HTTP 200, chuyển nguyên request sang service")
+    void shouldReturnPeripherals() throws Exception {
+        when(peripheralService.suggest(any())).thenReturn(com.project.cybershop.pcbuild.api.dto.response.PeripheralSuggestionResponse.builder()
+                .pcTotal(new BigDecimal("23000000")).peripheralTotal(new BigDecimal("5070000")).build());
+
+        mockMvc.perform(post("/api/v1/pc-build/peripherals")
+                        .with(request -> { request.setRemoteAddr("10.40.0.1"); return request; })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(PERIPHERAL_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pcTotal").value(23000000))
+                .andExpect(jsonPath("$.data.peripheralTotal").value(5070000));
+        verify(peripheralService).suggest(org.mockito.ArgumentMatchers.argThat(query ->
+                "GAMING".equals(query.getArchetype()) && query.getItems().size() == 1));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+            "thiếu ngân sách|{\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":1}]}",
+            "ngân sách 0|{\"budget\":0,\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":1}]}",
+            "ngân sách âm|{\"budget\":-5,\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":1}]}",
+            "ngân sách quá lớn|{\"budget\":10000000000,\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":1}]}",
+            "items rỗng|{\"budget\":30000000,\"items\":[]}",
+            "thiếu items|{\"budget\":30000000}",
+            "số lượng 0|{\"budget\":30000000,\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":0}]}",
+            "số lượng 9|{\"budget\":30000000,\"items\":[{\"variantId\":101,\"role\":\"cpu\",\"quantity\":9}]}",
+            "thiếu variantId|{\"budget\":30000000,\"items\":[{\"role\":\"cpu\",\"quantity\":1}]}",
+            "thiếu role|{\"budget\":30000000,\"items\":[{\"variantId\":101,\"quantity\":1}]}",
+    })
+    @DisplayName("POST /peripherals: đầu vào sai -> HTTP 400, không gọi service")
+    void shouldRejectInvalidPeripheralRequest(String ignoredCase, String body) throws Exception {
+        org.mockito.Mockito.clearInvocations(peripheralService);
+
+        mockMvc.perform(post("/api/v1/pc-build/peripherals")
+                        .with(request -> { request.setRemoteAddr("10.40.0.2"); return request; })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+        verify(peripheralService, org.mockito.Mockito.never()).suggest(any());
+    }
+
+    @Test
+    @DisplayName("POST /peripherals: lỗi nghiệp vụ -> HTTP 422 kèm mã và số tiền thiếu")
+    void shouldReturn422WhenBudgetTooLow() throws Exception {
+        when(peripheralService.suggest(any())).thenThrow(new BuildRuleException("PERIPHERAL_BUDGET_TOO_LOW",
+                org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "Không đủ tiền",
+                java.util.Map.of("shortfall", new BigDecimal("500000"))));
+
+        mockMvc.perform(post("/api/v1/pc-build/peripherals")
+                        .with(request -> { request.setRemoteAddr("10.40.0.3"); return request; })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(PERIPHERAL_BODY))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("PERIPHERAL_BUDGET_TOO_LOW"))
+                .andExpect(jsonPath("$.data.shortfall").value(500000));
+    }
+
+    @Test
+    @DisplayName("POST /peripherals: vượt 30 lượt/phút -> HTTP 429 kèm Retry-After")
+    void shouldRateLimitPeripherals() throws Exception {
+        when(peripheralService.suggest(any())).thenReturn(com.project.cybershop.pcbuild.api.dto.response.PeripheralSuggestionResponse.builder().build());
+        for (int call = 0; call < 30; call++) {
+            mockMvc.perform(post("/api/v1/pc-build/peripherals")
+                            .with(request -> { request.setRemoteAddr("10.40.0.4"); return request; })
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(PERIPHERAL_BODY))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(post("/api/v1/pc-build/peripherals")
+                        .with(request -> { request.setRemoteAddr("10.40.0.4"); return request; })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(PERIPHERAL_BODY))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
     }
 
     @Test

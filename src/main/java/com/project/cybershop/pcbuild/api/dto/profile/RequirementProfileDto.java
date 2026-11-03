@@ -47,6 +47,7 @@ public class RequirementProfileDto {
     private Brands brands = new Brands();
     @Builder.Default
     private List<String> unmetNeeds = new ArrayList<>();
+    private String objective;           // null | MAX_PRICE (khách nói rõ muốn bộ đắt nhất)
     private Double confidence;
     private String clarifyingQuestion;
     @Builder.Default

@@ -72,6 +72,25 @@ class CandidateRepositoryFacadeImplTest {
     }
 
     @Test
+    @DisplayName("màn, phím, chuột nằm riêng trong peripherals: solver, engine và từ điển không thấy chúng")
+    void keepsPeripheralsOutOfBuildCandidates() {
+        when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(List.of(
+                part(1, "cpu", "Ryzen 5", 5_000_000, Map.of(1, "AM5")),
+                ComponentCandidateDTO.builder().variantId(201).categoryId(9).categorySlug("Monitor").build(),
+                ComponentCandidateDTO.builder().variantId(211).categoryId(10).categorySlug("keyboard").build(),
+                ComponentCandidateDTO.builder().variantId(221).categoryId(11).categorySlug("mouse").build(),
+                ComponentCandidateDTO.builder().variantId(990).categorySlug("laptop").build()));
+        when(catalogPublicApi.getSpecificationCatalog()).thenReturn(List.of());
+        when(ruleRepository.findAll()).thenReturn(List.of());
+
+        CompatibilitySnapshot snapshot = facade.snapshot();
+
+        assertThat(snapshot.candidates()).extracting(ComponentCandidateDTO::getVariantId).containsExactly(1);
+        assertThat(snapshot.peripherals()).extracting(ComponentCandidateDTO::getVariantId).containsExactly(201, 211, 221);
+        assertThat(snapshot.candidate(201)).isEmpty();
+    }
+
+    @Test
     @DisplayName("1.000 lần gọi trong 60 giây → mỗi nguồn dữ liệu chỉ được đọc đúng 1 lần")
     void cachesSnapshotForSixtySeconds() {
         stubCatalog();

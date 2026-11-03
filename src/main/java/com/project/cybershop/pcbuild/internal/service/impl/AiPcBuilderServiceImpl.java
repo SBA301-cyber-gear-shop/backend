@@ -30,6 +30,7 @@ import com.project.cybershop.pcbuild.internal.service.ProfileValidator;
 import com.project.cybershop.pcbuild.internal.service.RequestValidator;
 import com.project.cybershop.pcbuild.internal.support.BuildMetrics;
 import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
+import com.project.cybershop.pcbuild.internal.support.PeripheralSelector;
 import com.project.cybershop.pcbuild.internal.support.ProfileMatcher;
 import com.project.cybershop.pcbuild.internal.support.TextNormalizer;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +53,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Orchestrator /ai-suggest (DD 3.3). Không @Transactional (B06, DD 8.6): mọi lần đọc DB nằm trong lần nạp snapshot,
@@ -68,6 +70,9 @@ public class AiPcBuilderServiceImpl implements AiPcBuilderService {
             "Văn phòng, Excel, họp online",
             "Lập trình web, chạy Docker");
     private static final BigDecimal WINDOW_MIN = new BigDecimal("0.90");
+    // So trên văn bản đã bỏ dấu ("đắt tiền nhất" → "dat tien nhat")
+    private static final Pattern MOST_EXPENSIVE = Pattern.compile(
+            "\\b(dat|mac)( tien| do)? nhat\\b|\\bgia cao nhat\\b|\\bmost expensive\\b|\\bpriciest\\b");
 
     private final CandidateRepositoryFacade candidateRepositoryFacade;
     private final RequestValidator requestValidator;
@@ -131,6 +136,10 @@ public class AiPcBuilderServiceImpl implements AiPcBuilderService {
             ProfileExtractor.Extraction extraction = profileExtractor.extract(request.getPurpose(), request.getUserPrompt(),
                     budget, tier, snapshot, deadline);
             draft = extraction.draft();
+            // Chế độ này làm khách tốn thêm rất nhiều tiền nên không chỉ tin AI: lời khách phải thật sự nhắc tới "đắt nhất"
+            if (!MOST_EXPENSIVE.matcher(TextNormalizer.normalize(request.getPurpose() + " " + request.getUserPrompt())).find()) {
+                draft.setObjective(null);
+            }
             extractStatus = extraction.status();
             source = ProfileValidator.SOURCE_AI;
         }
@@ -153,7 +162,7 @@ public class AiPcBuilderServiceImpl implements AiPcBuilderService {
         // AI giải thích; lỗi thì 503, không trả bộ máy chưa có lời giải thích [ĐÃ CHỐT]
         long explainStarted = System.nanoTime();
         BuildExplainer.Explanation explanation = buildExplainer.explain(result.profile(), result, budget,
-                request.getPurpose(), request.getUserPrompt(), snapshot, deadline);
+                request.getPurpose(), request.getUserPrompt(), snapshot, deadline, request.getFullSetBudget());
         long explainMs = elapsedMs(explainStarted);
 
         // Kiểm lần cuối với hồ sơ gốc: mục đã hạ hiện thành warning P:*
@@ -223,7 +232,10 @@ public class AiPcBuilderServiceImpl implements AiPcBuilderService {
         for (BuildTier tier : BuildTier.values()) {
             tiers.add(new BuildOptionsResponse.Tier(tier.name(), tier.lowerBound(), tier.upperBound()));
         }
+        PeripheralSelector.BudgetRange peripherals = PeripheralSelector.budgetRange(snapshot.peripherals());
         return BuildOptionsResponse.builder()
+                .peripheralMinTotal(peripherals != null ? peripherals.min() : null)
+                .peripheralMaxTotal(peripherals != null ? peripherals.max() : null)
                 .minBudget(requestValidator.minBudget())
                 .floorPrice(buildSolver.floorPrice(snapshot))
                 .maxBudget(requestValidator.maxBudget())
@@ -277,6 +289,8 @@ public class AiPcBuilderServiceImpl implements AiPcBuilderService {
             status = "UNDER_CEILING";
         } else if ("NEEDS_SATURATED".equals(result.reasonCode())) {
             status = "UNDER_SATURATED";
+        } else if ("MAX_PRICE_REACHED".equals(result.reasonCode())) {
+            status = "UNDER_MAX_PRICE";
         } else {
             status = "UNDER_RELAXED";
         }

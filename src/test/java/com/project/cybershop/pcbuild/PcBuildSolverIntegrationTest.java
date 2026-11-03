@@ -406,6 +406,76 @@ class PcBuildSolverIntegrationTest {
         assertThat(result.relaxedItems()).doesNotContain("required:gpu", "c2");
     }
 
+    private ValidatedProfile maxPriceFixture(CompatibilitySnapshot snapshot, BigDecimal budget) {
+        var raw = presets.preset(Archetype.AI_DATA, BuildTier.of(budget));
+        raw.setObjective("MAX_PRICE");
+        return validator.validate(raw, snapshot.dictionary(), ProfileValidator.SOURCE_AI, null);
+    }
+
+    @Test
+    @DisplayName("MAX_PRICE 4 tỷ: tương thích, không thấp hơn bộ đắt ghép tay từ socket khác bộ rẻ nhất, báo MAX_PRICE_REACHED")
+    void maxPriceReachesExpensiveBuild() {
+        CompatibilitySnapshot snapshot = facade.snapshot();
+        BigDecimal budget = BigDecimal.valueOf(4_000_000_000L);
+        // Mốc độc lập với solver: Threadripper 9985WX, WRX90, 8 RDIMM, 3× RTX PRO 6000, 4 SSD 8TB, nguồn 2800W
+        BigDecimal reference = BigDecimal.ZERO;
+        List<BuildLine> sample = new ArrayList<>();
+        for (int[] item : new int[][]{{27, 1}, {48, 1}, {62, 8}, {79, 3}, {91, 4}, {101, 1}, {111, 1}, {117, 1}}) {
+            ComponentCandidateDTO part = snapshot.candidate(item[0]).orElseThrow();
+            sample.add(new BuildLine(part.getCategorySlug(), part, item[1]));
+            reference = reference.add(part.getPrice().multiply(BigDecimal.valueOf(item[1])));
+        }
+
+        long started = System.nanoTime();
+        SolverResult result = solve(snapshot, maxPriceFixture(snapshot, budget), budget);
+        System.out.printf("[max-price 4 tỷ] total=%,d mốc=%,d %dms %s%n", result.total().longValue(), reference.longValue(),
+                (System.nanoTime() - started) / 1_000_000, describe(result.lines()));
+
+        assertThat(result.compatibility().compatible()).isTrue();
+        assertThat(result.total()).isLessThanOrEqualTo(budget);
+        assertThat(result.total()).isGreaterThanOrEqualTo(reference);
+        assertThat(result.reasonCode()).isEqualTo("MAX_PRICE_REACHED");
+        assertWithinStock(result);
+    }
+
+    private static void assertWithinStock(SolverResult result) {
+        assertThat(result.lines()).allSatisfy(line -> assertThat(line.quantity())
+                .as("tồn kho của #%d", line.part().getVariantId()).isLessThanOrEqualTo(line.part().getStockQuantity()));
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(longs = {30_000_000L, 100_000_000L, 500_000_000L})
+    @DisplayName("MAX_PRICE ngân sách vừa/nhỏ: không vượt B, tương thích, không rẻ hơn chế độ thường cùng hồ sơ")
+    void maxPriceStaysWithinBudget(long amount) {
+        CompatibilitySnapshot snapshot = facade.snapshot();
+        BigDecimal budget = BigDecimal.valueOf(amount);
+        SolverResult result = solve(snapshot, maxPriceFixture(snapshot, budget), budget);
+        SolverResult normal = solve(snapshot, fixture(snapshot, Archetype.AI_DATA, budget), budget);
+        System.out.printf("[max-price %,d] total=%,d thường=%,d reason=%s relaxed=%s %s%n", amount, result.total().longValue(),
+                normal.total().longValue(), result.reasonCode(), result.relaxedItems(), describe(result.lines()));
+
+        assertThat(result.compatibility().compatible()).isTrue();
+        assertThat(result.total()).isLessThanOrEqualTo(budget);
+        assertThat(result.total()).isGreaterThanOrEqualTo(normal.total());
+        assertWithinStock(result);
+    }
+
+    @Test
+    @DisplayName("MAX_PRICE vẫn giữ yêu cầu bắt buộc của khách: chỉ 1 GPU thì không được thêm card để tăng tiền")
+    void maxPriceKeepsHardRequirements() {
+        CompatibilitySnapshot snapshot = facade.snapshot();
+        BigDecimal budget = BigDecimal.valueOf(4_000_000_000L);
+        var raw = presets.preset(Archetype.AI_DATA, BuildTier.of(budget));
+        raw.setObjective("MAX_PRICE");
+        raw.setMetrics(new ArrayList<>(List.of(
+                ProfileMetricDto.builder().metric("GPU_COUNT").op("EQ").value(1.0).priority(1).reason("Chỉ một card").build())));
+        ValidatedProfile profile = validator.validate(raw, snapshot.dictionary(), ProfileValidator.SOURCE_AI, null);
+
+        SolverResult result = solve(snapshot, profile, budget);
+
+        assertThat(result.lines().stream().filter(line -> "gpu".equals(line.role())).mapToInt(BuildLine::quantity).sum()).isEqualTo(1);
+    }
+
     @Test
     @DisplayName("floorPrice với hồ sơ rỗng = bộ rẻ nhất hợp lệ (DD 6.8), con số thật trên dữ liệu 1–118")
     void floorPriceMatchesCheapestBuild() {

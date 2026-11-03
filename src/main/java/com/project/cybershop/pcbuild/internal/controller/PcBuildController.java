@@ -3,17 +3,20 @@ package com.project.cybershop.pcbuild.internal.controller;
 import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.identity.api.dto.response.UserDto;
 import com.project.cybershop.pcbuild.api.dto.request.AiBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.PeripheralQueryRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ReplacementQueryRequest;
 import com.project.cybershop.pcbuild.api.dto.request.SavePcBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.AiBuildResponse;
 import com.project.cybershop.pcbuild.api.dto.response.BuildOptionsResponse;
 import com.project.cybershop.pcbuild.api.dto.response.CompatibleReplacementResponse;
+import com.project.cybershop.pcbuild.api.dto.response.PeripheralSuggestionResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildDetailResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SavedPcBuildSummaryResponse;
 import com.project.cybershop.pcbuild.api.dto.response.ValidateBuildResponse;
 import com.project.cybershop.pcbuild.internal.service.AiPcBuilderService;
 import com.project.cybershop.pcbuild.internal.service.PcCustomService;
+import com.project.cybershop.pcbuild.internal.service.PeripheralService;
 import com.project.cybershop.pcbuild.internal.support.RateLimiter;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -39,6 +42,7 @@ public class PcBuildController {
 
     private final AiPcBuilderService aiPcBuilderService;
     private final PcCustomService pcCustomService;
+    private final PeripheralService peripheralService;
     private final IdentityApi identityApi;
     private final RateLimiter rateLimiter;
 
@@ -82,6 +86,17 @@ public class PcBuildController {
     ) {
         rateLimiter.acquire(RateLimiter.Bucket.REPLACEMENTS, clientKey(principal, httpRequest));
         return ResponseEntity.ok(ApiResponseDTO.success(pcCustomService.getCompatibleReplacements(request)));
+    }
+
+    @PostMapping("/peripherals")
+    @Operation(summary = "Chọn màn hình, bàn phím, chuột cho chế độ Trọn bộ theo tiền còn lại (giá lấy từ server, không gọi AI)")
+    public ResponseEntity<ApiResponseDTO<PeripheralSuggestionResponse>> suggestPeripherals(
+            @Valid @RequestBody PeripheralQueryRequest request,
+            Principal principal,
+            HttpServletRequest httpRequest
+    ) {
+        rateLimiter.acquire(RateLimiter.Bucket.PERIPHERALS, clientKey(principal, httpRequest));
+        return ResponseEntity.ok(ApiResponseDTO.success(peripheralService.suggest(request)));
     }
 
     @PostMapping("/save")

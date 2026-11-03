@@ -26,6 +26,7 @@ import com.project.cybershop.pcbuild.internal.service.ProfileValidator;
 import com.project.cybershop.pcbuild.internal.model.ValidatedProfile;
 import com.project.cybershop.pcbuild.api.dto.profile.RequirementProfileDto;
 import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
+import com.project.cybershop.pcbuild.internal.support.PeripheralSelector;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -75,6 +76,17 @@ public class PcCustomServiceImpl implements PcCustomService {
             ComponentCandidateDTO candidate = catalog.get(itemDto.getVariantId());
             if (candidate == null || candidate.getPrice() == null) {
                 throw new BusinessException("Linh kiện #" + itemDto.getVariantId() + " không tồn tại hoặc chưa có giá");
+            }
+            boolean peripheralRole = isPeripheral(itemDto.getRole());
+            // Màn, phím, chuột lưu cùng cấu hình (chế độ Trọn bộ) nhưng không có luật tương thích: chỉ kiểm đúng loại,
+            // và không cho linh kiện PC mang role phụ kiện để né kiểm tương thích
+            if (peripheralRole || isPeripheral(candidate.getCategorySlug())) {
+                if (!peripheralRole || !normalizeRole(itemDto.getRole()).equals(normalizeRole(candidate.getCategorySlug()))) {
+                    throw new BuildRuleException("PERIPHERAL_ROLE_MISMATCH", HttpStatus.UNPROCESSABLE_ENTITY,
+                            "Linh kiện #" + itemDto.getVariantId() + " không thuộc nhóm " + itemDto.getRole(),
+                            Map.of("variantId", itemDto.getVariantId()));
+                }
+                continue;
             }
             lines.add(new BuildLine(itemDto.getRole(), candidate, itemDto.getQuantity()));
         }
@@ -498,5 +510,9 @@ public class PcCustomServiceImpl implements PcCustomService {
 
     private static String normalizeRole(String role) {
         return role != null ? role.trim().toLowerCase(Locale.ROOT) : "";
+    }
+
+    private static boolean isPeripheral(String role) {
+        return PeripheralSelector.ROLES.contains(normalizeRole(role));
     }
 }

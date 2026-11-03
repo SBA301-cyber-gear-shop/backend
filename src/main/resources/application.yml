@@ -6,7 +6,7 @@ spring:
   # DATABASE (Local Docker PostgreSQL)
   # ==========================================
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/cybershop}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SBA301_WebPC}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     # Cloud Neon (Uncomment if needed):
@@ -14,8 +14,8 @@ spring:
     # username: neondb_owner
     # password: npg_E3lTM5aYOpNA
     driver-class-name: org.postgresql.Driver
-    hikari:
-      connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
+    # hikari:
+    #   connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
 
   # ==========================================
   # JPA / HIBERNATE
@@ -51,7 +51,7 @@ server:
 # ==========================================
 app:
   jwt:
-    secret: ${JWT_SECRET:}
+    secret: ${JWT_SECRET:4LU_zjRsuAOUXG7V964B5clG6u26svjh3Nuck26NUz4}
     expiration-ms: 86400000
   ai:
     provider: gemini

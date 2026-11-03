@@ -24,11 +24,22 @@ public record CompatibilitySnapshot(
         Map<Integer, String> specNameById,                       // specId → tên thông số
         MetadataDictionaryResponse dictionary,                   // DD 5.2; null trong test engine dựng tay
         PerfIndexEstimator perfIndexEstimator,                   // DD 6.2.1; null = dùng số đo gốc
-        Instant loadedAt
+        Instant loadedAt,
+        List<ComponentCandidateDTO> peripherals                  // ACTIVE, stock > 0, màn/phím/chuột; ngoài 8 vai trò nên solver và engine không dùng
 ) {
+
+    /** Bản không có màn, phím, chuột (test engine và solver không cần). */
+    public CompatibilitySnapshot(List<ComponentCandidateDTO> candidates, Map<Integer, ParsedSpecs> parsedSpecsByVariantId,
+                                 List<RuleDefinition> rules, Map<Integer, Set<Integer>> requiredSpecIdsByCategoryId,
+                                 Map<Integer, Map<String, String>> optionDisplayBySpecId, Map<Integer, String> specNameById,
+                                 MetadataDictionaryResponse dictionary, PerfIndexEstimator perfIndexEstimator, Instant loadedAt) {
+        this(candidates, parsedSpecsByVariantId, rules, requiredSpecIdsByCategoryId, optionDisplayBySpecId, specNameById,
+                dictionary, perfIndexEstimator, loadedAt, List.of());
+    }
 
     public CompatibilitySnapshot {
         candidates = List.copyOf(candidates);
+        peripherals = List.copyOf(peripherals);
         parsedSpecsByVariantId = Map.copyOf(parsedSpecsByVariantId);
         rules = List.copyOf(rules);
         requiredSpecIdsByCategoryId = requiredSpecIdsByCategoryId.entrySet().stream()

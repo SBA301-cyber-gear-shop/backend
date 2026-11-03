@@ -278,6 +278,7 @@ public class LlmClientServiceImpl implements LlmClientService {
         properties.put("balancePairs", array(object(Map.of("a", type("STRING"), "b", type("STRING"), "maxGap", type("NUMBER")), List.of())));
         properties.put("brands", object(Map.of("prefer", array(type("STRING")), "avoid", array(type("STRING"))), List.of()));
         properties.put("unmetNeeds", array(type("STRING")));
+        properties.put("objective", Map.of("type", "STRING", "enum", List.of("MAX_PRICE"), "nullable", true));
         properties.put("confidence", type("NUMBER"));
         properties.put("clarifyingQuestion", nullable("STRING"));
         return object(properties, List.of("summary", "archetype", "roleWeights", "constraints", "metrics", "preferences", "confidence"));

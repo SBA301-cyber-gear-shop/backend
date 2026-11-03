@@ -18,6 +18,7 @@ import com.project.cybershop.pcbuild.internal.service.ProfilePresets;
 import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
 import com.project.cybershop.pcbuild.internal.support.CandidatePoolBuilder;
 import com.project.cybershop.pcbuild.internal.support.PerfIndexEstimator;
+import com.project.cybershop.pcbuild.internal.support.PeripheralSelector;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -97,10 +98,9 @@ public class CandidateRepositoryFacadeImpl implements CandidateRepositoryFacade 
     }
 
     private CompatibilitySnapshot load() {
-        List<ComponentCandidateDTO> candidates = catalogPublicApi.getActiveCandidatesForBuild().stream()
-                .filter(candidate -> candidate.getCategorySlug() != null
-                        && CandidatePoolBuilder.BUILD_ROLES.contains(candidate.getCategorySlug().toLowerCase()))
-                .toList();
+        List<ComponentCandidateDTO> active = catalogPublicApi.getActiveCandidatesForBuild();
+        List<ComponentCandidateDTO> candidates = withSlugIn(active, CandidatePoolBuilder.BUILD_ROLES);
+        List<ComponentCandidateDTO> peripherals = withSlugIn(active, PeripheralSelector.ROLES);
         List<CategorySpecDto> specificationCatalog = catalogPublicApi.getSpecificationCatalog();
         List<RuleDefinition> rules = ruleRepository.findAll().stream()
                 .sorted(Comparator.comparing(CompatibilityRule::getId))
@@ -138,7 +138,13 @@ public class CandidateRepositoryFacadeImpl implements CandidateRepositoryFacade 
         log.info("Đã nạp CompatibilitySnapshot: {} ứng viên, {} luật, dictionaryVersion={}",
                 candidates.size(), rules.size(), dictionary.getDictionaryVersion());
         return new CompatibilitySnapshot(candidates, parsedSpecsByVariantId, rules, requiredSpecIdsByCategoryId,
-                optionDisplayBySpecId, specNameById, dictionary, estimator, loadedAt);
+                optionDisplayBySpecId, specNameById, dictionary, estimator, loadedAt, peripherals);
+    }
+
+    private static List<ComponentCandidateDTO> withSlugIn(List<ComponentCandidateDTO> items, List<String> slugs) {
+        return items.stream()
+                .filter(item -> item.getCategorySlug() != null && slugs.contains(item.getCategorySlug().toLowerCase()))
+                .toList();
     }
 
     @Override

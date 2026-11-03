@@ -6,7 +6,7 @@ import java.util.List;
 /**
  * Kết quả BuildSolver (DD 6.1): đúng một bộ máy, tổng luôn ≤ ngân sách.
  *
- * @param reasonCode null | NEEDS_SATURATED | CATALOG_CEILING | REQUIREMENT_RELAXED
+ * @param reasonCode null | NEEDS_SATURATED | CATALOG_CEILING | REQUIREMENT_RELAXED | MAX_PRICE_REACHED
  * @param profile    hồ sơ sau khi hạ (mục đã hạ có giá trị mới hoặc đã bị bỏ)
  * @param floorPrice giá bộ hợp lệ rẻ nhất thỏa toàn bộ hồ sơ GỐC, ghi một lần trước mọi bước hạ; có thể > budget; null nếu không có
  */

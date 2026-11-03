@@ -14,8 +14,15 @@ import java.util.List;
  */
 public record ValidatedProfile(RequirementProfileDto profile, Archetype archetype, List<String> warnings) {
 
+    public static final String MAX_PRICE = "MAX_PRICE";
+
     public ValidatedProfile {
         warnings = List.copyOf(warnings);
+    }
+
+    /** Khách nói rõ muốn bộ đắt nhất: solver tối đa tổng tiền thay vì điểm nhu cầu. */
+    public boolean maxPrice() {
+        return MAX_PRICE.equals(profile.getObjective());
     }
 
     public double weight(String role) {

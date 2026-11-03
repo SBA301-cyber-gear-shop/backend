@@ -175,6 +175,17 @@ class LlmClientServiceImplTest {
     }
 
     @Test
+    @DisplayName("Schema hồ sơ có objective tùy chọn, chỉ nhận MAX_PRICE")
+    @SuppressWarnings("unchecked")
+    void profileSchemaHasOptionalObjective() {
+        Map<String, Object> schema = LlmClientServiceImpl.profileSchema();
+        Map<String, Object> objective = (Map<String, Object>) ((Map<String, Object>) schema.get("properties")).get("objective");
+
+        assertThat((List<String>) objective.get("enum")).containsExactly("MAX_PRICE");
+        assertThat((List<String>) schema.get("required")).doesNotContain("objective");
+    }
+
+    @Test
     @DisplayName("Mạch OPEN → không gọi HTTP, ném CIRCUIT_OPEN kèm Retry-After")
     void openCircuitSkipsHttp() throws IOException {
         startGeminiStub();

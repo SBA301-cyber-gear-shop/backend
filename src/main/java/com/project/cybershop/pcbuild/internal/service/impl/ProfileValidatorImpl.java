@@ -65,6 +65,7 @@ public class ProfileValidatorImpl implements ProfileValidator {
                 .summary(truncate(in.getSummary()))
                 .useCases(truncateAll(in.getUseCases(), MAX_USE_CASES))
                 .unmetNeeds(truncateAll(in.getUnmetNeeds(), MAX_UNMET_NEEDS))
+                .objective(ValidatedProfile.MAX_PRICE.equals(in.getObjective()) ? ValidatedProfile.MAX_PRICE : null)
                 .confidence(in.getConfidence() == null ? 1.0 : clamp(in.getConfidence()))
                 .clarifyingQuestion(truncate(in.getClarifyingQuestion()))
                 .build();

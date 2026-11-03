@@ -72,6 +72,31 @@ class AiPcBuilderServiceImplTest {
         when(presets.fillMissing(any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("options: trả tổng 3 món rẻ nhất, đắt nhất; từ điển không đổi vì nằm ngoài dictionary")
+    void optionsExposePeripheralRange() {
+        when(facade.snapshot()).thenReturn(new CompatibilitySnapshot(List.of(), Map.of(), List.of(), Map.of(), Map.of(), Map.of(),
+                null, null, java.time.Instant.parse("2026-11-02T00:00:00Z"), List.of(
+                com.project.cybershop.catalog.api.dto.ComponentCandidateDTO.builder().variantId(1).categorySlug("monitor").price(BigDecimal.valueOf(2_000_000)).build(),
+                com.project.cybershop.catalog.api.dto.ComponentCandidateDTO.builder().variantId(2).categorySlug("monitor").price(BigDecimal.valueOf(9_000_000)).build(),
+                com.project.cybershop.catalog.api.dto.ComponentCandidateDTO.builder().variantId(3).categorySlug("keyboard").price(BigDecimal.valueOf(300_000)).build(),
+                com.project.cybershop.catalog.api.dto.ComponentCandidateDTO.builder().variantId(4).categorySlug("mouse").price(BigDecimal.valueOf(100_000)).build())));
+
+        var options = service.options();
+
+        org.assertj.core.api.Assertions.assertThat(options.getPeripheralMinTotal()).isEqualByComparingTo("2400000");
+        org.assertj.core.api.Assertions.assertThat(options.getPeripheralMaxTotal()).isEqualByComparingTo("9400000");
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("options: kho thiếu một loại phụ kiện -> hai mức null để FE ẩn lựa chọn Trọn bộ")
+    void optionsHidePeripheralRangeWhenCatalogIncomplete() {
+        var options = service.options();
+
+        org.assertj.core.api.Assertions.assertThat(options.getPeripheralMinTotal()).isNull();
+        org.assertj.core.api.Assertions.assertThat(options.getPeripheralMaxTotal()).isNull();
+    }
+
     private ValidatedProfile validated(RequirementProfileDto dto) {
         return new ValidatedProfile(dto, Archetype.GAMING, List.of());
     }
@@ -81,7 +106,7 @@ class AiPcBuilderServiceImplTest {
         EngineReport report = EngineReport.of(List.of(), 650, null, BigDecimal.valueOf(27_000_000));
         when(solver.solve(any())).thenReturn(new SolverResult(lines(validDesktop()), BigDecimal.valueOf(27_000_000),
                 BigDecimal.valueOf(3_000_000), 0.7, report, null, List.of(), BigDecimal.valueOf(20_000_000), 4, List.of(), validated(dto)));
-        when(explainer.explain(any(), any(), any(), any(), any(), any(), any()))
+        when(explainer.explain(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new BuildExplainer.Explanation("Máy game", "Cân bằng.", "Chơi tốt 2K.", Map.of(1, "CPU"), "OK"));
         when(engine.evaluate(any(), any())).thenReturn(report);
     }
@@ -108,7 +133,7 @@ class AiPcBuilderServiceImplTest {
         assertThat(response.getBudgetFit().getStatus()).isEqualTo("IN_WINDOW");
         assertThat(response.getBudgetFit().getLeftover()).isEqualByComparingTo("3000000");
         assertThat(response.getMetadata().getExtractStatus()).isEqualTo("OK");
-        assertThat(response.getMetadata().getPromptVersions()).containsEntry("profile", "PROFILE_V1");
+        assertThat(response.getMetadata().getPromptVersions()).containsEntry("profile", "PROFILE_V2");
         assertThat(response.getItems()).filteredOn(item -> item.getVariantId() == 1).singleElement()
                 .satisfies(item -> assertThat(item.getAiReason()).isEqualTo("CPU"));
         assertThat(response.getItems()).filteredOn(item -> item.getVariantId() == 2).singleElement()
@@ -181,7 +206,7 @@ class AiPcBuilderServiceImplTest {
         RequirementProfileDto dto = profile(0.9);
         when(extractor.extract(any(), any(), any(), any(), any(), any())).thenReturn(new ProfileExtractor.Extraction(dto, "CACHED"));
         stubHappyPath(dto);
-        when(explainer.explain(any(), any(), any(), any(), any(), any(), any()))
+        when(explainer.explain(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new AiUnavailableException(AiUnavailableException.Detail.DEADLINE_EXCEEDED));
 
         assertThatThrownBy(() -> service.processAiBuild(AiBuildRequest.builder().budget(budget).purpose("Game").build(), null))

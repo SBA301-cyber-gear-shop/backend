@@ -56,6 +56,18 @@ class ProfileValidatorTest {
     }
 
     @Test
+    @DisplayName("objective: giữ MAX_PRICE, bỏ giá trị lạ")
+    void objectiveAllowsOnlyMaxPrice() {
+        RequirementProfileDto maxPrice = base();
+        maxPrice.setObjective("MAX_PRICE");
+        assertThat(validate(maxPrice).profile().getObjective()).isEqualTo("MAX_PRICE");
+
+        RequirementProfileDto unknown = base();
+        unknown.setObjective("FREE_PC");
+        assertThat(validate(unknown).profile().getObjective()).isNull();
+    }
+
+    @Test
     @DisplayName("Preference có cả role + spec lẫn metric (Gemini gửi thật): giữ role + spec, bỏ metric, không đổi nghĩa")
     void preferenceWithSpecAndMetricKeepsSpec() {
         RequirementProfileDto profile = base();

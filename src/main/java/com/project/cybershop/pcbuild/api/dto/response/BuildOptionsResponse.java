@@ -21,6 +21,9 @@ public class BuildOptionsResponse {
     private MetadataDictionaryResponse dictionary;
     private List<String> examples;
     private List<Tier> tiers;
+    // Tổng 3 món rẻ nhất, đắt nhất của màn, phím, chuột; null khi kho thiếu một loại (FE ẩn lựa chọn Trọn bộ)
+    private BigDecimal peripheralMinTotal;
+    private BigDecimal peripheralMaxTotal;
 
     @Data
     @Builder

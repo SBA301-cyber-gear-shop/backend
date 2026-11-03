@@ -65,7 +65,11 @@ public class ProfileExtractorImpl implements ProfileExtractor {
                - Loại trừ toàn bộ máy ("không dùng bất cứ thứ gì của hãng X"): ghi vào "brands.avoid".
                Hãng không có trong "Brand" của role đó thì không tạo constraint mà ghi vào "unmetNeeds" bằng tiếng Việt,
                ví dụ "Cửa hàng chưa có RAM hãng Samsung".
-            10. CHỈ trả về JSON theo schema.
+            10. Chỉ đặt "objective":"MAX_PRICE" khi khách nói rõ muốn bộ máy hoặc linh kiện đắt nhất, ví dụ "đắt nhất", "đắt tiền nhất",
+                "mắc nhất". "Tốt nhất", "mạnh nhất", "cao cấp nhất" hay câu phủ định như "không cần đắt nhất" thì KHÔNG đặt.
+                Vẫn điền đủ các mục khác và giữ các yêu cầu khách nêu.
+            11. "summary", "unmetNeeds", "reason" và "clarifyingQuestion" viết tiếng Việt CÓ DẤU đầy đủ, kể cả khi khách gõ không dấu.
+            12. CHỈ trả về JSON theo schema.
             """;
 
     private final LlmClientService llmClientService;

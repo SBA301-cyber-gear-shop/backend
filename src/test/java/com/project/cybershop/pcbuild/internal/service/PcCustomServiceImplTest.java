@@ -126,6 +126,74 @@ class PcCustomServiceImplTest {
         verify(catalogPublicApi, never()).getCandidateMapByIds(any());
     }
 
+    private static ComponentCandidateDTO peripheral(int id, String slug, long price) {
+        return ComponentCandidateDTO.builder().variantId(id).categorySlug(slug).productName("SP " + id)
+                .price(BigDecimal.valueOf(price)).build();
+    }
+
+    private static SavePcBuildRequest.SavePartItem saveItem(String role, int variantId) {
+        return SavePcBuildRequest.SavePartItem.builder().variantId(variantId).role(role).quantity(1).build();
+    }
+
+    @Test
+    @DisplayName("Trọn bộ: lưu cả màn, phím, chuột vào cấu hình; tổng tiền gồm cả 3 món; tương thích chỉ kiểm trên thùng máy")
+    void shouldSavePeripheralsWithBuild() {
+        List<SavePcBuildRequest.SavePartItem> items = new ArrayList<>(desktopSaveItems());
+        items.add(saveItem("monitor", 203));
+        items.add(saveItem("keyboard", 213));
+        items.add(saveItem("mouse", 224));
+        List<ComponentCandidateDTO> catalog = new ArrayList<>(desktop.values());
+        catalog.add(peripheral(203, "monitor", 3_890_000));
+        catalog.add(peripheral(213, "keyboard", 690_000));
+        catalog.add(peripheral(224, "mouse", 490_000));
+        when(catalogPublicApi.getCandidatesByIds(any())).thenReturn(catalog);
+        stubSnapshotWithDesktop();
+        when(pcCustomRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        pcCustomService.saveNewBuild(SavePcBuildRequest.builder().items(items).build(), 15);
+
+        ArgumentCaptor<PcCustom> captor = ArgumentCaptor.forClass(PcCustom.class);
+        verify(pcCustomRepository).save(captor.capture());
+        assertThat(captor.getValue().getItems()).extracting(PcCustomItem::getComponentRole)
+                .contains("monitor", "keyboard", "mouse").hasSize(11);
+        assertThat(captor.getValue().getTotalPrice()).isEqualByComparingTo("32070000");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<com.project.cybershop.pcbuild.internal.model.BuildLine>> lines = ArgumentCaptor.forClass(List.class);
+        verify(compatibilityEngine).evaluate(lines.capture(), any());
+        assertThat(lines.getValue()).extracting(com.project.cybershop.pcbuild.internal.model.BuildLine::role)
+                .doesNotContain("monitor", "keyboard", "mouse").hasSize(8);
+    }
+
+    @Test
+    @DisplayName("Trọn bộ: món phụ kiện gửi sai loại (bàn phím mang role mouse) -> 422, không lưu")
+    void shouldRejectPeripheralWithWrongRole() {
+        List<SavePcBuildRequest.SavePartItem> items = new ArrayList<>(desktopSaveItems());
+        items.add(saveItem("mouse", 213));
+        List<ComponentCandidateDTO> catalog = new ArrayList<>(desktop.values());
+        catalog.add(peripheral(213, "keyboard", 690_000));
+        when(catalogPublicApi.getCandidatesByIds(any())).thenReturn(catalog);
+
+        assertThatThrownBy(() -> pcCustomService.saveNewBuild(SavePcBuildRequest.builder().items(items).build(), 15))
+                .isInstanceOfSatisfying(com.project.cybershop.pcbuild.internal.support.BuildRuleException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("PERIPHERAL_ROLE_MISMATCH"));
+        verify(pcCustomRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Trọn bộ: linh kiện PC gửi với role monitor để né kiểm tương thích -> 422, không lưu")
+    void shouldRejectPcPartDisguisedAsPeripheral() {
+        List<SavePcBuildRequest.SavePartItem> items = new ArrayList<>(desktopSaveItems());
+        items.add(saveItem("monitor", 202));
+        List<ComponentCandidateDTO> catalog = new ArrayList<>(desktop.values());
+        catalog.add(boardWrongSocket);
+        when(catalogPublicApi.getCandidatesByIds(any())).thenReturn(catalog);
+
+        assertThatThrownBy(() -> pcCustomService.saveNewBuild(SavePcBuildRequest.builder().items(items).build(), 15))
+                .isInstanceOfSatisfying(com.project.cybershop.pcbuild.internal.support.BuildRuleException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("PERIPHERAL_ROLE_MISMATCH"));
+        verify(pcCustomRepository, never()).save(any());
+    }
+
     @Test
     @DisplayName("B17: Lưu cấu hình có linh kiện không tồn tại -> Ném BusinessException, không lưu")
     void shouldRejectSaveWhenVariantNotInCatalog() {

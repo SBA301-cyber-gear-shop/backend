@@ -51,6 +51,15 @@ public class RequestValidatorImpl implements RequestValidator {
             throw new BuildRuleException("BUDGET_TOO_HIGH", HttpStatus.BAD_REQUEST,
                     "Ngân sách tối đa là " + vnd(maxBudget), Map.of("maxBudget", maxBudget));
         }
+        BigDecimal fullSetBudget = request.getFullSetBudget();
+        if (fullSetBudget != null && fullSetBudget.compareTo(budget) < 0) {
+            throw new BuildRuleException("INVALID_REQUEST", HttpStatus.BAD_REQUEST,
+                    "Ngân sách trọn bộ không được nhỏ hơn ngân sách dành cho thùng máy", null);
+        }
+        if (fullSetBudget != null && fullSetBudget.compareTo(maxBudget) > 0) {
+            throw new BuildRuleException("BUDGET_TOO_HIGH", HttpStatus.BAD_REQUEST,
+                    "Ngân sách tối đa là " + vnd(maxBudget), Map.of("maxBudget", maxBudget));
+        }
         if (request.getProfile() == null) {
             String purpose = request.getPurpose() != null ? request.getPurpose().trim() : "";
             if (purpose.length() < 2 || purpose.length() > 300) {

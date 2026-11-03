@@ -31,7 +31,7 @@ public class AiBuildResponse {
     private List<SelectedPartResponse> items;
 
     // Thêm ở giai đoạn 2c
-    private String reasonCode;              // null | NEEDS_SATURATED | CATALOG_CEILING | REQUIREMENT_RELAXED
+    private String reasonCode;              // null | NEEDS_SATURATED | CATALOG_CEILING | REQUIREMENT_RELAXED | MAX_PRICE_REACHED
     private BudgetFitResponse budgetFit;
     private RequirementProfileDto profile;  // hồ sơ đã dùng, có label và satisfied cho từng mục
     private List<String> relaxedItems;

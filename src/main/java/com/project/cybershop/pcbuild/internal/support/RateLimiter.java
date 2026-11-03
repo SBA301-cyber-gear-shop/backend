@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class RateLimiter {
 
-    public enum Bucket { AI_SUGGEST, VALIDATE, REPLACEMENTS, OPTIONS }
+    public enum Bucket { AI_SUGGEST, VALIDATE, REPLACEMENTS, OPTIONS, PERIPHERALS }
 
     private static final Duration WINDOW = Duration.ofMinutes(1);
 

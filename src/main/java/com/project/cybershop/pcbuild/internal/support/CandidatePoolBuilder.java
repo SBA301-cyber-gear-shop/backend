@@ -76,10 +76,12 @@ public class CandidatePoolBuilder {
         filtered.forEach((role, pool) -> {
             Map<Integer, Double> scores = new HashMap<>();
             pool.forEach(candidate -> scores.put(candidate.getVariantId(), partScorer.partScore(role, candidate, ctx)));
-            sorted.put(role, pool.stream().sorted(Comparator
-                    .comparing((ComponentCandidateDTO candidate) -> -scores.get(candidate.getVariantId()))
-                    .thenComparing(ComponentCandidateDTO::getPrice)
-                    .thenComparing(ComponentCandidateDTO::getVariantId)).toList());
+            // MAX_PRICE: sắp theo giá giảm dần vì solver chỉ thử một số món đầu danh sách
+            Comparator<ComponentCandidateDTO> order = profile.maxPrice()
+                    ? Comparator.comparing(ComponentCandidateDTO::getPrice).reversed()
+                    : Comparator.comparing((ComponentCandidateDTO candidate) -> -scores.get(candidate.getVariantId()))
+                            .thenComparing(ComponentCandidateDTO::getPrice);
+            sorted.put(role, pool.stream().sorted(order.thenComparing(ComponentCandidateDTO::getVariantId)).toList());
         });
         return new CandidatePool(sorted, ranges);
     }

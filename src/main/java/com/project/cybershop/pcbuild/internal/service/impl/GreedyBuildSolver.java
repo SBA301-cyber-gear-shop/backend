@@ -14,6 +14,7 @@ import com.project.cybershop.pcbuild.internal.model.EngineReport;
 import com.project.cybershop.pcbuild.internal.model.EvaluationContext;
 import com.project.cybershop.pcbuild.internal.model.MetricKind;
 import com.project.cybershop.pcbuild.internal.model.ParsedSpecs;
+import com.project.cybershop.pcbuild.internal.model.PowerRequirement;
 import com.project.cybershop.pcbuild.internal.model.ScoreContext;
 import com.project.cybershop.pcbuild.internal.model.SolverInput;
 import com.project.cybershop.pcbuild.internal.model.SolverResult;
@@ -75,6 +76,7 @@ public class GreedyBuildSolver implements BuildSolver {
     private static final int CAPACITY_GB = 9;
     private static final int LENGTH_MM = 11;
     private static final int VRAM_GB = 12;
+    private static final int WATTAGE = 14;
     private static final int MAX_GPU_LENGTH_MM = 16;
     private static final int MAX_COOLER_HEIGHT_MM = 17;
     private static final int SUPPORTED_MOTHERBOARDS = 18;
@@ -147,6 +149,7 @@ public class GreedyBuildSolver implements BuildSolver {
         private ScoreContext ctx;
         private final List<String> relaxedItems = new ArrayList<>();
         private final List<String> warnings = new ArrayList<>();
+        private int maxPriceSteps;
 
         private Run(BigDecimal budget, CompatibilitySnapshot snapshot) {
             this.budget = budget;
@@ -170,6 +173,12 @@ public class GreedyBuildSolver implements BuildSolver {
                     throw noFeasibleBuild(originalProfile, floorFirst);
                 }
                 start = cheapestValidBuild(profile, pool);
+            }
+
+            if (profile.maxPrice()) {
+                List<BuildLine> highest = highestTotalBuild(start);
+                return result(highest, utility(highest), relaxedItems.isEmpty() ? "MAX_PRICE_REACHED" : "REQUIREMENT_RELAXED",
+                        floorFirst, maxPriceSteps);
             }
 
             // Pha 2: nâng cấp tham lam theo tỷ lệ Δđiểm / Δgiá
@@ -236,10 +245,102 @@ public class GreedyBuildSolver implements BuildSolver {
             if (total.compareTo(windowFloor) < 0) {
                 reasonCode = isCatalogCeiling(current) ? "CATALOG_CEILING" : "NEEDS_SATURATED";
             }
-            EngineReport report = compatibilityEngine.evaluate(current,
+            return result(current, currentUtility, reasonCode, floorFirst, iterations);
+        }
+
+        private SolverResult result(List<BuildLine> lines, double lineUtility, String reasonCode, BigDecimal floorFirst, int iterations) {
+            BigDecimal total = totalOf(lines);
+            EngineReport report = compatibilityEngine.evaluate(lines,
                     new EvaluationContext(budget, EvaluationContext.Mode.SOLVER, snapshot));
-            return new SolverResult(ordered(current), total, budget.subtract(total), currentUtility, report, reasonCode,
+            return new SolverResult(ordered(lines), total, budget.subtract(total), lineUtility, report, reasonCode,
                     relaxedItems, floorFirst, iterations, warnings, profile);
+        }
+
+        // ---------- MAX_PRICE: tối đa tổng tiền (không dùng điểm nhu cầu) ----------
+
+        /** Leo từ bộ rẻ nhất và từ một bộ trên mỗi socket khác, vì đổi nền tảng giữa chừng thường phải chịu tụt tổng tiền. */
+        private List<BuildLine> highestTotalBuild(List<BuildLine> start) {
+            List<BuildLine> best = withPriciestPsu(climbTotal(start));
+            for (List<BuildLine> otherPlatform : onePlatformPerSocket(start)) {
+                List<BuildLine> climbed = withPriciestPsu(climbTotal(otherPlatform));
+                if (totalOf(climbed).compareTo(totalOf(best)) > 0) best = climbed;
+            }
+            return best;
+        }
+
+        // Pool MAX_PRICE xếp giá giảm dần nên mỗi socket giữ CPU đắt nhất còn ráp được trong ngân sách
+        private List<List<BuildLine>> onePlatformPerSocket(List<BuildLine> start) {
+            Map<String, List<BuildLine>> bySocket = new LinkedHashMap<>();
+            for (List<BuildLine> platform : platformSwaps(start, false)) {
+                String socket = snapshot.parsed(first(platform, "cpu").part()).raw().get(SOCKET);
+                if (bySocket.containsKey(socket) || totalOf(platform).compareTo(budget) > 0 || !withinStock(platform)
+                        || !satisfiesProfile(platform) || !isCompatible(platform)) continue;
+                bySocket.put(socket, platform);
+            }
+            return new ArrayList<>(bySocket.values());
+        }
+
+        /** Mỗi vòng nhận bước hợp lệ tăng tổng tiền nhiều nhất, tới khi không còn bước nào tăng được. */
+        private List<BuildLine> climbTotal(List<BuildLine> start) {
+            List<BuildLine> current = start;
+            for (int round = 0; round < MAX_ITERATIONS; round++) {
+                List<List<BuildLine>> moves = neighbours(current);
+                addQuantityMoves(moves, current);
+                addQuantityJumps(moves, current);
+                List<BuildLine> best = null;
+                BigDecimal bestTotal = totalOf(current);
+                for (List<BuildLine> move : moves) {
+                    List<BuildLine> next = psuSizer.fix(move, ctx);
+                    if (next == null) continue;
+                    BigDecimal nextTotal = totalOf(next);
+                    if (nextTotal.compareTo(budget) > 0 || nextTotal.compareTo(bestTotal) <= 0) continue;
+                    if (!withinStock(next) || !satisfiesProfile(next) || !isCompatible(next)) continue;
+                    best = next;
+                    bestTotal = nextTotal;
+                }
+                if (best == null) break;
+                current = best;
+                maxPriceSteps++;
+            }
+            return current;
+        }
+
+        // Đổi hẳn sang món khác với mọi số lượng còn hàng: 8 thanh rẻ hơn có thể đắt hơn 3 thanh đắt nhất, mà đi từng bước thì tổng tiền tụt
+        private void addQuantityJumps(List<List<BuildLine>> moves, List<BuildLine> current) {
+            for (String role : List.of("ram", "gpu", "ssd")) {
+                if (first(current, role) == null) continue;
+                for (ComponentCandidateDTO candidate : pool.of(role)) {
+                    int stock = candidate.getStockQuantity() != null ? candidate.getStockQuantity() : MAX_QUANTITY;
+                    for (int quantity = 1; quantity <= Math.min(stock, MAX_QUANTITY); quantity++) {
+                        moves.add(withRole(current, role, List.of(new BuildLine(role, candidate, quantity))));
+                    }
+                }
+            }
+        }
+
+        // Đổi nguồn sau cùng, để tiền ưu tiên cho các linh kiện khác và bộ rẻ nhất (floorPrice) không bị đội giá
+        private List<BuildLine> withPriciestPsu(List<BuildLine> lines) {
+            PowerRequirement need = psuSizer.requiredW(lines, snapshot);
+            if (need == null) return lines;
+            BigDecimal withoutPsu = totalOf(lines.stream().filter(line -> !"psu".equals(line.role())).toList());
+            for (ComponentCandidateDTO psu : pool.of("psu")) {
+                if (snapshot.parsed(psu).ints().getOrDefault(WATTAGE, 0) < need.requiredW()
+                        || withoutPsu.add(psu.getPrice()).compareTo(budget) > 0) continue;
+                List<BuildLine> upgraded = withRole(lines, "psu", List.of(new BuildLine("psu", psu, 1)));
+                if (satisfiesProfile(upgraded) && isCompatible(upgraded)) return upgraded;
+            }
+            return lines;
+        }
+
+        // Engine không kiểm tồn kho (STOCK nằm ở /validate); MAX_PRICE luôn đẩy số lượng lên trần nên phải tự chặn
+        private boolean withinStock(List<BuildLine> lines) {
+            return lines.stream().allMatch(line -> line.part().getStockQuantity() == null
+                    || line.quantity() <= line.part().getStockQuantity());
+        }
+
+        /** Chế độ thường bỏ qua role có trọng số 0; MAX_PRICE tính mọi role vì role nào cũng góp vào tổng tiền. */
+        private boolean considered(String role) {
+            return profile.maxPrice() || profile.weight(role) > 0;
         }
 
         // ---------- Pha 1: cheapestValidBuild (DD 6.4.1) ----------
@@ -592,7 +693,7 @@ public class GreedyBuildSolver implements BuildSolver {
             if (ram != null && ram.quantity() < MAX_QUANTITY) {
                 moves.add(replaceLine(current, ram, new BuildLine("ram", ram.part(), ram.quantity() + 1)));
             }
-            if (profile.weight("ssd") > 0) {
+            if (considered("ssd")) {
                 for (ComponentCandidateDTO ssd : pool.of("ssd")) {
                     BuildLine existing = linesOf(current, "ssd").stream()
                             .filter(line -> line.part().getVariantId().equals(ssd.getVariantId())).findFirst().orElse(null);
@@ -610,7 +711,7 @@ public class GreedyBuildSolver implements BuildSolver {
             BuildLine gpu = first(current, "gpu");
             boolean gpuCountBlocked = profile.metrics().stream().anyMatch(metric -> MetricKind.GPU_COUNT.name().equals(metric.getMetric())
                     && ("EQ".equals(metric.getOp()) || "LTE".equals(metric.getOp())));
-            if (profile.weight("gpu") > 0 && !profile.isExcluded("gpu")) {
+            if (considered("gpu") && !profile.isExcluded("gpu")) {
                 if (gpu != null && !gpuCountBlocked && gpu.quantity() < MAX_QUANTITY) {
                     moves.add(replaceLine(current, gpu, new BuildLine("gpu", gpu.part(), gpu.quantity() + 1)));
                 }
@@ -622,7 +723,7 @@ public class GreedyBuildSolver implements BuildSolver {
                     }
                 }
             }
-            if (first(current, "cooler") == null && profile.weight("cooler") > 0) {
+            if (first(current, "cooler") == null && considered("cooler")) {
                 int cpuCount = Math.max(1, quantity(current, "cpu"));
                 for (ComponentCandidateDTO cooler : pool.of("cooler")) {
                     List<BuildLine> added = new ArrayList<>(current);
@@ -668,7 +769,7 @@ public class GreedyBuildSolver implements BuildSolver {
 
         private List<List<BuildLine>> neighbours(List<BuildLine> current) {
             List<List<BuildLine>> moves = new ArrayList<>();
-            List<String> roles = SCORED_ROLES.stream().filter(role -> profile.weight(role) > 0).toList();
+            List<String> roles = SCORED_ROLES.stream().filter(this::considered).toList();
             // SWAP1: mọi ứng viên cùng role (đắt hơn hoặc rẻ hơn)
             for (String role : roles) {
                 BuildLine target = first(current, role);
@@ -732,7 +833,7 @@ public class GreedyBuildSolver implements BuildSolver {
                 double targetScore = partScorer.partScore(role, target.part(), ctx);
                 List<ComponentCandidateDTO> better = pool.of(role).stream()
                         .filter(candidate -> candidate.getPrice().compareTo(target.part().getPrice()) > 0)
-                        .filter(candidate -> partScorer.partScore(role, candidate, ctx) > targetScore + 1e-9)
+                        .filter(candidate -> profile.maxPrice() || partScorer.partScore(role, candidate, ctx) > targetScore + 1e-9)
                         .limit(REPAIR_TOP).toList();
                 for (ComponentCandidateDTO candidate : better) {
                     // Nguồn chỉnh ngay sau khi nâng để tổng tiền tính cả phần nguồn phải lên theo (ví dụ GPU mạnh hơn)

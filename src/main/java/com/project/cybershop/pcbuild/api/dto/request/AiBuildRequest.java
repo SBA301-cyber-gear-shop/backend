@@ -42,4 +42,8 @@ public class AiBuildRequest {
 
     // Hồ sơ khách đã sửa; có thì không gọi AI trích hồ sơ, server ghi đè source = USER_EDITED
     private RequirementProfileDto profile;
+
+    // Chế độ Trọn bộ: ngân sách khách nhập (gồm màn, phím, chuột); budget chỉ là phần cho thùng máy. Chỉ dùng cho lời giải thích
+    @Digits(integer = 13, fraction = 0, message = "Ngân sách trọn bộ phải là số nguyên đồng")
+    private BigDecimal fullSetBudget;
 }

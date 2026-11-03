@@ -20,7 +20,11 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.time.Instant;
+import java.util.Locale;
+import java.util.regex.Pattern;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -34,7 +38,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class BuildExplainerImpl implements BuildExplainer {
 
-    static final String PROMPT_EXPLAIN_V3 = """
+    static final String PROMPT_EXPLAIN_V4 = """
             BẠN LÀ KỸ SƯ TƯ VẤN PC CỦA CYBERSHOP.
             Hệ thống đã hiểu nhu cầu của khách thành "profile" và đã chọn sẵn MỘT bộ máy.
             Bộ máy ĐÃ được kiểm tra tương thích, giá là giá thật và tổng giá KHÔNG vượt ngân sách.
@@ -44,9 +48,36 @@ public class BuildExplainerImpl implements BuildExplainer {
             - KHÔNG đề xuất thay, thêm hay bớt linh kiện. KHÔNG nhắc tới linh kiện, variantId, giá hoặc thông số không có trong dữ liệu được cấp.
             - KHÔNG hứa hẹn số FPS cụ thể. Chỉ mô tả mức trải nghiệm (ví dụ "chơi tốt ở 2K thiết lập cao").
             - PHẢI nhắc lại trung thực: tổng giá so với ngân sách và số tiền còn dư (leftover), các mục đã hạ (relaxedItems),
-              các nhu cầu chưa đáp ứng (unmetNeeds), reasonCode (ví dụ nhu cầu đã bão hòa nên còn dư tiền), và warning về giá tham khảo.
+              các nhu cầu chưa đáp ứng (unmetNeeds) và warning về giá tham khảo.
+            - Lý do còn dư tiền CHỈ được nói đúng như "reasonMeaning". Không có "reasonMeaning" thì không tự đoán lý do.
+            - Viết tiếng Việt CÓ DẤU đầy đủ. Số tiền viết đúng như trong "moneyText" (dạng 1.234.567 ₫).
+            - Nếu có "fullSet": khách đã nhập ngân sách TRỌN BỘ (fullSet.totalText) gồm thùng máy và màn hình, bàn phím, chuột;
+              "budget" chỉ là phần dành cho thùng máy. Khi nhắc ngân sách phải nói rõ cả hai con số, KHÔNG gọi "budget" là ngân sách của khách.
             - Trả về DUY NHẤT JSON theo schema.
             """;
+
+    // Chỉ gửi khi khách thật sự chọn MAX_PRICE: để trong prompt chung thì AI áp nhầm cho máy "mạnh nhất" (B1)
+    static final String MAX_PRICE_RULE = """
+            - profile.objective là MAX_PRICE: nói rõ bộ máy được chọn theo tổng giá cao nhất đúng theo yêu cầu của khách,
+              không phải cấu hình tối ưu cho nhu cầu. KHÔNG khen linh kiện là lựa chọn phù hợp nhất hay đáng tiền nhất.
+              KHÔNG viết chữ "MAX_PRICE" hay "objective" trong câu trả lời. Tiền dư là do đã hết linh kiện đắt hơn ráp được,
+              KHÔNG nói nhu cầu đã bão hòa.
+            """;
+
+    static final String DIACRITICS_RETRY = """
+            - LẦN TRƯỚC bạn viết tiếng Việt KHÔNG DẤU. Viết lại toàn bộ bằng tiếng Việt CÓ DẤU đầy đủ.
+            """;
+
+    private static final Map<String, String> REASON_MEANINGS = Map.of(
+            "NEEDS_SATURATED", "Nhu cầu trong hồ sơ đã được đáp ứng đủ; linh kiện đắt hơn không cải thiện thêm cho nhu cầu này nên còn dư tiền. "
+                    + "KHÔNG nói cửa hàng đã hết linh kiện đắt hơn.",
+            "CATALOG_CEILING", "Đã dùng linh kiện mạnh nhất cửa hàng đang có cho nhu cầu này nên còn dư tiền.",
+            "REQUIREMENT_RELAXED", "Ngân sách chưa đủ cho một số yêu cầu nên hệ thống đã hạ các mục trong relaxedItems.",
+            "MAX_PRICE_REACHED", "Đây là bộ máy đắt nhất ráp được trong kho với ngân sách này.");
+
+    // Số tiền AI hay viết lộn xộn: "11,968,000đ", "15899000 dong", "VNĐ" (B8)
+    private static final Pattern MONEY = Pattern.compile(
+            "(\\d{1,3}(?:[.,]\\d{3})+|\\d{4,})\\s*(?:₫|VNĐ|VND|vnđ|vnd|đồng|dong|đ)(?![\\p{L}\\p{N}])");
 
     private static final int MAX_BUILD_NAME = 60;
 
@@ -55,11 +86,15 @@ public class BuildExplainerImpl implements BuildExplainer {
 
     @Override
     public Explanation explain(ValidatedProfile profile, SolverResult result, BigDecimal budget, String purpose, String userPrompt,
-                               CompatibilitySnapshot snapshot, Instant deadline) {
-        LlmClientService.ExplanationDraft draft = llmClientService.explainBuild(PROMPT_EXPLAIN_V3,
-                context(profile, result, budget, purpose, userPrompt, snapshot), deadline);
+                               CompatibilitySnapshot snapshot, Instant deadline, BigDecimal fullSetBudget) {
+        String prompt = "MAX_PRICE".equals(profile.profile().getObjective()) ? PROMPT_EXPLAIN_V4 + MAX_PRICE_RULE : PROMPT_EXPLAIN_V4;
+        String context = context(profile, result, budget, purpose, userPrompt, snapshot, fullSetBudget);
+        LlmClientService.ExplanationDraft draft = llmClientService.explainBuild(prompt, context, deadline);
         if (draft == null || isBlank(draft.getBuildName()) || isBlank(draft.getAiReasoning())) {
             throw new AiUnavailableException(AiUnavailableException.Detail.INVALID_RESPONSE);
+        }
+        if (lacksDiacritics(draft.getAiReasoning())) {
+            draft = rewriteWithDiacritics(prompt, context, deadline, draft);
         }
 
         Set<Integer> buildVariantIds = result.lines().stream().map(line -> line.part().getVariantId()).collect(Collectors.toSet());
@@ -71,26 +106,62 @@ public class BuildExplainerImpl implements BuildExplainer {
                 partial = true;
                 continue;
             }
-            reasons.putIfAbsent(partReason.getVariantId(), partReason.getReason());
+            reasons.putIfAbsent(partReason.getVariantId(), normalizeMoney(partReason.getReason()));
         }
         if (partial) {
             log.warn("Giải thích có lý do cho variantId không thuộc bộ máy, đã bỏ (aiStatus = PARTIAL)");
         }
         String name = draft.getBuildName().trim();
         return new Explanation(name.length() > MAX_BUILD_NAME ? name.substring(0, MAX_BUILD_NAME) : name,
-                draft.getAiReasoning().trim(),
-                draft.getPerformanceHighlight() != null ? draft.getPerformanceHighlight().trim() : "",
+                normalizeMoney(draft.getAiReasoning().trim()),
+                draft.getPerformanceHighlight() != null ? normalizeMoney(draft.getPerformanceHighlight().trim()) : "",
                 reasons, partial ? "PARTIAL" : "OK");
+    }
+
+    // Prompt đã yêu cầu có dấu nhưng model thỉnh thoảng vẫn viết không dấu (B8): gọi lại một lần, lỗi thì giữ bản đầu
+    private LlmClientService.ExplanationDraft rewriteWithDiacritics(String prompt, String context, Instant deadline,
+                                                                    LlmClientService.ExplanationDraft first) {
+        try {
+            LlmClientService.ExplanationDraft second = llmClientService.explainBuild(prompt + DIACRITICS_RETRY, context, deadline);
+            if (second != null && !isBlank(second.getBuildName()) && !isBlank(second.getAiReasoning())
+                    && !lacksDiacritics(second.getAiReasoning())) {
+                return second;
+            }
+        } catch (AiUnavailableException e) {
+            log.warn("Không viết lại được lời giải thích không dấu: {}", e.getMessage());
+        }
+        return first;
+    }
+
+    /** Văn bản tiếng Việt bình thường có khoảng 25–30% chữ mang dấu; dưới 5% coi như viết không dấu. */
+    static boolean lacksDiacritics(String text) {
+        long letters = text.codePoints().filter(Character::isLetter).count();
+        if (letters < 40) return false;
+        long marked = text.codePoints().filter(cp -> Character.isLetter(cp) && cp > 127).count();
+        return marked * 20 < letters;
+    }
+
+    /** "11,968,000đ", "15899000 dong", "3.690.000 VNĐ" → "11.968.000 ₫"; số không kèm đơn vị tiền giữ nguyên. */
+    static String normalizeMoney(String text) {
+        if (text == null) return null;
+        return MONEY.matcher(text).replaceAll(match -> vnd(new BigDecimal(match.group(1).replaceAll("[.,]", ""))));
+    }
+
+    static String vnd(BigDecimal amount) {
+        DecimalFormatSymbols symbols = new DecimalFormatSymbols(Locale.ROOT);
+        symbols.setGroupingSeparator('.');
+        return new DecimalFormat("#,##0", symbols).format(amount) + " ₫";
     }
 
     // Context rút gọn (sửa B07): chỉ hồ sơ, văn bản khách, và bộ máy với keySpecs
     private String context(ValidatedProfile profile, SolverResult result, BigDecimal budget, String purpose, String userPrompt,
-                           CompatibilitySnapshot snapshot) {
+                           CompatibilitySnapshot snapshot, BigDecimal fullSetBudget) {
         Map<String, Object> profileView = new LinkedHashMap<>();
         profileView.put("summary", profile.profile().getSummary());
         profileView.put("constraints", profile.constraints().stream().map(BuildExplainerImpl::constraintView).toList());
         profileView.put("metrics", profile.metrics().stream().map(BuildExplainerImpl::metricView).toList());
         profileView.put("unmetNeeds", profile.profile().getUnmetNeeds());
+        profileView.put("objective", profile.profile().getObjective());
 
         List<Map<String, Object>> parts = new ArrayList<>();
         for (BuildLine line : result.lines()) {
@@ -121,6 +192,22 @@ public class BuildExplainerImpl implements BuildExplainer {
         content.put("budget", budget);
         content.put("build", build);
         content.put("reasonCode", result.reasonCode());
+        if (result.reasonCode() != null && REASON_MEANINGS.containsKey(result.reasonCode())) {
+            content.put("reasonMeaning", REASON_MEANINGS.get(result.reasonCode()));
+        }
+        Map<String, String> moneyText = new LinkedHashMap<>();
+        moneyText.put("budget", vnd(budget));
+        moneyText.put("total", vnd(result.total()));
+        moneyText.put("leftover", vnd(result.leftover()));
+        content.put("moneyText", moneyText);
+        if (fullSetBudget != null) {
+            Map<String, Object> fullSet = new LinkedHashMap<>();
+            fullSet.put("fullSetBudget", fullSetBudget);
+            fullSet.put("totalText", vnd(fullSetBudget));
+            fullSet.put("pcBudgetText", vnd(budget));
+            fullSet.put("peripheralBudgetText", vnd(fullSetBudget.subtract(budget)));
+            content.put("fullSet", fullSet);
+        }
         content.put("relaxedItems", result.warnings().stream().filter(warning -> warning.startsWith("REQUIREMENT_RELAXED")).toList());
         try {
             return objectMapper.writeValueAsString(content);

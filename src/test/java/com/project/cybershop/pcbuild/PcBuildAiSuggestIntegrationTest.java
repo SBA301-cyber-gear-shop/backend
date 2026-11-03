@@ -153,6 +153,56 @@ class PcBuildAiSuggestIntegrationTest {
         assertThat(statistics.getPrepareStatementCount()).isZero();
     }
 
+    private RequirementProfileDto maxPriceDraft() {
+        RequirementProfileDto draft = presets.preset(Archetype.AI_DATA, BuildTier.T7);
+        draft.setSummary("Máy đắt nhất");
+        draft.setObjective("MAX_PRICE");
+        return draft;
+    }
+
+    @Test
+    @DisplayName("Khách nói rõ \"đắt nhất\" → chế độ MAX_PRICE, báo MAX_PRICE_REACHED, AI giải thích được biết objective")
+    void explicitMostExpensiveEnablesMaxPrice() throws Exception {
+        when(llm.extractProfile(anyString(), anyString(), any())).thenReturn(maxPriceDraft());
+        stubExplanation();
+
+        mockMvc.perform(post("/api/v1/pc-build/ai-suggest").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"budget\":4000000000,\"purpose\":\"Training AI\",\"userPrompt\":\"Lấy toàn linh kiện ĐẮT TIỀN nhất\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reasonCode").value("MAX_PRICE_REACHED"))
+                .andExpect(jsonPath("$.data.budgetFit.status").value("UNDER_MAX_PRICE"))
+                .andExpect(jsonPath("$.data.profile.objective").value("MAX_PRICE"));
+
+        org.mockito.ArgumentCaptor<String> context = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(llm).explainBuild(anyString(), context.capture(), any());
+        assertThat(json.readTree(context.getValue()).path("profile").path("objective").asText()).isEqualTo("MAX_PRICE");
+    }
+
+    @Test
+    @DisplayName("Khách chỉ nói \"tốt nhất\", AI vẫn đặt MAX_PRICE → Java bỏ objective, chọn theo nhu cầu như thường")
+    void bestIsNotMostExpensive() throws Exception {
+        when(llm.extractProfile(anyString(), anyString(), any())).thenReturn(maxPriceDraft());
+        stubExplanation();
+
+        mockMvc.perform(post("/api/v1/pc-build/ai-suggest").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"budget\":4000000000,\"purpose\":\"Training AI\",\"userPrompt\":\"Cho tôi cấu hình tốt nhất, mạnh nhất\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.profile.objective").doesNotExist())
+                .andExpect(result -> assertThat(json.readTree(result.getResponse().getContentAsString())
+                        .path("data").path("reasonCode").asText()).isNotEqualTo("MAX_PRICE_REACHED"));
+    }
+
+    @Test
+    @DisplayName("Khách gửi lại hồ sơ đã sửa có MAX_PRICE → giữ chế độ, không cần nhắc lại \"đắt nhất\"")
+    void editedProfileKeepsMaxPrice() throws Exception {
+        stubExplanation();
+        String body = json.writeValueAsString(java.util.Map.of("budget", 4000000000L, "profile", maxPriceDraft()));
+
+        mockMvc.perform(post("/api/v1/pc-build/ai-suggest").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reasonCode").value("MAX_PRICE_REACHED"));
+    }
+
     @Test
     @DisplayName("Khách gửi profile đã sửa → không gọi AI trích hồ sơ, source USER_EDITED")
     void userProfileSkipsExtraction() throws Exception {

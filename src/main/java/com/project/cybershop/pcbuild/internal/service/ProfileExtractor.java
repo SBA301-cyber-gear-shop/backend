@@ -13,7 +13,7 @@ import java.time.Instant;
  */
 public interface ProfileExtractor {
 
-    String PROMPT_VERSION = "PROFILE_V1";
+    String PROMPT_VERSION = "PROFILE_V2";
 
     /** @param status OK = request này gọi AI; CACHED = dùng lại hồ sơ đã có hoặc chờ lời gọi trùng khóa của request khác */
     record Extraction(RequirementProfileDto draft, String status) {
