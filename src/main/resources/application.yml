@@ -3,19 +3,17 @@ spring:
     name: cybershop
 
   # ==========================================
-  # DATABASE (Local Docker PostgreSQL)
+  # DATABASE (Neon PostgreSQL Cloud)
   # ==========================================
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SBA301_WebPC}
-    username: ${SPRING_DATASOURCE_USERNAME:postgres}
-    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
-    # Cloud Neon (Uncomment if needed):
-    # url: jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech:5432/neondb?sslmode=require
-    # username: neondb_owner
-    # password: npg_E3lTM5aYOpNA
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech:5432/neondb?sslmode=require}
+    username: ${SPRING_DATASOURCE_USERNAME:neondb_owner}
+    password: ${SPRING_DATASOURCE_PASSWORD:npg_E3lTM5aYOpNA}
     driver-class-name: org.postgresql.Driver
-    # hikari:
-    #   connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
+    # Local fallback if needed:
+    # url: jdbc:postgresql://localhost:5432/SBA301_WebPC
+    # username: postgres
+    # password: postgres
 
   # ==========================================
   # JPA / HIBERNATE
@@ -47,7 +45,7 @@ server:
   port: 8080
 
 # ==========================================
-# JWT & AI ENGINE
+# JWT, AI ENGINE & VNPAY
 # ==========================================
 app:
   jwt:
@@ -77,3 +75,8 @@ app:
     max-budget: 9999999999          # [ĐÃ CHỐT] khớp numeric(12,2)
     rate-limit-per-minute: 6        # /ai-suggest: mỗi user, hoặc mỗi IP khi chưa đăng nhập (11.1)
     rate-limit-check-per-minute: 30 # /validate, /compatible-replacements, /options: mỗi endpoint
+  vnpay:
+    tmn-code: ${VNPAY_TMN_CODE:3RBH6UL5}
+    hash-secret: ${VNPAY_HASH_SECRET:WVWWFTHJALERWKHEOBBIHVXHVRTUYJRL}
+    pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+    return-url: ${VNPAY_RETURN_URL:http://localhost:5173/thanh-toan/ket-qua}

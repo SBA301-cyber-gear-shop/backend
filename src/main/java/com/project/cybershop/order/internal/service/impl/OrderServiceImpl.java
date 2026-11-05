@@ -128,14 +128,21 @@ public class OrderServiceImpl implements OrderService {
 
         createOrderItems(order.getId(), quantities);
         promotionApi.reserve(voucher, customer.getId(), order.getId(), finalAmount.signum() == 0);
-        paymentApi.createCounterPayment(order.getId(), finalAmount);
+
+        String paymentUrl = null;
+        if ("vnpay".equalsIgnoreCase(request.method())) {
+            paymentUrl = paymentApi.createVnPayPayment(order.getId(), order.getOrderCode(), finalAmount, "127.0.0.1");
+        } else {
+            paymentApi.createCounterPayment(order.getId(), finalAmount);
+        }
+
         if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
             cartItemRepository.deleteByCartIdAndProductVariantIdIn(cartId, quantities.keySet());
         } else {
             clearPurchasedCart(cartId);
         }
 
-        return toResponse(order);
+        return toResponse(order, paymentUrl);
     }
 
     // =========================================
@@ -290,9 +297,9 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private void validatePaymentMethod(Integer userId, PlaceOrderRequest request) {
-        if (!"store".equals(request.method())) {
+        if (!"store".equalsIgnoreCase(request.method()) && !"vnpay".equalsIgnoreCase(request.method())) {
             throw new BusinessException(
-                    "Hiện hỗ trợ thanh toán tại cửa hàng. Cổng thanh toán online chưa được cấu hình."
+                    "Phương thức thanh toán không hợp lệ. Vui lòng chọn thanh toán tại cửa hàng hoặc VNPAY."
             );
         }
 
@@ -300,7 +307,6 @@ public class OrderServiceImpl implements OrderService {
             if (orderRepository.findOwnedPaymentMethodId(request.paymentMethodId(), userId).isEmpty()) {
                 throw new BusinessException("Phương thức thanh toán không thuộc tài khoản của bạn.");
             }
-            throw new BusinessException("Vui lòng chọn thanh toán tại cửa hàng.");
         }
     }
 
@@ -429,10 +435,14 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private OrderResponse toResponse(Order order) {
+        return toResponse(order, null);
+    }
+
+    private OrderResponse toResponse(Order order, String paymentUrl) {
         PaymentApi.Payment payment = paymentApi.get(order.getId());
         String promotionCode = orderRepository.findPromotionCode(order.getId()).orElse(null);
         List<OrderResponse.Item> items = findOrderItems(order.getId());
-        return orderMapper.toResponse(order, payment, promotionCode, items);
+        return orderMapper.toResponse(order, payment, promotionCode, items, paymentUrl);
     }
 
     private List<OrderResponse.Item> findOrderItems(Integer orderId) {
