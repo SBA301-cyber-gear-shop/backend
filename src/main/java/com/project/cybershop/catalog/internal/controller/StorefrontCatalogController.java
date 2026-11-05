@@ -26,9 +26,11 @@ public class StorefrontCatalogController {
     }
 
     @GetMapping("/products")
-    @Operation(summary = "Lấy danh sách các sản phẩm đang được kinh doanh (status = ACTIVE)")
-    public ResponseEntity<List<ProductResponse>> getActiveProducts() {
-        return ResponseEntity.ok(productService.listActiveProducts());
+    @Operation(summary = "Lấy danh sách các sản phẩm đang được kinh doanh (status = ACTIVE, hỗ trợ lọc theo categoryId hoặc categorySlug)")
+    public ResponseEntity<List<ProductResponse>> getActiveProducts(
+            @RequestParam(required = false) Integer categoryId,
+            @RequestParam(required = false) String categorySlug) {
+        return ResponseEntity.ok(productService.listActiveProducts(categoryId, categorySlug));
     }
 
     @GetMapping("/products/{id}")
@@ -55,5 +57,11 @@ public class StorefrontCatalogController {
     @Operation(summary = "Lấy menu danh mục sản phẩm (Mega menu kèm cấu hình thông số)")
     public ResponseEntity<List<CategoryResponse>> getStorefrontCategories() {
         return ResponseEntity.ok(categoryService.getCategoryTree());
+    }
+
+    @GetMapping("/categories/{slug}")
+    @Operation(summary = "Lấy thông tin danh mục theo slug kèm cấu hình thông số")
+    public ResponseEntity<CategoryResponse> getCategoryBySlug(@PathVariable String slug) {
+        return ResponseEntity.ok(categoryService.getCategoryBySlug(slug));
     }
 }
