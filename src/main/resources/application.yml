@@ -82,9 +82,9 @@ app:
     return-url: ${VNPAY_RETURN_URL:http://localhost:5173/thanh-toan/ket-qua}
   shipping:
     ghn:
-      base-url: ${GHN_BASE_URL:https://online-gateway.ghn.vn/shiip/public-api}
-      token: ${GHN_TOKEN:a32a31f1-1f12-4fee-ae61-3573429ca09a}
-      shop-id: ${GHN_SHOP_ID:3036873}
+      base-url: ${GHN_BASE_URL:https://dev-online-gateway.ghn.vn/shiip/public-api}
+      token: ${GHN_TOKEN:ded5127b-4d11-452c-9bef-969b96d76cbf}
+      shop-id: ${GHN_SHOP_ID:236292}
       from-district-id: ${GHN_FROM_DISTRICT_ID:1454}
       from-ward-code: ${GHN_FROM_WARD_CODE:21210}
       from-name: ${GHN_FROM_NAME:CyberShop Store}
