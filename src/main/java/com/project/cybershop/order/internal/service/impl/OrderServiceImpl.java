@@ -213,6 +213,8 @@ public class OrderServiceImpl implements OrderService {
             case "pending" -> "confirmed";
             case "confirmed" -> "preparing";
             case "preparing" -> "ready_for_pickup";
+            case "ready_for_pickup" -> "shipping".equalsIgnoreCase(order.getDeliveryType()) ? "delivering" : "";
+            case "delivering" -> "completed";
             default -> "";
         };
 
@@ -221,6 +223,18 @@ public class OrderServiceImpl implements OrderService {
         }
 
         updateStatus(order, nextStatus);
+
+        if ("completed".equals(nextStatus)) {
+            try {
+                PaymentApi.Payment payment = paymentApi.get(order.getId());
+                if (payment != null && !"SUCCESS".equalsIgnoreCase(payment.status())) {
+                    paymentApi.collect(order.getId(), order.getFinalAmount(), "COD_GHN");
+                }
+            } catch (Exception ignored) {}
+            try {
+                promotionApi.markUsed(order.getId());
+            } catch (Exception ignored) {}
+        }
         return toResponse(order);
     }
 
