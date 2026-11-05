@@ -80,3 +80,13 @@ app:
     hash-secret: ${VNPAY_HASH_SECRET:WVWWFTHJALERWKHEOBBIHVXHVRTUYJRL}
     pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
     return-url: ${VNPAY_RETURN_URL:http://localhost:5173/thanh-toan/ket-qua}
+  shipping:
+    ghn:
+      base-url: ${GHN_BASE_URL:https://online-gateway.ghn.vn/shiip/public-api}
+      token: ${GHN_TOKEN:a32a31f1-1f12-4fee-ae61-3573429ca09a}
+      shop-id: ${GHN_SHOP_ID:3036873}
+      from-district-id: ${GHN_FROM_DISTRICT_ID:1454}
+      from-ward-code: ${GHN_FROM_WARD_CODE:21210}
+      from-name: ${GHN_FROM_NAME:CyberShop Store}
+      from-phone: ${GHN_FROM_PHONE:0877771230}
+      from-address: ${GHN_FROM_ADDRESS:Hẻm 282 Lê Thị Riêng, P. Thới An, Quận 12, TP.HCM}
