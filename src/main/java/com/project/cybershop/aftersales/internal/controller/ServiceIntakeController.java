@@ -2,6 +2,7 @@ package com.project.cybershop.aftersales.internal.controller;
 
 import com.project.cybershop.aftersales.api.dto.request.IntakeCreateRequest;
 import com.project.cybershop.aftersales.api.dto.request.NoteRequest;
+import com.project.cybershop.aftersales.api.dto.request.NoFaultComponentsRequest;
 import com.project.cybershop.aftersales.api.dto.request.RelinkCardRequest;
 import com.project.cybershop.aftersales.api.dto.response.ServiceIntakeDto;
 import com.project.cybershop.aftersales.internal.service.Actor;
@@ -70,11 +71,11 @@ public class ServiceIntakeController {
     }
 
     @PostMapping("/{id}/no-fault-rest")
-    @Operation(summary = "Kết luận không tìm thấy lỗi cho các linh kiện còn chờ hoặc đang kiểm tra")
+    @Operation(summary = "Kết luận không tìm thấy lỗi cho các linh kiện được chọn")
     public ResponseEntity<ApiResponseDTO<ServiceIntakeDto>> noFaultRest(@PathVariable("id") Integer id,
-                                                                       @Valid @RequestBody NoteRequest request) {
+                                                                       @Valid @RequestBody NoFaultComponentsRequest request) {
         Principal actor = currentUser.require(Actor.TECHNICIAN, Actor.ADMIN);
-        return ResponseEntity.ok(ApiResponseDTO.success("Đã kết luận các linh kiện còn lại",
+        return ResponseEntity.ok(ApiResponseDTO.success("Đã kết luận các linh kiện được chọn",
                 service.noFaultRest(id, request, actor)));
     }
 }

@@ -2,6 +2,7 @@ package com.project.cybershop.aftersales.internal.service;
 
 import com.project.cybershop.aftersales.api.dto.request.IntakeCreateRequest;
 import com.project.cybershop.aftersales.api.dto.request.NoteRequest;
+import com.project.cybershop.aftersales.api.dto.request.NoFaultComponentsRequest;
 import com.project.cybershop.aftersales.api.dto.request.RelinkCardRequest;
 import com.project.cybershop.aftersales.api.dto.response.ServiceIntakeDto;
 import com.project.cybershop.aftersales.internal.entity.Resolution;
@@ -70,6 +71,9 @@ public class ServiceIntakeService {
         List<Integer> extraIds = req.getOutOfWarrantyCardIds() == null ? List.of()
                 : req.getOutOfWarrantyCardIds().stream().distinct().filter(id -> !cardIds.contains(id)).toList();
         List<Integer> allIds = Stream.concat(cardIds.stream(), extraIds.stream()).toList();
+        if (allIds.isEmpty()) {
+            throw new BusinessException("Chọn ít nhất một linh kiện để tiếp nhận.");
+        }
         Map<Integer, OrderInfo> orders = orderLookup.byCardIds(allIds);
         Set<Integer> orderIds = allIds.stream().map(id -> {
             OrderInfo info = orders.get(id);
@@ -81,11 +85,14 @@ public class ServiceIntakeService {
         if (orderIds.size() != 1) {
             throw new BusinessException("Các linh kiện tiếp nhận cùng lúc phải thuộc cùng một đơn hàng.");
         }
-        List<WarrantyCard> cards = cardIds.stream().map(requestService::card).toList();
+        List<WarrantyCard> cards = allIds.stream().map(requestService::card).toList();
         for (WarrantyCard card : cards) {
-            // Hiệu lực thẻ chỉ xét ở đây. Thẻ hết hạn trong lúc sửa không ảnh hưởng phiếu đang xử lý.
-            if (!WarrantyRules.isValidOn(card, today)) {
+            if (cardIds.contains(card.getId()) && !WarrantyRules.isValidOn(card, today)) {
                 throw new BusinessException("Thẻ " + card.getSerialNumber() + " không còn hiệu lực tại thời điểm tiếp nhận.");
+            }
+            if (extraIds.contains(card.getId()) && (!WarrantyCard.ACTIVE.equals(card.getStatus())
+                    || !card.getEndDate().toLocalDate().isBefore(today))) {
+                throw new BusinessException("Chỉ nhận ngoài bảo hành với thẻ đang hoạt động và đã hết hạn.");
             }
         }
         String accessories = req.getAccessoriesNote().trim();
@@ -94,7 +101,7 @@ public class ServiceIntakeService {
                     .map(WarrantyCard::getSerialNumber).collect(Collectors.joining(", ")) + ".";
         }
 
-        OrderInfo order = orders.get(cardIds.get(0));
+        OrderInfo order = orders.get(allIds.get(0));
         ServiceIntake intake = new ServiceIntake();
         intake.setIntakeCode(WarrantyRules.newRequestCode(today, RANDOM));
         intake.setOrderId(order.orderId());
@@ -115,6 +122,9 @@ public class ServiceIntakeService {
             request.setExpectedReturnDate(req.getExpectedReturnDate());
             request.setStatus(RECEIVED);
             request.setCreatedAt(now);
+            if (extraIds.contains(card.getId())) {
+                request.setPublicNote("Đã tiếp nhận linh kiện ngoài bảo hành để kiểm tra.");
+            }
             requestService.open(request, actor, "Tiếp nhận tại quầy, lần " + intake.getIntakeCode() + ".", now);
         }
         return detail(intake, actor);
@@ -175,8 +185,9 @@ public class ServiceIntakeService {
         if (!requestService.orderInfo(card).orderId().equals(intake.getOrderId())) {
             throw new BusinessException("Chỉ thêm được linh kiện thuộc cùng đơn hàng của lần tiếp nhận.");
         }
-        if (!WarrantyRules.isValidOn(card, intake.getCreatedAt().toLocalDate())) {
-            throw new BusinessException("Thẻ của linh kiện này không còn hiệu lực lúc tiếp nhận.");
+        if (!WarrantyCard.ACTIVE.equals(card.getStatus())
+                || card.getStartDate().toLocalDate().isAfter(intake.getCreatedAt().toLocalDate())) {
+            throw new BusinessException("Thẻ của linh kiện không hoạt động tại thời điểm tiếp nhận.");
         }
         ServiceRequest first = parts.get(0);
         ServiceRequest request = child(intake, card, parts.size() + 1);
@@ -189,29 +200,40 @@ public class ServiceIntakeService {
         // Linh kiện đã nằm ở tiệm từ lúc tiếp nhận: tính ngày nhận theo lần tiếp nhận để cộng hạn cho đúng.
         request.setCreatedAt(intake.getCreatedAt());
         request.setStatus(INSPECTING);
+        if (!WarrantyRules.wasCoveredOn(card, intake.getCreatedAt().toLocalDate())) {
+            request.setPublicNote("Đã tiếp nhận linh kiện ngoài bảo hành để kiểm tra.");
+        }
         request.setAssignedTechnicianId(actor.id());
         requestService.open(request, actor, "Thêm linh kiện khi kiểm tra: " + card.getSerialNumber() + ". "
                 + req.getInternalNote().trim(), WarrantyRules.now());
         return detail(intake, actor);
     }
 
-    /** Kết luận "không tìm thấy lỗi" cho mọi linh kiện còn chờ hoặc đang kiểm tra, sau khi đã tìm ra linh kiện lỗi. */
+    /** Chỉ kết luận những phiếu kỹ thuật viên đã chọn và xác nhận. */
     @Transactional
-    public ServiceIntakeDto noFaultRest(Integer id, NoteRequest req, Principal actor) {
+    public ServiceIntakeDto noFaultRest(Integer id, NoFaultComponentsRequest req, Principal actor) {
         ServiceIntake intake = load(id);
-        List<ServiceRequest> rest = parts(intake).stream()
-                .filter(p -> p.getStatus() == RECEIVED || p.getStatus() == INSPECTING)
-                .toList();
-        if (rest.isEmpty()) {
-            throw new BusinessException("Không còn linh kiện nào đang chờ kiểm tra.");
-        }
-        String publicNote = req.getPublicNote() == null || req.getPublicNote().isBlank()
-                ? NO_FAULT_NOTE : req.getPublicNote();
-        for (ServiceRequest part : rest) {
-            if (part.getStatus() == RECEIVED) {
-                requestService.move(part, INSPECTING, null, req.getInternalNote(), null, null, actor);
+        Map<Integer, ServiceRequest> partsById = parts(intake).stream()
+                .collect(Collectors.toMap(ServiceRequest::getId, p -> p));
+        Set<Integer> selectedIds = new java.util.HashSet<>();
+        for (var selected : req.components()) {
+            ServiceRequest part = partsById.get(selected.id());
+            if (part == null || !selectedIds.add(selected.id())) {
+                throw new BusinessException("Danh sách linh kiện không hợp lệ hoặc không thuộc lần tiếp nhận.");
             }
-            requestService.move(part, READY_FOR_RETURN, Resolution.NO_FAULT_FOUND, req.getInternalNote(),
+            if (!selected.version().equals(part.getVersion())
+                    || (part.getStatus() != RECEIVED && part.getStatus() != INSPECTING)) {
+                throw new BusinessException("Linh kiện đã thay đổi trạng thái. Vui lòng tải lại và chọn lại.");
+            }
+        }
+        String publicNote = req.publicNote() == null || req.publicNote().isBlank()
+                ? NO_FAULT_NOTE : req.publicNote();
+        for (var selected : req.components()) {
+            ServiceRequest part = partsById.get(selected.id());
+            if (part.getStatus() == RECEIVED) {
+                requestService.move(part, INSPECTING, null, req.internalNote(), null, null, actor);
+            }
+            requestService.move(part, READY_FOR_RETURN, Resolution.NO_FAULT_FOUND, req.internalNote(),
                     publicNote, null, actor);
         }
         return detail(intake, actor);

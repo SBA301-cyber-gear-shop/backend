@@ -240,6 +240,42 @@ public class GreedyBuildSolver implements BuildSolver {
                 iterations++;
             }
 
+            // Khi điểm đã bão hòa, thử đổi linh kiện cùng chất lượng để tiến gần cửa sổ ngân sách.
+            for (int round = 0; round < MAX_REFINE_ROUNDS && totalOf(current).compareTo(windowFloor) < 0; round++) {
+                List<BuildLine> best = null;
+                BigDecimal bestTotal = totalOf(current);
+                for (List<BuildLine> move : neighbours(current)) {
+                    List<BuildLine> next = psuSizer.fix(move, ctx);
+                    if (next == null) continue;
+                    BigDecimal nextTotal = totalOf(next);
+                    if (nextTotal.compareTo(bestTotal) <= 0 || nextTotal.compareTo(budget) > 0
+                            || utility(next) < currentUtility || !withinStock(next) || !satisfiesProfile(next)) continue;
+                    boolean increasesQuantity = false;
+                    for (String role : ROLE_ORDER) {
+                        if (quantity(next, role) > quantity(current, role)) {
+                            increasesQuantity = true;
+                            break;
+                        }
+                    }
+                    if (increasesQuantity) continue;
+                    boolean improvesRole = false;
+                    boolean worsensRole = false;
+                    for (String role : SCORED_ROLES) {
+                        double before = partScorer.roleScore(role, current, ctx);
+                        double after = partScorer.roleScore(role, next, ctx);
+                        if (after > before + EPS) improvesRole = true;
+                        if (after + EPS < before) worsensRole = true;
+                    }
+                    if (!improvesRole || worsensRole || !isCompatible(next)) continue;
+                    best = next;
+                    bestTotal = nextTotal;
+                }
+                if (best == null) break;
+                current = best;
+                currentUtility = utility(current);
+                iterations++;
+            }
+
             BigDecimal total = totalOf(current);
             String reasonCode = relaxedItems.isEmpty() ? null : "REQUIREMENT_RELAXED";
             if (total.compareTo(windowFloor) < 0) {

@@ -35,6 +35,7 @@ public class ServiceRequestDto {
     private LocalDateTime completedAt;
     private Long version;
     private WarrantyCardDto card;
+    private boolean underWarrantyAtIntake;
     private List<ServiceRequestEventDto> events;
     private List<AllowedTransitionDto> allowedTransitions;
     private boolean canAddNote;

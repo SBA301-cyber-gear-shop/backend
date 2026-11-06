@@ -35,6 +35,12 @@ public final class WarrantyRules {
     /** Thẻ còn hiệu lực từ ngày bắt đầu đến hết ngày kết thúc. */
     public static boolean isValidOn(WarrantyCard card, LocalDate day) {
         return WarrantyCard.ACTIVE.equals(card.getStatus())
+                && wasCoveredOn(card, day);
+    }
+
+    /** Trạng thái thẻ có thể thay đổi sau khi đổi thiết bị; hạn lúc tiếp nhận vẫn dựa vào ngày. */
+    public static boolean wasCoveredOn(WarrantyCard card, LocalDate day) {
+        return card != null && day != null && card.getStartDate() != null && card.getEndDate() != null
                 && !day.isBefore(card.getStartDate().toLocalDate())
                 && !day.isAfter(card.getEndDate().toLocalDate());
     }

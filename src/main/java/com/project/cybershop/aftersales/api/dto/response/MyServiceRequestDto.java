@@ -22,6 +22,14 @@ public class MyServiceRequestDto {
     private String intakeCode;
     private String productName;
     private String serialNumber;
+    private boolean underWarrantyAtIntake;
+    private LocalDateTime warrantyStartDate;
+    private LocalDateTime warrantyEndDate;
+    private Long warrantyRemainingDays;
+    private LocalDate warrantyRemainingAsOf;
+    private String replacementSerialNumber;
+    private LocalDateTime replacementWarrantyEndDate;
+    private Long replacementWarrantyRemainingDays;
     private String status;
     private String resolution;
     private String issueDescription;
