@@ -149,6 +149,10 @@ public class ShippingServiceImpl implements ShippingService {
         // Check if shipment already exists
         Optional<Shipment> existing = shipmentRepository.findByOrderId(order.id());
         if (existing.isPresent()) {
+            jdbcTemplate.update(
+                    "UPDATE orders SET status = 'ready_for_pickup', tracking_code = ?, updated_at = now() WHERE id = ? AND status = 'preparing'",
+                    existing.get().getTrackingCode(), order.id()
+            );
             return buildTrackingResponse(order, existing.get());
         }
 
@@ -176,6 +180,19 @@ public class ShippingServiceImpl implements ShippingService {
         ghnPayload.put("height", 10);
         ghnPayload.put("service_type_id", 2);
 
+        // Sender / Return info from config
+        ghnPayload.put("from_name", ghnConfig.getFromName());
+        ghnPayload.put("from_phone", ghnConfig.getFromPhone());
+        ghnPayload.put("from_address", ghnConfig.getFromAddress());
+        if (ghnConfig.getFromDistrictId() != null) {
+            ghnPayload.put("return_district_id", ghnConfig.getFromDistrictId());
+        }
+        if (ghnConfig.getFromWardCode() != null) {
+            ghnPayload.put("return_ward_code", ghnConfig.getFromWardCode());
+        }
+        ghnPayload.put("return_phone", ghnConfig.getFromPhone());
+        ghnPayload.put("return_address", ghnConfig.getFromAddress());
+
         // Fetch order items to list in GHN payload
         List<Map<String, Object>> itemsList = new ArrayList<>();
         List<Map<String, Object>> dbItems = jdbcTemplate.queryForList(
@@ -202,6 +219,9 @@ public class ShippingServiceImpl implements ShippingService {
         try {
             JsonNode ghnRes = ghnClient.createShippingOrder(ghnPayload);
             trackingCode = ghnRes.path("order_code").asText();
+            if (trackingCode == null || trackingCode.isBlank()) {
+                throw new BusinessException("GHN không trả về mã vận đơn.");
+            }
             if (ghnRes.has("total_fee")) {
                 actualShippingFee = BigDecimal.valueOf(ghnRes.path("total_fee").asDouble());
             }
@@ -211,10 +231,11 @@ public class ShippingServiceImpl implements ShippingService {
                     expectedDelivery = LocalDateTime.parse(expStr, DateTimeFormatter.ISO_DATE_TIME);
                 } catch (Exception ignored) {}
             }
+        } catch (BusinessException be) {
+            throw be;
         } catch (Exception e) {
-            log.warn("GHN create order call failed (trying preview / mock code): {}", e.getMessage());
-            // Generate valid fallback tracking code
-            trackingCode = "G8" + UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
+            log.error("GHN create order call failed: {}", e.getMessage(), e);
+            throw new BusinessException("Không thể tạo vận đơn trên GHN: " + e.getMessage());
         }
 
         // Generate Print Token
@@ -247,9 +268,9 @@ public class ShippingServiceImpl implements ShippingService {
 
         shipmentRepository.save(shipment);
 
-        // Update Order
+        // Update Order to ready_for_pickup with real GHN tracking code
         jdbcTemplate.update(
-                "UPDATE orders SET tracking_code = ?, carrier = 'GHN', status = 'preparing', updated_at = now() WHERE id = ?",
+                "UPDATE orders SET tracking_code = ?, carrier = 'GHN', status = 'ready_for_pickup', updated_at = now() WHERE id = ?",
                 trackingCode, order.id()
         );
 
@@ -277,9 +298,10 @@ public class ShippingServiceImpl implements ShippingService {
         Shipment shipment = opt.get();
 
         // Smart Cache: Check if we should sync from GHN
-        // If not in final state and synced > 60 seconds ago
-        boolean isFinal = Set.of("delivered", "cancel", "completed").contains(shipment.getStatus().toLowerCase());
-        boolean shouldSync = !isFinal && (shipment.getLastSyncedAt() == null ||
+        // If not in final/simulated state and synced > 60 seconds ago
+        boolean isFinalOrSimulated = Set.of("delivered", "cancel", "completed", "delivering")
+                .contains(shipment.getStatus().toLowerCase());
+        boolean shouldSync = !isFinalOrSimulated && (shipment.getLastSyncedAt() == null ||
                 shipment.getLastSyncedAt().isBefore(LocalDateTime.now().minusSeconds(60)));
 
         if (shouldSync) {
