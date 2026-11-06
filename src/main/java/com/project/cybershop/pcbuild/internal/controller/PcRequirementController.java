@@ -29,7 +29,7 @@ public class PcRequirementController {
     @GetMapping("/options")
     @Operation(summary = "Danh sách giá trị hợp lệ",
             description = "Mục đích (kèm ngân sách tối thiểu), mức nhu cầu, cỡ main, hãng CPU còn hàng và cận trên ngân sách. "
-                    + "Dùng cho form khi trạng thái là FORM_REQUIRED và cho popup đổi mục đích.")
+                    + "Dùng để hiển thị mức ngân sách tối thiểu và cho popup đổi mục đích.")
     public ApiResponseDTO<RequirementOptionsResponse> options() {
         return ApiResponseDTO.success(requirementService.options());
     }
@@ -37,12 +37,11 @@ public class PcRequirementController {
     @PostMapping("/analyze")
     @Operation(summary = "Đọc và kiểm tra yêu cầu",
             description = """
-                    - Có `message` và không có `purpose`: gọi AI đọc câu của khách (tính vào giới hạn tần suất).
-                    - Có `purpose` (khách đồng ý popup hoặc gửi form): không gọi AI, kiểm tra nguyên giá trị gửi lên; sai danh sách → 400.
-                    - `budget` ở ô riêng luôn thắng số tiền AI đọc từ câu.
-                    - Trạng thái: READY (đi tiếp bước 4), NEED_MORE_INFO (hỏi lại, gửi lại `clarifyCount` trong response),
-                      FORM_REQUIRED (hỏi quá 2 lần hoặc AI lỗi), BELOW_MIN_BUDGET (popup gợi ý `suggestedPurposes`),
-                      NO_AFFORDABLE_PURPOSE, BUDGET_TOO_HIGH.""")
+                    Khách chỉ nhập 2 thứ: `budget` (bắt buộc) và `message` (nhu cầu chính).
+                    - Có `message`: AI đọc ra mục đích, hãng CPU, cỡ main (tính vào giới hạn tần suất gọi AI).
+                    - Không có `message` hoặc AI lỗi: dùng cấu hình đa dụng GENERAL.
+                    - Trạng thái: READY (đi tiếp bước 4), BELOW_MIN_BUDGET (popup gợi ý `suggestedPurposes`;
+                      khách đồng ý thì FE đổi `purpose` rồi đi tiếp bước 4), NO_AFFORDABLE_PURPOSE, BUDGET_TOO_HIGH.""")
     public ApiResponseDTO<RequirementAnalyzeResponse> analyze(@Valid @RequestBody RequirementAnalyzeRequest request,
                                                               Principal principal, HttpServletRequest httpRequest) {
         String clientKey = principal != null ? "user:" + principal.getName() : "ip:" + httpRequest.getRemoteAddr();

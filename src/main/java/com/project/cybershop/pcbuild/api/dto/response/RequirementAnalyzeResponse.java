@@ -18,19 +18,10 @@ public class RequirementAnalyzeResponse {
     @Schema(description = "Kết quả kiểm tra; chỉ READY mới đi tiếp bước 4")
     private RequirementStatus status;
 
-    @Schema(description = "Câu hiển thị cho khách (câu hỏi lại, nội dung popup, câu báo)")
+    @Schema(description = "Câu hiển thị cho khách (nội dung popup hoặc câu báo)")
     private String message;
 
     private Requirement requirement;
-
-    @Schema(description = "AI nếu yêu cầu do AI đọc; CLIENT nếu lấy nguyên giá trị client gửi (form, popup)", example = "AI")
-    private String parsedBy;
-
-    @Schema(description = "Số lần đã hỏi lại, tính cả lần này. Gửi lại giá trị này ở request kế tiếp", example = "0")
-    private int clarifyCount;
-
-    @Schema(description = "Số lần hỏi lại tối đa trước khi chuyển sang form", example = "2")
-    private int maxClarify;
 
     @Schema(description = "Ngân sách tối thiểu của mục đích đã chọn (đồng)", example = "14500000")
     private Long minBudget;
@@ -41,7 +32,7 @@ public class RequirementAnalyzeResponse {
     @Schema(description = "Mục đích vừa ngân sách, dùng cho popup khi BELOW_MIN_BUDGET")
     private List<PurposeOptionResponse> suggestedPurposes;
 
-    @Schema(description = "Ghi chú truy vết: giá trị AI trả về đã bị code đổi hoặc bỏ")
+    @Schema(description = "Ghi chú truy vết: AI lỗi, hoặc giá trị AI trả về đã bị code đổi hoặc bỏ")
     private List<String> notes;
 
     /** Yêu cầu đã chuẩn hóa: mọi giá trị đều nằm trong danh sách hợp lệ hoặc null. */
@@ -54,7 +45,7 @@ public class RequirementAnalyzeResponse {
         @Schema(example = "15000000")
         private Long budget;
 
-        @Schema(example = "GAMING")
+        @Schema(description = "Mục đích AI chọn; GENERAL khi không rõ hoặc AI lỗi", example = "GAMING")
         private String purpose;
 
         @Schema(description = "Mức nhu cầu trong mục đích; null khi khách không nói hoặc chưa có bảng mức")
@@ -65,8 +56,5 @@ public class RequirementAnalyzeResponse {
 
         @Schema(description = "Hãng CPU ưu tiên; null = không quan trọng", example = "AMD")
         private String brandPreference;
-
-        @Schema(description = "Trường bắt buộc còn thiếu, hiện chỉ có budget", example = "[]")
-        private List<String> missingInfo;
     }
 }

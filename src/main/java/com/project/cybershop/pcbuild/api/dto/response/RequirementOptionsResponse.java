@@ -30,9 +30,6 @@ public class RequirementOptionsResponse {
     @Schema(description = "Giá bộ PC cao cấp nhất ráp được từ kho (đồng), là cận trên của ngân sách")
     private Long maxBuildPrice;
 
-    @Schema(description = "Số lần hỏi lại tối đa trước khi chuyển sang form", example = "2")
-    private int maxClarify;
-
     @Data
     @NoArgsConstructor
     @AllArgsConstructor

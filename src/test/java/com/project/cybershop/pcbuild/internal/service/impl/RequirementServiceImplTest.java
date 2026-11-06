@@ -15,11 +15,9 @@ import com.project.cybershop.pcbuild.internal.repository.BudgetProfileRepository
 import com.project.cybershop.pcbuild.internal.repository.BuildTemplateSlotRepository;
 import com.project.cybershop.pcbuild.internal.service.LlmClientService;
 import com.project.cybershop.pcbuild.internal.support.AiUnavailableException;
-import com.project.cybershop.pcbuild.internal.support.PcBuildException;
 import com.project.cybershop.pcbuild.internal.support.RateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -27,7 +25,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -74,58 +71,51 @@ class RequirementServiceImplTest {
     }
 
     @Test
-    void aiReadsMessage_ready() {
-        aiReturns(new RequirementDraft(15_000_000L, "GAMING", null, null, "amd", List.of()));
+    void aiReadsNeed_ready() {
+        aiReturns(new RequirementDraft("GAMING", null, null, "amd"));
 
-        RequirementAnalyzeResponse response = service.analyze(message("15 củ chơi game, thích AMD"), "ip:1");
+        RequirementAnalyzeResponse response = service.analyze(request(15_000_000L, "Muốn build máy chơi game, thích AMD"), "ip:1");
 
         assertThat(response.getStatus()).isEqualTo(RequirementStatus.READY);
-        assertThat(response.getParsedBy()).isEqualTo("AI");
+        assertThat(response.getRequirement().getPurpose()).isEqualTo("GAMING");
         assertThat(response.getRequirement().getBrandPreference()).isEqualTo("AMD");
+        assertThat(response.getRequirement().getBudget()).isEqualTo(15_000_000L);
         assertThat(response.getMaxBuildPrice()).isEqualTo(21_500_000L);
         assertThat(response.getNotes()).isEmpty();
     }
 
     @Test
-    void missingBudget_asksTwiceThenForm() {
-        aiReturns(new RequirementDraft(null, "GAMING", null, null, null, List.of("budget")));
+    void noNeed_generalWithoutAi() {
+        RequirementAnalyzeResponse response = service.analyze(request(15_000_000L, "  "), "ip:1");
 
-        RequirementAnalyzeResponse first = service.analyze(message("build máy chơi game"), "ip:1");
-        assertThat(first.getStatus()).isEqualTo(RequirementStatus.NEED_MORE_INFO);
-        assertThat(first.getClarifyCount()).isEqualTo(1);
-        assertThat(first.getRequirement().getMissingInfo()).containsExactly("budget");
-
-        RequirementAnalyzeRequest third = message("chơi game");
-        third.setClarifyCount(2);
-        assertThat(service.analyze(third, "ip:1").getStatus()).isEqualTo(RequirementStatus.FORM_REQUIRED);
-    }
-
-    @Test
-    void budgetChecks() {
-        RequirementAnalyzeResponse below = service.analyze(client(12_000_000L, "GAMING"), "ip:1");
-        assertThat(below.getStatus()).isEqualTo(RequirementStatus.BELOW_MIN_BUDGET);
-        assertThat(below.getMessage()).contains("14.500.000đ").contains("12.000.000đ");
-        assertThat(below.getSuggestedPurposes()).extracting(PurposeOptionResponse::getPurpose).containsExactly("OFFICE");
-
-        assertThat(service.analyze(client(9_000_000L, "OFFICE"), "ip:1").getStatus())
-                .isEqualTo(RequirementStatus.NO_AFFORDABLE_PURPOSE);
-        assertThat(service.analyze(client(30_000_000L, "GAMING"), "ip:1").getStatus())
-                .isEqualTo(RequirementStatus.BUDGET_TOO_HIGH);
-        assertThat(service.analyze(client(21_500_000L, null), "ip:1").getRequirement().getPurpose())
-                .isEqualTo("GENERAL");
+        assertThat(response.getStatus()).isEqualTo(RequirementStatus.READY);
+        assertThat(response.getRequirement().getPurpose()).isEqualTo("GENERAL");
         verify(llm, never()).generateJson(anyString(), anyString(), anyString(), anyMap(), eq(RequirementDraft.class));
     }
 
     @Test
-    void aiOddValues_normalizedWithNotes_formBudgetWins() {
-        aiReturns(new RequirementDraft(99_000_000L, "MINING", "AAA_FULL", "TINY", "Apple", List.of()));
-        RequirementAnalyzeRequest request = message("đào coin");
-        request.setBudget(15_000_000L);
+    void budgetChecks() {
+        aiReturns(new RequirementDraft("GAMING", null, null, null));
+        RequirementAnalyzeResponse below = service.analyze(request(12_000_000L, "chơi game"), "ip:1");
+        assertThat(below.getStatus()).isEqualTo(RequirementStatus.BELOW_MIN_BUDGET);
+        assertThat(below.getMessage()).contains("14.500.000đ").contains("12.000.000đ");
+        assertThat(below.getSuggestedPurposes()).extracting(PurposeOptionResponse::getPurpose).containsExactly("OFFICE");
 
-        RequirementAnalyzeResponse response = service.analyze(request, "ip:1");
+        assertThat(service.analyze(request(9_000_000L, null), "ip:1").getStatus())
+                .isEqualTo(RequirementStatus.NO_AFFORDABLE_PURPOSE);
+        assertThat(service.analyze(request(30_000_000L, null), "ip:1").getStatus())
+                .isEqualTo(RequirementStatus.BUDGET_TOO_HIGH);
+        assertThat(service.analyze(request(21_500_000L, null), "ip:1").getStatus())
+                .isEqualTo(RequirementStatus.READY);
+    }
+
+    @Test
+    void aiOddValues_normalizedWithNotes() {
+        aiReturns(new RequirementDraft("MINING", "AAA_FULL", "TINY", "Apple"));
+
+        RequirementAnalyzeResponse response = service.analyze(request(15_000_000L, "đào coin"), "ip:1");
 
         assertThat(response.getStatus()).isEqualTo(RequirementStatus.READY);
-        assertThat(response.getRequirement().getBudget()).isEqualTo(15_000_000L);
         assertThat(response.getRequirement().getPurpose()).isEqualTo("GENERAL");
         assertThat(response.getRequirement().getLevel()).isNull();
         assertThat(response.getRequirement().getFormFactor()).isNull();
@@ -134,28 +124,15 @@ class RequirementServiceImplTest {
     }
 
     @Test
-    void aiDown_formRequiredWithGeneral() {
+    void aiDown_generalWithNote() {
         when(llm.generateJson(anyString(), anyString(), anyString(), anyMap(), eq(RequirementDraft.class)))
                 .thenThrow(new AiUnavailableException("hết giờ"));
 
-        RequirementAnalyzeResponse response = service.analyze(message("chơi game 20 triệu"), "ip:1");
+        RequirementAnalyzeResponse response = service.analyze(request(20_000_000L, "chơi game"), "ip:1");
 
-        assertThat(response.getStatus()).isEqualTo(RequirementStatus.FORM_REQUIRED);
+        assertThat(response.getStatus()).isEqualTo(RequirementStatus.READY);
         assertThat(response.getRequirement().getPurpose()).isEqualTo("GENERAL");
-    }
-
-    @Test
-    void clientInvalidValues_400() {
-        assertThatThrownBy(() -> service.analyze(client(15_000_000L, "MINING"), "ip:1"))
-                .isInstanceOfSatisfying(PcBuildException.class, e -> {
-                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
-                    assertThat(e.getCode()).isEqualTo("INVALID_PURPOSE");
-                });
-        RequirementAnalyzeRequest badForm = client(15_000_000L, "GAMING");
-        badForm.setFormFactor("TINY");
-        assertThatThrownBy(() -> service.analyze(badForm, "ip:1")).isInstanceOf(PcBuildException.class);
-        assertThatThrownBy(() -> service.analyze(new RequirementAnalyzeRequest(), "ip:1"))
-                .isInstanceOfSatisfying(PcBuildException.class, e -> assertThat(e.getCode()).isEqualTo("NEEDS_REQUIRED"));
+        assertThat(response.getNotes()).hasSize(1);
     }
 
     @Test
@@ -172,17 +149,8 @@ class RequirementServiceImplTest {
         when(llm.generateJson(anyString(), anyString(), anyString(), anyMap(), eq(RequirementDraft.class))).thenReturn(draft);
     }
 
-    private static RequirementAnalyzeRequest message(String text) {
-        RequirementAnalyzeRequest request = new RequirementAnalyzeRequest();
-        request.setMessage(text);
-        return request;
-    }
-
-    private static RequirementAnalyzeRequest client(Long budget, String purpose) {
-        RequirementAnalyzeRequest request = new RequirementAnalyzeRequest();
-        request.setBudget(budget);
-        request.setPurpose(purpose);
-        return request;
+    private static RequirementAnalyzeRequest request(Long budget, String message) {
+        return RequirementAnalyzeRequest.builder().budget(budget).message(message).build();
     }
 
     private static BudgetProfile profile(String purpose, long minBudget) {
