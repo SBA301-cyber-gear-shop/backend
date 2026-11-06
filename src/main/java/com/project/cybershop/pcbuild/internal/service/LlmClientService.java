@@ -1,40 +1,15 @@
 package com.project.cybershop.pcbuild.internal.service;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.project.cybershop.pcbuild.api.dto.profile.RequirementProfileDto;
-import lombok.Data;
+import java.util.Map;
 
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-
+/** Gọi mô hình ngôn ngữ, bắt trả đúng JSON theo schema. */
 public interface LlmClientService {
 
-    /** Lời giải thích AI viết cho bộ máy solver đã chọn (DD 8.4). AI không chọn hay đổi linh kiện. */
-    @Data
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    class ExplanationDraft {
-        private String buildName;
-        private String aiReasoning;
-        private String performanceHighlight;
-        private List<PartReason> partReasons = new ArrayList<>();
-
-        @Data
-        @JsonIgnoreProperties(ignoreUnknown = true)
-        public static class PartReason {
-            private Integer variantId;
-            private String reason;
-        }
-    }
-
     /**
-     * Trích hồ sơ yêu cầu (DD 8.3). Timeout mỗi lần gọi = min(profile-timeout-ms, thời gian còn lại tới deadline).
+     * Gửi prompt hệ thống và dữ liệu, ép mô hình trả JSON theo responseSchema rồi đọc thành type.
+     * Thử lại tối đa app.ai.max-retries lần khi hết giờ, lỗi kết nối, 5xx, 429 hoặc JSON hỏng.
      *
-     * @param deadline mốc chung của cả request /ai-suggest (bắt đầu + request-deadline-ms)
-     * @throws com.project.cybershop.pcbuild.internal.support.AiUnavailableException khi hết lần thử, hết deadline hoặc mạch ngắt
+     * @throws com.project.cybershop.pcbuild.internal.support.AiUnavailableException khi vẫn thất bại
      */
-    RequirementProfileDto extractProfile(String systemPrompt, String userJson, Instant deadline);
-
-    /** Viết lời giải thích (DD 8.4). Timeout mỗi lần gọi = min(timeout-ms, thời gian còn lại tới deadline). */
-    ExplanationDraft explainBuild(String systemPrompt, String userJson, Instant deadline);
+    <T> T generateJson(String step, String systemPrompt, String userJson, Map<String, Object> responseSchema, Class<T> type);
 }
