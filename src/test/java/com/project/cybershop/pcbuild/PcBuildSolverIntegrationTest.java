@@ -17,10 +17,14 @@ import com.project.cybershop.pcbuild.internal.model.ValidatedProfile;
 import com.project.cybershop.pcbuild.internal.service.BuildSolver;
 import com.project.cybershop.pcbuild.internal.service.CandidateRepositoryFacade;
 import com.project.cybershop.pcbuild.internal.service.PartScorer;
+import com.project.cybershop.pcbuild.internal.service.CompatibilityEngine;
+import com.project.cybershop.pcbuild.internal.service.PsuSizer;
 import com.project.cybershop.pcbuild.internal.service.ProfilePresets;
 import com.project.cybershop.pcbuild.internal.service.ProfileValidator;
+import com.project.cybershop.pcbuild.internal.service.impl.GreedyBuildSolver;
 import com.project.cybershop.pcbuild.internal.support.BuildMetrics;
 import com.project.cybershop.pcbuild.internal.support.BuildRuleException;
+import com.project.cybershop.pcbuild.internal.support.CandidatePoolBuilder;
 import com.project.cybershop.pcbuild.internal.support.ProfileMatcher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -76,6 +80,15 @@ class PcBuildSolverIntegrationTest {
     @Autowired
     private PartScorer partScorer;
 
+    @Autowired
+    private CompatibilityEngine compatibilityEngine;
+
+    @Autowired
+    private PsuSizer psuSizer;
+
+    @Autowired
+    private CandidatePoolBuilder candidatePoolBuilder;
+
     private ValidatedProfile fixture(CompatibilitySnapshot snapshot, Archetype archetype, BigDecimal budget) {
         ValidatedProfile profile = validator.validate(presets.preset(archetype, BuildTier.of(budget)), snapshot.dictionary(),
                 ProfileValidator.SOURCE_AI, null);
@@ -86,6 +99,33 @@ class PcBuildSolverIntegrationTest {
     private SolverResult solve(CompatibilitySnapshot snapshot, ValidatedProfile profile, BigDecimal budget) {
         CandidatePool pool = facade.buildPool(snapshot, profile, budget);
         return solver.solve(new SolverInput(budget, profile, pool, snapshot));
+    }
+
+    @Test
+    @DisplayName("Khi điểm bão hòa, solver thử cấu hình đắt hơn mà không nhồi thêm linh kiện")
+    void budgetFallbackImprovesPriceWithoutAddingParts() {
+        CompatibilitySnapshot snapshot = facade.snapshot();
+        BigDecimal budget = BigDecimal.valueOf(30_000_000);
+        ValidatedProfile profile = fixture(snapshot, Archetype.GENERAL, budget);
+        PartScorer flatScorer = new PartScorer() {
+            public double utility(List<BuildLine> lines, ScoreContext ctx) { return 0.5; }
+            public double roleScore(String role, List<BuildLine> lines, ScoreContext ctx) {
+                return partScorer.roleScore(role, lines, ctx);
+            }
+            public double partScore(String role, ComponentCandidateDTO part, ScoreContext ctx) {
+                return partScorer.partScore(role, part, ctx);
+            }
+        };
+        GreedyBuildSolver plateauSolver = new GreedyBuildSolver(compatibilityEngine, psuSizer, flatScorer,
+                candidatePoolBuilder, presets);
+        SolverResult result = plateauSolver.solve(new SolverInput(budget, profile, facade.buildPool(snapshot, profile, budget), snapshot));
+
+        assertThat(result.floorPrice()).isNotNull();
+        assertThat(result.floorPrice()).isLessThan(budget.multiply(new BigDecimal("0.90")));
+        assertThat(result.total()).isGreaterThan(result.floorPrice()).isLessThanOrEqualTo(budget);
+        assertThat(result.total()).isGreaterThanOrEqualTo(budget.multiply(new BigDecimal("0.90")));
+        assertThat(result.compatibility().compatible()).isTrue();
+        assertThat(result.lines()).allMatch(line -> line.quantity() == 1);
     }
 
     /** Bộ mẫu DD 13.3 (trừ base7 vì dưới minBudget): mã, hồ sơ mẫu, B gốc, variantId → số lượng. */
@@ -336,6 +376,8 @@ class PcBuildSolverIntegrationTest {
         SolverResult result = solve(snapshot, fixture(snapshot, Archetype.OFFICE, budget), budget);
         System.out.printf("[office 1 tỷ] total=%,d reason=%s %s%n", result.total().longValue(), result.reasonCode(), describe(result.lines()));
         assertThat(result.reasonCode()).isIn("NEEDS_SATURATED", "CATALOG_CEILING");
+        assertThat(result.total()).isLessThan(budget.multiply(new BigDecimal("0.90")));
+        assertThat(result.compatibility().compatible()).isTrue();
         assertThat(result.lines()).noneMatch(line -> "gpu".equals(line.role()));
         // DD ước "khoảng 29 tr" (mốc gần đúng, 13.3: chạy lại rồi ghi số thật). Số thật cao hơn vì ưu tiên mặc định
         // Bus_Speed, M2_Slots, RAM_Slots, kích thước vỏ, radiator không có cap: mỗi bước vẫn làm U tăng > EPS.

@@ -35,3 +35,11 @@ build/
 guide.md
 ### Environment ###
 .env
+
+### Graphify ###
+graphify-out/
+.graphify/
+
+/docs/DEVELOPER_FLOW_GUIDE.md
+/docs/PROJECT_FLOW_MAP.md
+/docs/module-reference/

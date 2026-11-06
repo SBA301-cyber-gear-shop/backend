@@ -9,6 +9,7 @@ import com.project.cybershop.aftersales.internal.entity.Resolution;
 import com.project.cybershop.aftersales.internal.entity.ServiceIntake;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequest;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequestEvent;
+import com.project.cybershop.aftersales.internal.entity.ServiceRequestStatus;
 import com.project.cybershop.aftersales.internal.entity.WarrantyCard;
 import com.project.cybershop.aftersales.internal.repository.OrderLookup;
 import com.project.cybershop.aftersales.internal.repository.OrderLookup.OrderInfo;
@@ -22,6 +23,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -89,13 +92,25 @@ public class WarrantyCardService {
             OrderInfo order = orders.get(card.getId());
             List<ServiceRequest> history = byCard.getOrDefault(card.getId(), List.of());
             WarrantyCard next = replacedBy.get(card.getId());
+            ServiceRequest open = history.stream().filter(t -> t.getStatus().isOpen()).findFirst().orElse(null);
+            LocalDate asOf = open == null ? today : remainingAsOf(open, card);
+            Long days = !WarrantyCard.ACTIVE.equals(card.getStatus()) || asOf == null ? null
+                    : open == null ? Math.max(0, ChronoUnit.DAYS.between(asOf, card.getEndDate().toLocalDate()))
+                    : remainingDays(open, card, asOf);
+            LocalDateTime displayEnd = history.stream().filter(t -> t.getStatus() == ServiceRequestStatus.READY_FOR_RETURN
+                            && t.getResolution() == Resolution.REPAIRED)
+                    .map(t -> effectiveWarrantyEnd(t, card)).findFirst().orElse(card.getEndDate());
             return WarrantyCardDto.builder()
                     .id(card.getId())
+                    .orderItemId(card.getOrderItemId())
                     .serialNumber(card.getSerialNumber())
                     .startDate(card.getStartDate())
-                    .endDate(card.getEndDate())
+                    .endDate(displayEnd)
+                    .warrantyRemainingAsOf(WarrantyCard.ACTIVE.equals(card.getStatus()) ? asOf : null)
+                    .warrantyRemainingDays(days)
                     .status(card.getStatus())
-                    .valid(WarrantyRules.isValidOn(card, today))
+                    .valid(WarrantyCard.ACTIVE.equals(card.getStatus()) && !today.isBefore(card.getStartDate().toLocalDate())
+                            && !today.isAfter(displayEnd.toLocalDate()))
                     .productName(order == null ? null : order.productName())
                     .variantName(order == null ? null : order.variantName())
                     .sku(order == null ? null : order.sku())
@@ -110,10 +125,10 @@ public class WarrantyCardService {
                     .replacesCardId(card.getReplacesCardId())
                     .replacedByCardId(next == null ? null : next.getId())
                     .replacedBySerialNumber(next == null ? null : next.getSerialNumber())
+                    .replacedByEndDate(next == null ? null : next.getEndDate())
                     .repairedCount(history.stream().filter(t -> t.getResolution() == Resolution.REPAIRED).count())
-                    .openRequest(history.stream().filter(t -> t.getStatus().isOpen()).findFirst()
-                            .map(t -> summary(t, card, order, codes)).orElse(null))
-                    .requests(history.stream().map(t -> summary(t, card, order, codes)).toList())
+                    .openRequest(open == null ? null : summary(open, card, order, codes, replacedBy))
+                    .requests(history.stream().map(t -> summary(t, card, order, codes, replacedBy)).toList())
                     .build();
         }).toList();
     }
@@ -127,9 +142,10 @@ public class WarrantyCardService {
         Map<Integer, WarrantyCard> cardById = cards.findAllById(cardIds).stream()
                 .collect(Collectors.toMap(WarrantyCard::getId, Function.identity()));
         Map<Integer, OrderInfo> orders = orderLookup.byCardIds(cardIds);
+        Map<Integer, WarrantyCard> replacements = replacedBy(cardIds);
         Map<Integer, String> codes = intakeCodes(list);
         return list.stream()
-                .map(t -> summary(t, cardById.get(t.getWarrantyCardId()), orders.get(t.getWarrantyCardId()), codes))
+                .map(t -> summary(t, cardById.get(t.getWarrantyCardId()), orders.get(t.getWarrantyCardId()), codes, replacements))
                 .toList();
     }
 
@@ -153,13 +169,17 @@ public class WarrantyCardService {
         return mine.stream().map(card -> {
             OrderInfo order = orders.get(card.getId());
             WarrantyCard next = replacedBy.get(card.getId());
+            LocalDateTime displayEnd = byCard.getOrDefault(card.getId(), List.of()).stream()
+                    .filter(t -> t.getStatus() == ServiceRequestStatus.READY_FOR_RETURN && t.getResolution() == Resolution.REPAIRED)
+                    .map(t -> effectiveWarrantyEnd(t, card)).findFirst().orElse(card.getEndDate());
             return MyWarrantyCardDto.builder()
                     .id(card.getId())
                     .serialNumber(card.getSerialNumber())
                     .startDate(card.getStartDate())
-                    .endDate(card.getEndDate())
+                    .endDate(displayEnd)
                     .status(card.getStatus())
-                    .valid(WarrantyRules.isValidOn(card, today))
+                    .valid(WarrantyCard.ACTIVE.equals(card.getStatus()) && !today.isBefore(card.getStartDate().toLocalDate())
+                            && !today.isAfter(displayEnd.toLocalDate()))
                     .productName(order == null ? null : order.productName())
                     .variantName(order == null ? null : order.variantName())
                     .orderCode(order == null ? null : order.orderCode())
@@ -213,6 +233,7 @@ public class WarrantyCardService {
         Map<Integer, WarrantyCard> cardById = cards.findAllById(
                         list.stream().map(ServiceRequest::getWarrantyCardId).distinct().toList()).stream()
                 .collect(Collectors.toMap(WarrantyCard::getId, Function.identity()));
+        Map<Integer, WarrantyCard> replacements = replacedBy(cardById.keySet().stream().toList());
         Map<Integer, String> codes = intakeCodes(list);
         return list.stream().collect(Collectors.toMap(ServiceRequest::getId, t -> {
             MyServiceRequestDto dto = mapper.toMine(t);
@@ -221,6 +242,16 @@ public class WarrantyCardService {
             dto.setIntakeCode(codes.get(t.getIntakeId()));
             dto.setProductName(order == null ? null : order.productName());
             dto.setSerialNumber(card == null ? null : card.getSerialNumber());
+            dto.setUnderWarrantyAtIntake(WarrantyRules.wasCoveredOn(card, ServiceRequestService.receivedDay(t)));
+            dto.setWarrantyStartDate(card == null ? null : card.getStartDate());
+            dto.setWarrantyEndDate(effectiveWarrantyEnd(t, card));
+            LocalDate asOf = remainingAsOf(t, card);
+            dto.setWarrantyRemainingAsOf(asOf);
+            dto.setWarrantyRemainingDays(remainingDays(t, card, asOf));
+            WarrantyCard replacement = replacements.get(t.getWarrantyCardId());
+            dto.setReplacementSerialNumber(replacement == null ? null : replacement.getSerialNumber());
+            dto.setReplacementWarrantyEndDate(replacement == null ? null : replacement.getEndDate());
+            dto.setReplacementWarrantyRemainingDays(replacementRemainingDays(replacement));
             // Dòng chỉ có ghi chú nội bộ không có gì để khách xem.
             dto.setTimeline(timeline.getOrDefault(t.getId(), List.of()).stream()
                     .filter(e -> e.getFromStatus() != e.getToStatus() || e.getPublicNote() != null)
@@ -247,12 +278,48 @@ public class WarrantyCardService {
     }
 
     private ServiceRequestSummaryDto summary(ServiceRequest request, WarrantyCard card, OrderInfo order,
-                                             Map<Integer, String> intakeCodes) {
+                                             Map<Integer, String> intakeCodes, Map<Integer, WarrantyCard> replacements) {
         ServiceRequestSummaryDto dto = mapper.toSummary(request);
         dto.setIntakeCode(intakeCodes.get(request.getIntakeId()));
         dto.setSerialNumber(card == null ? null : card.getSerialNumber());
+        dto.setUnderWarrantyAtIntake(WarrantyRules.wasCoveredOn(card, ServiceRequestService.receivedDay(request)));
+        dto.setWarrantyStartDate(card == null ? null : card.getStartDate());
+        dto.setWarrantyEndDate(effectiveWarrantyEnd(request, card));
+        LocalDate asOf = remainingAsOf(request, card);
+        dto.setWarrantyRemainingAsOf(asOf);
+        dto.setWarrantyRemainingDays(remainingDays(request, card, asOf));
+        WarrantyCard replacement = replacements.get(request.getWarrantyCardId());
+        dto.setReplacementSerialNumber(replacement == null ? null : replacement.getSerialNumber());
+        dto.setReplacementWarrantyEndDate(replacement == null ? null : replacement.getEndDate());
+        dto.setReplacementWarrantyRemainingDays(replacementRemainingDays(replacement));
         dto.setProductName(order == null ? null : order.productName());
         dto.setOrderCode(order == null ? null : order.orderCode());
         return dto;
+    }
+
+    private LocalDate remainingAsOf(ServiceRequest request, WarrantyCard card) {
+        if (card == null || !WarrantyCard.ACTIVE.equals(card.getStatus())) return null;
+        return request.getStatus().isOpen() && request.getStatus() != ServiceRequestStatus.READY_FOR_RETURN
+                && request.getCreatedAt() != null
+                ? request.getCreatedAt().toLocalDate() : WarrantyRules.now().toLocalDate();
+    }
+
+    private LocalDateTime effectiveWarrantyEnd(ServiceRequest request, WarrantyCard card) {
+        if (card == null || card.getEndDate() == null) return null;
+        if (request.getStatus() == ServiceRequestStatus.READY_FOR_RETURN
+                && request.getResolution() == Resolution.REPAIRED) {
+            return card.getEndDate().plusDays(WarrantyRules.extensionDays(request.getCreatedAt(), request.getCompletedAt()));
+        }
+        return card.getEndDate();
+    }
+
+    private Long remainingDays(ServiceRequest request, WarrantyCard card, LocalDate asOf) {
+        var end = effectiveWarrantyEnd(request, card);
+        return asOf == null || end == null ? null : Math.max(0, ChronoUnit.DAYS.between(asOf, end.toLocalDate()));
+    }
+
+    private Long replacementRemainingDays(WarrantyCard card) {
+        if (card == null || !WarrantyCard.ACTIVE.equals(card.getStatus()) || card.getEndDate() == null) return null;
+        return Math.max(0, ChronoUnit.DAYS.between(WarrantyRules.now().toLocalDate(), card.getEndDate().toLocalDate()));
     }
 }

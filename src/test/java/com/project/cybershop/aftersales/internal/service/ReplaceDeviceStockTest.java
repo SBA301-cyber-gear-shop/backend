@@ -1,6 +1,7 @@
 package com.project.cybershop.aftersales.internal.service;
 
 import com.project.cybershop.aftersales.api.dto.request.ReplacementRequest;
+import com.project.cybershop.aftersales.internal.entity.Resolution;
 import com.project.cybershop.aftersales.api.dto.response.ServiceRequestDto;
 import com.project.cybershop.aftersales.api.dto.response.WarrantyCardDto;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequest;
@@ -90,6 +91,78 @@ class ReplaceDeviceStockTest {
     private ReplacementRequest request(String source) {
         return ReplacementRequest.builder().newSerialNumber("sn-new").source(source)
                 .internalNote("ghi chú").publicNote("thông báo").build();
+    }
+
+    @Test
+    void replacementInheritsRemainingWarrantyAndPausesWhileBeingServiced() {
+        LocalDateTime now = WarrantyRules.now();
+        ticket.setCreatedAt(now.minusDays(10));
+        oldCard.setStartDate(now.minusMonths(8));
+        oldCard.setEndDate(now.plusMonths(4));
+
+        service.replaceDevice(1, request("supplier"), technician);
+
+        ArgumentCaptor<WarrantyCard> replacement = ArgumentCaptor.forClass(WarrantyCard.class);
+        verify(cards).saveAndFlush(replacement.capture());
+        WarrantyCard card = replacement.getValue();
+        assertEquals(oldCard.getEndDate().plusDays(
+                WarrantyRules.extensionDays(ticket.getCreatedAt(), card.getStartDate())), card.getEndDate());
+        assertEquals(oldCard.getId(), card.getReplacesCardId());
+        assertEquals(oldCard.getOrderItemId(), card.getOrderItemId());
+        assertEquals("SN-NEW", card.getSerialNumber());
+    }
+
+    @Test
+    void replacementKeepsRemainingTimeWhenOldCardExpiresDuringService() {
+        LocalDateTime now = WarrantyRules.now();
+        ticket.setCreatedAt(now.minusDays(5));
+        oldCard.setStartDate(now.minusMonths(6));
+        oldCard.setEndDate(now.minusDays(2));
+
+        service.replaceDevice(1, request("supplier"), technician);
+
+        ArgumentCaptor<WarrantyCard> replacement = ArgumentCaptor.forClass(WarrantyCard.class);
+        verify(cards).saveAndFlush(replacement.capture());
+        assertEquals(oldCard.getEndDate().plusDays(
+                WarrantyRules.extensionDays(ticket.getCreatedAt(), replacement.getValue().getStartDate())),
+                replacement.getValue().getEndDate());
+        assertTrue(WarrantyRules.isValidOn(replacement.getValue(), replacement.getValue().getStartDate().toLocalDate()));
+    }
+
+    @Test
+    void expiredDeviceCanBeReportedButCannotBeRepairedUnderWarranty() {
+        LocalDateTime now = WarrantyRules.now();
+        oldCard.setStartDate(now.minusYears(2));
+        oldCard.setEndDate(now.minusDays(10));
+        ticket.setCreatedAt(now.minusDays(1));
+        ticket.setStatus(ServiceRequestStatus.INSPECTING);
+        assertThrows(BusinessException.class, () -> service.move(ticket, ServiceRequestStatus.REPAIRING,
+                null, "Kiểm tra", null, null, technician));
+        ticket.setStatus(ServiceRequestStatus.REPAIRING);
+        assertThrows(BusinessException.class, () -> service.replaceDevice(1, request("stock"), technician));
+        verify(catalogApi, never()).deductStock(anyInt(), anyInt());
+        ticket.setStatus(ServiceRequestStatus.INSPECTING);
+        service.move(ticket, ServiceRequestStatus.READY_FOR_RETURN, Resolution.REJECTED,
+                "Nguồn hỏng", "Nguồn đã hết bảo hành và không hoạt động", null, technician);
+        assertEquals(ServiceRequestStatus.READY_FOR_RETURN, ticket.getStatus());
+        assertEquals(Resolution.REJECTED, ticket.getResolution());
+        ArgumentCaptor<ServiceRequestEvent> event = ArgumentCaptor.forClass(ServiceRequestEvent.class);
+        verify(events).save(event.capture());
+        assertEquals("Nguồn đã hết bảo hành và không hoạt động", event.getValue().getPublicNote());
+    }
+
+    @Test
+    void expiredDeviceCanBeMarkedWithoutFaultWithoutExtendingWarranty() {
+        LocalDateTime now = WarrantyRules.now();
+        oldCard.setStartDate(now.minusYears(2));
+        oldCard.setEndDate(now.minusDays(10));
+        LocalDateTime oldEnd = oldCard.getEndDate();
+        ticket.setCreatedAt(now.minusDays(1));
+        ticket.setStatus(ServiceRequestStatus.INSPECTING);
+        service.move(ticket, ServiceRequestStatus.READY_FOR_RETURN, Resolution.NO_FAULT_FOUND,
+                "Đã kiểm tra", "Thiết bị hoạt động bình thường", null, technician);
+        assertEquals(oldEnd, oldCard.getEndDate());
+        assertEquals(Resolution.NO_FAULT_FOUND, ticket.getResolution());
     }
 
     @Test
