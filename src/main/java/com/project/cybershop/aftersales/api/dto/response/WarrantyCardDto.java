@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.List;
 
 @Data
@@ -14,9 +15,12 @@ import java.util.List;
 @AllArgsConstructor
 public class WarrantyCardDto {
     private Integer id;
+    private Integer orderItemId;
     private String serialNumber;
     private LocalDateTime startDate;
     private LocalDateTime endDate;
+    private Long warrantyRemainingDays;
+    private LocalDate warrantyRemainingAsOf;
     private String status;
     /** Thẻ còn hiệu lực hôm nay: đang active và chưa quá ngày kết thúc. */
     private boolean valid;
@@ -38,6 +42,7 @@ public class WarrantyCardDto {
     /** Thẻ mới đã thay thế thẻ này, nếu thiết bị đã được đổi. */
     private Integer replacedByCardId;
     private String replacedBySerialNumber;
+    private LocalDateTime replacedByEndDate;
     private long repairedCount;
     private ServiceRequestSummaryDto openRequest;
     /** Mọi phiếu của thẻ, mới nhất trước. */

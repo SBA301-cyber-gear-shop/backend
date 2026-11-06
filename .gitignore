@@ -35,3 +35,7 @@ build/
 guide.md
 ### Environment ###
 .env
+
+### Graphify ###
+graphify-out/
+.graphify/

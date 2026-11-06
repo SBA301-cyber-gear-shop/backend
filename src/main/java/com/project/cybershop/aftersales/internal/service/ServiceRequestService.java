@@ -124,7 +124,7 @@ public class ServiceRequestService {
 
         WarrantyCard card = card(request.getWarrantyCardId());
         // Sau khi đổi thẻ ở bước chẩn đoán, linh kiện lỗi có thể thuộc một thẻ đã hết hạn.
-        boolean underWarranty = to == REPAIRING || resolution == Resolution.REPAIRED || resolution == Resolution.NO_FAULT_FOUND;
+        boolean underWarranty = to == REPAIRING || resolution == Resolution.REPAIRED;
         if (underWarranty && !WarrantyRules.isValidOn(card, receivedDay(request))) {
             throw new BusinessException("Thẻ đang gắn không còn hiệu lực lúc tiếp nhận, chỉ có thể từ chối bảo hành.");
         }
@@ -238,15 +238,14 @@ public class ServiceRequestService {
             throw new BusinessException("Serial đã có thẻ bảo hành.");
         }
         OrderInfo order = orderInfo(old);
-        Integer months = order.warrantyPeriodMonths();
         LocalDateTime now = WarrantyRules.now();
 
-        // Hạn của thiết bị mới tính lại từ ngày đổi, đủ số tháng bảo hành của sản phẩm.
+        // Giữ thời hạn còn lại khi tiếp nhận, cộng thời gian xử lý đến lúc đổi.
         WarrantyCard replacement = new WarrantyCard();
         replacement.setOrderItemId(old.getOrderItemId());
         replacement.setSerialNumber(serial);
         replacement.setStartDate(now);
-        replacement.setEndDate(now.plusMonths(months == null ? 0 : months));
+        replacement.setEndDate(old.getEndDate().plusDays(WarrantyRules.extensionDays(request.getCreatedAt(), now)));
         replacement.setReplacesCardId(old.getId());
         try {
             cards.saveAndFlush(replacement);
@@ -266,7 +265,8 @@ public class ServiceRequestService {
 
         String source = fromStock ? "hàng đang bán, đã trừ 1 tồn kho" : "hãng gửi về";
         String internalNote = "Đổi thiết bị: " + old.getSerialNumber() + " sang " + serial
-                + ". Nguồn: " + source + ". " + req.getInternalNote().trim();
+                + ". Hạn cũ: " + old.getEndDate().format(DAY) + ", hạn thiết bị thay thế: "
+                + replacement.getEndDate().format(DAY) + ". Nguồn: " + source + ". " + req.getInternalNote().trim();
         ServiceRequestStatus from = request.getStatus();
         request.setStatus(READY_FOR_RETURN);
         request.setResolution(Resolution.REPLACED);
@@ -359,7 +359,10 @@ public class ServiceRequestService {
     private ServiceRequestDto detail(ServiceRequest request, Principal actor) {
         ServiceRequestDto dto = mapper.toDetail(request);
         intakes.findById(request.getIntakeId()).ifPresent(intake -> dto.setIntakeCode(intake.getIntakeCode()));
-        dto.setCard(cardService.toDtos(List.of(card(request.getWarrantyCardId()))).get(0));
+        WarrantyCard linkedCard = card(request.getWarrantyCardId());
+        boolean covered = WarrantyRules.wasCoveredOn(linkedCard, receivedDay(request));
+        dto.setUnderWarrantyAtIntake(covered);
+        dto.setCard(cardService.toDtos(List.of(linkedCard)).get(0));
 
         List<ServiceRequestEvent> history = events.findByServiceRequestIdOrderByCreatedAtAscIdAsc(request.getId());
         Map<Integer, String> names = new HashMap<>();
@@ -375,7 +378,8 @@ public class ServiceRequestService {
         ServiceRequestStatus status = request.getStatus();
         dto.setAllowedTransitions(TransitionPolicy.allowedFor(status, actor.actor()).stream()
                 // Trả máy làm ở cấp cả lần tiếp nhận (ServiceIntakeService.returnAll).
-                .filter(rule -> rule.to() != RETURNED && !reinspectsReplaced(request, rule.to()))
+                .filter(rule -> rule.to() != RETURNED && !reinspectsReplaced(request, rule.to())
+                        && (covered || rule.to() != REPAIRING))
                 .map(rule -> new AllowedTransitionDto(rule.to().code(),
                         rule.resolutions().stream().map(Resolution::code).toList()))
                 .toList());

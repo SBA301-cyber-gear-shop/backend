@@ -1,7 +1,6 @@
 package com.project.cybershop.aftersales.api.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -20,11 +19,11 @@ import java.util.List;
 public class IntakeCreateRequest {
 
     /** Các linh kiện còn bảo hành, mỗi linh kiện thành một phiếu con. Tất cả phải cùng một đơn hàng. */
-    @NotEmpty(message = "Chưa chọn linh kiện nào để tiếp nhận")
-    private List<Integer> warrantyCardIds;
+    @NotNull(message = "Danh sách linh kiện không được để trống")
+    private List<@NotNull Integer> warrantyCardIds;
 
-    /** Linh kiện hết hạn khách vẫn để lại cùng bộ máy: ghi vào phụ kiện nhận giữ, không tạo phiếu. */
-    private List<Integer> outOfWarrantyCardIds;
+    /** Linh kiện hết hạn được tiếp nhận để kiểm tra, không tự động sửa bảo hành. */
+    private List<@NotNull Integer> outOfWarrantyCardIds;
 
     @NotBlank(message = "Mô tả lỗi không được để trống")
     private String issueDescription;

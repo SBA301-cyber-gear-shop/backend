@@ -40,6 +40,7 @@ class WarrantyRulesTest {
         assertFalse(WarrantyRules.isValidOn(card(WarrantyCard.VOID), day));
         assertFalse(WarrantyRules.isValidOn(card(WarrantyCard.REPLACED), day));
         assertFalse(WarrantyRules.isValidOn(card(null), day));
+        assertTrue(WarrantyRules.wasCoveredOn(card(WarrantyCard.REPLACED), day));
     }
 
     @Test

@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class ServiceRequestSummaryDto {
     private Integer id;
+    private Long version;
     private String requestCode;
     private Integer intakeId;
     private String intakeCode;
@@ -26,7 +27,15 @@ public class ServiceRequestSummaryDto {
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
     private Integer warrantyCardId;
+    private boolean underWarrantyAtIntake;
     private String serialNumber;
+    private LocalDateTime warrantyStartDate;
+    private LocalDateTime warrantyEndDate;
+    private Long warrantyRemainingDays;
+    private LocalDate warrantyRemainingAsOf;
+    private String replacementSerialNumber;
+    private LocalDateTime replacementWarrantyEndDate;
+    private Long replacementWarrantyRemainingDays;
     private String productName;
     private String orderCode;
 }
