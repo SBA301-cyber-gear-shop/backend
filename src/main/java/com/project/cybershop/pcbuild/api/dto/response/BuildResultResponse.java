@@ -27,6 +27,6 @@ public class BuildResultResponse {
     private List<BuildViolationResponse> violations = new ArrayList<>();
     /** Câu cảnh báo khi OVER_BUDGET (bước 7), null khi không vượt. */
     private String budgetWarning;
-    /** Lời giải thích của AI (bước 8), chưa làm nên luôn null. */
+    /** Lời giải thích bước 8 (AI hoặc câu mẫu); chỉ có ở API auto, API validate trả null. */
     private String message;
 }

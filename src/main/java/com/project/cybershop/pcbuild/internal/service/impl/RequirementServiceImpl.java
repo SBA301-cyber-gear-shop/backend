@@ -2,44 +2,36 @@ package com.project.cybershop.pcbuild.internal.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.cybershop.catalog.api.CatalogPublicApi;
-import com.project.cybershop.catalog.api.dto.CategorySpecDto;
-import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
-import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
 import com.project.cybershop.pcbuild.api.dto.request.RequirementAnalyzeRequest;
-import com.project.cybershop.pcbuild.api.dto.response.BudgetAllocationItem;
 import com.project.cybershop.pcbuild.api.dto.response.PurposeOptionResponse;
 import com.project.cybershop.pcbuild.api.dto.response.RequirementAnalyzeResponse;
 import com.project.cybershop.pcbuild.api.dto.response.RequirementStatus;
 import com.project.cybershop.pcbuild.api.dto.response.RequirementSummary;
-import com.project.cybershop.pcbuild.internal.entity.BudgetProfile;
-import com.project.cybershop.pcbuild.internal.entity.BuildTemplateSlot;
 import com.project.cybershop.pcbuild.internal.model.BudgetFit;
 import com.project.cybershop.pcbuild.internal.model.BuildMetadata;
 import com.project.cybershop.pcbuild.internal.model.BuildMetadata.PurposeMeta;
-import com.project.cybershop.pcbuild.internal.model.BuildMetadata.SlotMeta;
-import com.project.cybershop.pcbuild.internal.model.BuildPlan;
 import com.project.cybershop.pcbuild.internal.model.NeedAnalysis;
-import com.project.cybershop.pcbuild.internal.repository.BudgetProfileRepository;
-import com.project.cybershop.pcbuild.internal.repository.BuildTemplateSlotRepository;
+import com.project.cybershop.pcbuild.internal.service.BuildMetadataService;
 import com.project.cybershop.pcbuild.internal.service.RequirementService;
 import com.project.cybershop.pcbuild.internal.support.AiUnavailableException;
 import com.project.cybershop.pcbuild.internal.support.LlmClient;
-import com.project.cybershop.pcbuild.internal.support.PcBuildException;
 import com.project.cybershop.pcbuild.internal.support.RateLimiter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import com.project.cybershop.pcbuild.internal.support.PcBuildException;
+import org.springframework.http.HttpStatus;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.util.*;
 
 /**
- * Service duy nhất điều phối toàn bộ luồng phân tích nhu cầu, thẩm định ngân
- * sách và phân bổ linh kiện (Phase 1).
+ * Bước 1–3 của AI Build PC: AI đổi nhu cầu tự nhiên của khách thành purpose
+ * chuẩn, rồi thẩm định ngân sách
+ * (min_budget, maxBuildPrice, AI đánh giá kỳ vọng). Không chia tiền hay chọn
+ * linh kiện: /builds/auto làm việc đó
+ * từ {budget, purpose} trả về ở đây.
  * Không dùng @Transactional để không giữ kết nối DB khi đang chờ AI phản hồi.
  */
 @Slf4j
@@ -47,12 +39,9 @@ import java.util.*;
 @RequiredArgsConstructor
 public class RequirementServiceImpl implements RequirementService {
 
-    private static final String GENERAL = "GENERAL";
-    private static final long DEFAULT_MAX_BUILD_PRICE = 1_085_460_000L;
     private static final String DEFAULT_CLARIFICATION_QUESTION = "Yêu cầu của bạn chưa rõ ràng. Bạn hãy chia sẻ cụ thể hơn về nhu cầu sử dụng (chơi game gì, làm việc gì) để shop tư vấn chính xác nhất";
 
-    private final BuildTemplateSlotRepository slotRepository;
-    private final BudgetProfileRepository budgetProfileRepository;
+    private final BuildMetadataService buildMetadataService;
     private final CatalogPublicApi catalogPublicApi;
     private final LlmClient llmClient;
     private final RateLimiter rateLimiter;
@@ -65,8 +54,9 @@ public class RequirementServiceImpl implements RequirementService {
         String message = request.message().trim();
         Long budget = request.budget();
 
-        // 1. Tải metadata cấu hình (503 METADATA_INVALID nếu sai)
-        BuildMetadata metadata = loadMetadata();
+        // 1. Tải metadata cấu hình, cùng nguồn với /builds/auto (503 METADATA_INVALID
+        // nếu sai)
+        BuildMetadata metadata = buildMetadataService.loadMetadata(catalogPublicApi.getActiveCandidatesForBuild());
 
         // 2. Kiểm tra cận trên maxBuildPrice
         if (budget > metadata.getMaxBuildPrice()) {
@@ -144,13 +134,11 @@ public class RequirementServiceImpl implements RequirementService {
                     .build();
         }
 
-        // 8. Đủ ngân sách tối thiểu: Tính phân bổ và thứ tự chọn
-        BuildPlan plan = planAllocation(purpose, budget, metadata);
-
-        // 9. Lần gọi AI 2: Đánh giá ngân sách có đạt kỳ vọng hiệu năng không
+        // 8. Lần gọi AI 2: Đánh giá ngân sách có đạt kỳ vọng hiệu năng không.
+        // Không chia tiền ở đây: /builds/auto tự chia theo budget_profiles khi build
         BudgetFit fit;
         try {
-            fit = evaluateBudgetFit(message, budget, purpose, minBudget, plan.getAllocation());
+            fit = evaluateBudgetFit(message, budget, purpose, minBudget);
         } catch (Exception e) {
             log.warn("Lần gọi AI đánh giá ngân sách thất bại: {}. Dự phòng trạng thái READY.", e.getMessage());
             notes.add("Chưa thể đánh giá chi tiết kỳ vọng hiệu năng do dịch vụ AI tạm gián đoạn.");
@@ -179,8 +167,6 @@ public class RequirementServiceImpl implements RequirementService {
         RequirementSummary summary = RequirementSummary.builder()
                 .budget(budget)
                 .purpose(purpose)
-                .selectionOrder(plan.getSelectionOrder())
-                .budgetAllocation(plan.getAllocation())
                 .build();
 
         long elapsed = System.currentTimeMillis() - startTime;
@@ -198,195 +184,6 @@ public class RequirementServiceImpl implements RequirementService {
                 .suggestedBudget(suggestedBudget)
                 .notes(notes)
                 .build();
-    }
-
-    // =========================================================================
-    // METADATA LOADING & VALIDATION
-    // =========================================================================
-
-    private BuildMetadata loadMetadata() {
-        List<BuildTemplateSlot> rawSlots = slotRepository.findAllByOrderByStepOrderAsc();
-        if (rawSlots.isEmpty()) {
-            throw metadataInvalid("Bảng build_template_slots bị trống.");
-        }
-
-        List<BudgetProfile> rawProfiles = budgetProfileRepository.findAllByOrderByIdAsc();
-        if (rawProfiles.isEmpty()) {
-            throw metadataInvalid("Bảng budget_profiles bị trống.");
-        }
-
-        Map<Integer, CategoryResponse> categoryMap = new HashMap<>();
-        try {
-            for (CategoryResponse cat : catalogPublicApi.getAllCategories()) {
-                if (cat != null && cat.id() != null) {
-                    categoryMap.put(cat.id(), cat);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Không tải được danh mục từ catalog API getAllCategories: {}", e.getMessage());
-        }
-
-        try {
-            List<CategorySpecDto> specCatalog = catalogPublicApi.getSpecificationCatalog();
-            for (CategorySpecDto row : specCatalog) {
-                if (row.getCategoryId() != null && !categoryMap.containsKey(row.getCategoryId())) {
-                    categoryMap.put(row.getCategoryId(), new CategoryResponse(
-                            row.getCategoryId(),
-                            row.getCategoryName(),
-                            row.getCategorySlug(),
-                            null,
-                            null,
-                            List.of(),
-                            List.of()
-                    ));
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Không tải được danh mục từ catalog API getSpecificationCatalog: {}", e.getMessage());
-        }
-
-        List<SlotMeta> slots = new ArrayList<>();
-        Set<Integer> slotIds = new LinkedHashSet<>();
-        for (BuildTemplateSlot slot : rawSlots) {
-            slotIds.add(slot.getId());
-            Integer catId = slot.getCategoryId();
-            CategoryResponse cat = categoryMap.get(catId);
-            String slug = (cat != null && cat.slug() != null && !cat.slug().isBlank())
-                    ? cat.slug().trim()
-                    : "slot_" + slot.getId();
-            String name = (cat != null && cat.name() != null && !cat.name().isBlank())
-                    ? cat.name().trim()
-                    : "Linh kiện " + slot.getId();
-
-            slots.add(SlotMeta.builder()
-                    .slotId(slot.getId())
-                    .categoryId(catId)
-                    .componentCode(slug.toUpperCase(Locale.ROOT))
-                    .label(name)
-                    .stepOrder(slot.getStepOrder())
-                    .required(Boolean.TRUE.equals(slot.getRequired()))
-                    .minQty(slot.getMinQty())
-                    .maxQty(slot.getMaxQty())
-                    .requiredIfCategoryId(slot.getRequiredIfCategoryId())
-                    .requiredIfSpecId(slot.getRequiredIfSpecId())
-                    .requiredIfValue(slot.getRequiredIfValue())
-                    .build());
-        }
-
-        Map<String, List<BudgetProfile>> profilesByPurpose = new LinkedHashMap<>();
-        for (BudgetProfile bp : rawProfiles) {
-            profilesByPurpose.computeIfAbsent(bp.getPurpose(), k -> new ArrayList<>()).add(bp);
-        }
-
-        if (!profilesByPurpose.containsKey(GENERAL)) {
-            throw metadataInvalid("Cấu hình budget_profiles thiếu mục đích bắt buộc " + GENERAL + ".");
-        }
-
-        Map<String, PurposeMeta> purposes = new LinkedHashMap<>();
-        for (Map.Entry<String, List<BudgetProfile>> entry : profilesByPurpose.entrySet()) {
-            String purpose = entry.getKey();
-            List<BudgetProfile> bpList = entry.getValue();
-
-            Set<Integer> coveredSlotIds = new HashSet<>();
-            Map<Integer, BigDecimal> sharePctBySlot = new HashMap<>();
-            TreeSet<BigDecimal> minBudgets = new TreeSet<>();
-            BigDecimal totalShare = BigDecimal.ZERO;
-
-            for (BudgetProfile bp : bpList) {
-                Integer sId = bp.getSlot().getId();
-                coveredSlotIds.add(sId);
-                sharePctBySlot.put(sId, bp.getSharePct());
-                totalShare = totalShare.add(bp.getSharePct() != null ? bp.getSharePct() : BigDecimal.ZERO);
-                if (bp.getMinBudget() != null) {
-                    minBudgets.add(bp.getMinBudget());
-                }
-            }
-
-            if (!coveredSlotIds.containsAll(slotIds)) {
-                throw metadataInvalid("Mục đích " + purpose + " không có đủ cấu hình cho toàn bộ các slot.");
-            }
-
-            if (totalShare.compareTo(new BigDecimal("100.00")) != 0
-                    && totalShare.compareTo(new BigDecimal("100")) != 0) {
-                throw metadataInvalid(
-                        "Tổng share_pct của purpose " + purpose + " là " + totalShare + "%, không bằng 100%.");
-            }
-
-            if (minBudgets.size() > 1) {
-                log.warn("Purpose {} có nhiều mức min_budget {}, sẽ sử dụng mức cao nhất.", purpose, minBudgets);
-            }
-            long minBudget = minBudgets.isEmpty() ? 0L : minBudgets.last().longValue();
-
-            purposes.put(purpose, PurposeMeta.builder()
-                    .purpose(purpose)
-                    .label(normalizePurposeLabel(purpose))
-                    .description(normalizePurposeDescription(purpose))
-                    .minBudget(minBudget)
-                    .sharePctBySlotId(sharePctBySlot)
-                    .build());
-        }
-
-        long maxBuildPrice = calculateMaxBuildPrice(slots);
-
-        return BuildMetadata.builder()
-                .slots(slots)
-                .purposes(purposes)
-                .maxBuildPrice(maxBuildPrice)
-                .build();
-    }
-
-    private String normalizePurposeLabel(String purpose) {
-        if (purpose == null || purpose.isBlank()) {
-            return "PC đa dụng";
-        }
-        return switch (purpose.trim().toUpperCase(Locale.ROOT)) {
-            case "GAMING" -> "PC chơi game";
-            case "CREATIVE" -> "PC đồ họa, dựng phim";
-            case "AI_DATA" -> "PC AI, dữ liệu";
-            case "OFFICE" -> "PC văn phòng";
-            case "DEV" -> "PC lập trình";
-            case "GENERAL" -> "PC đa dụng";
-            default -> "PC " + purpose.replace('_', ' ').toLowerCase(Locale.ROOT);
-        };
-    }
-
-    private String normalizePurposeDescription(String purpose) {
-        if (purpose == null || purpose.isBlank()) {
-            return "";
-        }
-        return switch (purpose.trim().toUpperCase(Locale.ROOT)) {
-            case "GAMING" -> "Chơi game, livestream; ưu tiên card đồ họa mạnh";
-            case "CREATIVE" -> "Thiết kế đồ họa, dựng phim, render 3D; cần CPU nhiều nhân, RAM lớn và card đồ họa";
-            case "AI_DATA" -> "Chạy hoặc huấn luyện model AI, xử lý dữ liệu lớn; cần card đồ họa nhiều VRAM";
-            case "OFFICE" -> "Văn phòng, học tập, Excel, họp online, xem phim; không cần card đồ họa rời";
-            case "DEV" -> "Lập trình, chạy Docker, máy ảo, biên dịch code; cần CPU nhiều nhân và RAM lớn";
-            case "GENERAL" -> "Dùng cho nhiều việc hoặc nhu cầu chưa rõ; có card đồ họa";
-            default -> "Cấu hình tối ưu cho nhu cầu " + purpose.replace('_', ' ').toLowerCase(Locale.ROOT);
-        };
-    }
-
-    private long calculateMaxBuildPrice(List<SlotMeta> slots) {
-        try {
-            List<ComponentCandidateDTO> candidates = catalogPublicApi.getActiveCandidatesForBuild();
-            if (candidates == null || candidates.isEmpty()) {
-                return DEFAULT_MAX_BUILD_PRICE;
-            }
-            long total = 0L;
-            for (SlotMeta slot : slots) {
-                int quantity = (slot.getMaxQty() != null && slot.getMaxQty() > 0) ? Math.min(slot.getMaxQty(), 2) : 1;
-                long maxPrice = candidates.stream()
-                        .filter(c -> Objects.equals(c.getCategoryId(), slot.getCategoryId()) && c.getPrice() != null)
-                        .map(c -> c.getPrice().longValue())
-                        .max(Long::compare)
-                        .orElse(0L);
-                total += maxPrice * quantity;
-            }
-            return total > 0 ? total : DEFAULT_MAX_BUILD_PRICE;
-        } catch (Exception e) {
-            log.warn("Không tính được maxBuildPrice từ catalog: {}. Sử dụng mức mặc định {}", e.getMessage(),
-                    DEFAULT_MAX_BUILD_PRICE);
-            return DEFAULT_MAX_BUILD_PRICE;
-        }
     }
 
     // =========================================================================
@@ -425,13 +222,6 @@ public class RequirementServiceImpl implements RequirementService {
                         "label", p.getLabel(),
                         "description", p.getDescription() != null ? p.getDescription() : "",
                         "minBudget", p.getMinBudget()))
-                .toList());
-        userData.put("slots", metadata.getSlots().stream()
-                .map(s -> Map.of(
-                        "component", s.getComponentCode(),
-                        "label", s.getLabel(),
-                        "stepOrder", s.getStepOrder(),
-                        "required", s.isRequired()))
                 .toList());
 
         String userJson;
@@ -492,8 +282,7 @@ public class RequirementServiceImpl implements RequirementService {
         return result;
     }
 
-    private BudgetFit evaluateBudgetFit(String message, Long budget, String purpose, Long minBudget,
-            List<BudgetAllocationItem> allocation) {
+    private BudgetFit evaluateBudgetFit(String message, Long budget, String purpose, Long minBudget) {
         String systemPrompt = """
                 BẠN LÀ CHUYÊN VIÊN ĐÁNH GIÁ HIỆU NĂNG VÀ CÂN ĐỐI NGÂN SÁCH PC CỦA SHOP CYBERSHOP.
                 Nhiệm vụ: Đánh giá xem mức ngân sách khách hàng đưa ra có thực sự đáp ứng được kỳ vọng hiệu năng/thiết lập đồ họa trong yêu cầu của khách không (ví dụ: chơi game AAA max settings 1440p/4K, render 3D nặng).
@@ -514,7 +303,6 @@ public class RequirementServiceImpl implements RequirementService {
         userData.put("budget", budget);
         userData.put("purpose", purpose);
         userData.put("minBudget", minBudget);
-        userData.put("budgetAllocation", allocation);
 
         String userJson;
         try {
@@ -551,46 +339,8 @@ public class RequirementServiceImpl implements RequirementService {
     }
 
     // =========================================================================
-    // BUDGET ALLOCATION & SUGGESTIONS
+    // GỢI Ý PURPOSE KHI THIẾU NGÂN SÁCH
     // =========================================================================
-
-    private BuildPlan planAllocation(String purpose, Long budget, BuildMetadata metadata) {
-        PurposeMeta purposeMeta = metadata.getPurposes().get(purpose);
-        if (purposeMeta == null) {
-            purposeMeta = metadata.getPurposes().get(GENERAL);
-        }
-
-        List<SlotMeta> sortedSlots = metadata.getSlots().stream()
-                .sorted(Comparator.comparingInt(SlotMeta::getStepOrder))
-                .toList();
-
-        List<String> selectionOrder = sortedSlots.stream()
-                .map(SlotMeta::getComponentCode)
-                .toList();
-
-        List<BudgetAllocationItem> allocation = new ArrayList<>();
-        BigDecimal budgetDecimal = BigDecimal.valueOf(budget);
-
-        for (SlotMeta slot : sortedSlots) {
-            BigDecimal sharePct = purposeMeta != null ? purposeMeta.getSharePct(slot.getSlotId()) : BigDecimal.ZERO;
-            long amount = 0L;
-            if (sharePct != null && sharePct.compareTo(BigDecimal.ZERO) > 0) {
-                amount = budgetDecimal.multiply(sharePct)
-                        .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP)
-                        .longValue();
-            }
-            allocation.add(BudgetAllocationItem.builder()
-                    .component(slot.getComponentCode())
-                    .sharePct(sharePct != null ? sharePct : BigDecimal.ZERO)
-                    .amount(amount)
-                    .build());
-        }
-
-        return BuildPlan.builder()
-                .selectionOrder(selectionOrder)
-                .allocation(allocation)
-                .build();
-    }
 
     private List<PurposeOptionResponse> suggestAlternatives(Long budget, String currentPurpose,
             BuildMetadata metadata) {

@@ -31,8 +31,8 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Nạp khuôn bộ PC và chia ngân sách với cùng các bước kiểm như /requirements/analyze,
- * để hai luồng đọc ra một cấu hình (cùng tỉ lệ, cùng min_budget, cùng maxBuildPrice).
+ * Nạp và kiểm khuôn bộ PC (build_template_slots, budget_profiles). Nguồn metadata duy nhất cho cả
+ * /requirements/analyze và /builds/auto, nên hai API luôn cùng min_budget và cùng maxBuildPrice.
  */
 @Slf4j
 @Service
@@ -137,7 +137,8 @@ public class BuildMetadataServiceImpl implements BuildMetadataService {
             }
             purposes.put(purpose, PurposeMeta.builder()
                     .purpose(purpose)
-                    .label(purpose)
+                    .label(purposeLabel(purpose))
+                    .description(purposeDescription(purpose))
                     .minBudget(minBudgets.isEmpty() ? 0L : minBudgets.last().longValue())
                     .sharePctBySlotId(sharePctBySlot)
                     .build());
@@ -145,7 +146,33 @@ public class BuildMetadataServiceImpl implements BuildMetadataService {
         return purposes;
     }
 
-    /** Cùng công thức với RequirementServiceImpl (mỗi slot lấy min(max_qty, 2) món đắt nhất) để hai API cùng một cận trên. */
+    /** Nhãn khách đọc, dùng trong câu trả lời của /requirements/analyze và gửi AI làm danh mục purpose hợp lệ. */
+    private static String purposeLabel(String purpose) {
+        return switch (purpose.trim().toUpperCase(Locale.ROOT)) {
+            case "GAMING" -> "PC chơi game";
+            case "CREATIVE" -> "PC đồ họa, dựng phim";
+            case "AI_DATA" -> "PC AI, dữ liệu";
+            case "OFFICE" -> "PC văn phòng";
+            case "DEV" -> "PC lập trình";
+            case "GENERAL" -> "PC đa dụng";
+            default -> "PC " + purpose.replace('_', ' ').toLowerCase(Locale.ROOT);
+        };
+    }
+
+    /** Mô tả giúp AI chọn đúng purpose từ nhu cầu tự nhiên của khách. */
+    private static String purposeDescription(String purpose) {
+        return switch (purpose.trim().toUpperCase(Locale.ROOT)) {
+            case "GAMING" -> "Chơi game, livestream; ưu tiên card đồ họa mạnh";
+            case "CREATIVE" -> "Thiết kế đồ họa, dựng phim, render 3D; cần CPU nhiều nhân, RAM lớn và card đồ họa";
+            case "AI_DATA" -> "Chạy hoặc huấn luyện model AI, xử lý dữ liệu lớn; cần card đồ họa nhiều VRAM";
+            case "OFFICE" -> "Văn phòng, học tập, Excel, họp online, xem phim; không cần card đồ họa rời";
+            case "DEV" -> "Lập trình, chạy Docker, máy ảo, biên dịch code; cần CPU nhiều nhân và RAM lớn";
+            case "GENERAL" -> "Dùng cho nhiều việc hoặc nhu cầu chưa rõ; có card đồ họa";
+            default -> "Cấu hình tối ưu cho nhu cầu " + purpose.replace('_', ' ').toLowerCase(Locale.ROOT);
+        };
+    }
+
+    /** Mỗi slot lấy min(max_qty, 2) món đắt nhất; /requirements/analyze và /builds/auto dùng chung cận trên này. */
     static long maxBuildPrice(List<SlotMeta> slots, List<ComponentCandidateDTO> candidates) {
         long total = 0L;
         for (SlotMeta slot : slots) {

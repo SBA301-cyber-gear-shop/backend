@@ -51,6 +51,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/pc-build/save").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/pc-build/*").authenticated()
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/pc-build/*").authenticated()
+                        // AI Build PC bước 9: lưu bộ PC cần đăng nhập; auto/validate/replacements công khai
+                        .requestMatchers(HttpMethod.POST, "/api/pc-build/builds/save").authenticated()
                         .anyRequest().permitAll()
                 )
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) -> {

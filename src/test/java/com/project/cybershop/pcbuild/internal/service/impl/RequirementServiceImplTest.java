@@ -20,6 +20,7 @@ import com.project.cybershop.pcbuild.internal.support.RateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -98,7 +99,6 @@ class RequirementServiceImplTest {
                     .build());
         }
         when(catalogPublicApi.getActiveCandidatesForBuild()).thenReturn(candidates);
-        when(catalogPublicApi.getSpecificationCatalog()).thenReturn(List.of());
         List<CategoryResponse> categories = List.of(
                 new CategoryResponse(1, "CPU", "cpu", null, null, List.of(), List.of()),
                 new CategoryResponse(2, "Mainboard", "mainboard", null, null, List.of(), List.of()),
@@ -117,8 +117,7 @@ class RequirementServiceImplTest {
         rateLimiter = new RateLimiter(Clock.systemUTC(), 100);
 
         service = new RequirementServiceImpl(
-                slotRepository,
-                budgetProfileRepository,
+                new BuildMetadataServiceImpl(slotRepository, budgetProfileRepository, catalogPublicApi),
                 catalogPublicApi,
                 llmClient,
                 rateLimiter,
@@ -139,8 +138,8 @@ class RequirementServiceImplTest {
     }
 
     @Test
-    @DisplayName("Ca 1: Build PC chơi game 1440p, 30tr, AI GAMING, fit = true -> READY, đủ 11 dòng allocation")
-    void case1_ready_fullAllocation() {
+    @DisplayName("Ca 1: Build PC chơi game 1440p, 30tr, AI GAMING, fit = true -> READY, chỉ trả {budget, purpose}")
+    void case1_ready_onlyBudgetAndPurpose() {
         when(llmClient.generateJson(eq("analyzeNeed"), anyString(), anyString(), anyMap(), eq(NeedAnalysis.class)))
                 .thenReturn(NeedAnalysis.builder()
                         .needsClarification(false)
@@ -159,12 +158,9 @@ class RequirementServiceImplTest {
 
         assertThat(response.getStatus()).isEqualTo(RequirementStatus.READY);
         assertThat(response.getRequirement().getPurpose()).isEqualTo("GAMING");
-        assertThat(response.getRequirement().getBudgetAllocation()).hasSize(11);
-        long totalAllocated = response.getRequirement().getBudgetAllocation().stream()
-                .mapToLong(item -> item.getAmount())
-                .sum();
-        // Tổng phân bổ xấp xỉ ngân sách 30tr (chênh lệch làm tròn <= 10 đồng)
-        assertThat(Math.abs(totalAllocated - 30_000_000L)).isLessThanOrEqualTo(10L);
+        assertThat(response.getRequirement().getBudget()).isEqualTo(30_000_000L);
+        assertThat(response.getMessage()).isEqualTo("Shop đã hiểu yêu cầu: PC chơi game, ngân sách 30.000.000đ.");
+        assertThat(response.getExplanation()).contains("1440p");
     }
 
     @Test
@@ -241,7 +237,7 @@ class RequirementServiceImplTest {
 
         assertThat(response.getStatus()).isEqualTo(RequirementStatus.BUDGET_WARNING);
         assertThat(response.getSuggestedBudget()).isEqualTo(35_000_000L);
-        assertThat(response.getRequirement().getBudgetAllocation()).isNotEmpty();
+        assertThat(response.getRequirement().getPurpose()).isEqualTo("GAMING");
         assertThat(response.getNotes()).anyMatch(note -> note.contains("ước lượng"));
     }
 
@@ -322,8 +318,8 @@ class RequirementServiceImplTest {
     }
 
     @Test
-    @DisplayName("Ca 11: OFFICE có GPU 0% -> GPU vẫn có trong allocation với amount = 0")
-    void case11_officeGpuZeroPercent() {
+    @DisplayName("Ca 11: OFFICE đủ tiền -> READY; AI không nhận budgetAllocation hay slots (chia tiền là việc của /builds/auto)")
+    void case11_aiInputHasNoAllocation() {
         when(llmClient.generateJson(eq("analyzeNeed"), anyString(), anyString(), anyMap(), eq(NeedAnalysis.class)))
                 .thenReturn(NeedAnalysis.builder()
                         .needsClarification(false)
@@ -336,34 +332,15 @@ class RequirementServiceImplTest {
         RequirementAnalyzeResponse response = service.analyze(new RequirementAnalyzeRequest(15_000_000L, "máy văn phòng"), "ip:test");
 
         assertThat(response.getStatus()).isEqualTo(RequirementStatus.READY);
-        var gpuAllocation = response.getRequirement().getBudgetAllocation().stream()
-                .filter(item -> "GPU".equalsIgnoreCase(item.getComponent()))
-                .findFirst()
-                .orElse(null);
+        assertThat(response.getRequirement().getPurpose()).isEqualTo("OFFICE");
+        assertThat(response.getMinBudget()).isEqualTo(12_500_000L);
 
-        assertThat(gpuAllocation).isNotNull();
-        assertThat(gpuAllocation.getSharePct()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(gpuAllocation.getAmount()).isEqualTo(0L);
-    }
+        ArgumentCaptor<String> needInput = ArgumentCaptor.forClass(String.class);
+        verify(llmClient).generateJson(eq("analyzeNeed"), anyString(), needInput.capture(), anyMap(), eq(NeedAnalysis.class));
+        assertThat(needInput.getValue()).contains("validPurposes").doesNotContain("\"slots\"");
 
-    @Test
-    @DisplayName("Ca 12: Làm tròn số lẻ: budget 16.000.001đ -> Mỗi amount là số nguyên HALF_UP")
-    void case12_rounding_halfUp() {
-        when(llmClient.generateJson(eq("analyzeNeed"), anyString(), anyString(), anyMap(), eq(NeedAnalysis.class)))
-                .thenReturn(NeedAnalysis.builder()
-                        .needsClarification(false)
-                        .purpose("GAMING")
-                        .build());
-
-        when(llmClient.generateJson(eq("evaluateBudgetFit"), anyString(), anyString(), anyMap(), eq(BudgetFit.class)))
-                .thenReturn(BudgetFit.builder().budgetFit(true).explanation("Tốt.").build());
-
-        RequirementAnalyzeResponse response = service.analyze(new RequirementAnalyzeRequest(16_000_001L, "chơi game"), "ip:test");
-
-        assertThat(response.getStatus()).isEqualTo(RequirementStatus.READY);
-        for (var item : response.getRequirement().getBudgetAllocation()) {
-            assertThat(item.getAmount()).isNotNull();
-        }
+        ArgumentCaptor<String> fitInput = ArgumentCaptor.forClass(String.class);
+        verify(llmClient).generateJson(eq("evaluateBudgetFit"), anyString(), fitInput.capture(), anyMap(), eq(BudgetFit.class));
+        assertThat(fitInput.getValue()).contains("\"minBudget\":12500000").doesNotContain("budgetAllocation");
     }
 }
-

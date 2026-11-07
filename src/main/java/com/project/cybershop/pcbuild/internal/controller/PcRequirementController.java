@@ -3,6 +3,7 @@ package com.project.cybershop.pcbuild.internal.controller;
 import com.project.cybershop.pcbuild.api.dto.request.RequirementAnalyzeRequest;
 import com.project.cybershop.pcbuild.api.dto.response.RequirementAnalyzeResponse;
 import com.project.cybershop.pcbuild.internal.service.RequirementService;
+import com.project.cybershop.pcbuild.internal.support.ClientKeys;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,19 +35,9 @@ public class PcRequirementController {
             Principal principal,
             HttpServletRequest httpRequest) {
 
-        String clientKey = (principal != null && principal.getName() != null && !principal.getName().isBlank())
-                ? "user:" + principal.getName()
-                : "ip:" + extractClientIp(httpRequest);
+        String clientKey = ClientKeys.of(principal, httpRequest);
 
         RequirementAnalyzeResponse response = requirementService.analyze(request, clientKey);
         return ApiResponseDTO.success(response);
-    }
-
-    private String extractClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
-        return request.getRemoteAddr() != null ? request.getRemoteAddr() : "unknown";
     }
 }

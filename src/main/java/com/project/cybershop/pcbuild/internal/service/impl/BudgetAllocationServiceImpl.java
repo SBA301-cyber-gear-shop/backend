@@ -15,8 +15,8 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Bước 4: amount = budget × share_pct / 100, làm tròn HALF_UP tới đồng.
- * Cách tính giống /requirements/analyze, kể cả giữ slot 0% với amount 0, để số tiền hai API trả về trùng nhau.
+ * Bước 4: amount = budget × share_pct / 100, làm tròn HALF_UP tới đồng; slot 0% vẫn giữ với amount 0.
+ * Chỉ /builds/auto chia tiền; /requirements/analyze không chia.
  */
 @Service
 public class BudgetAllocationServiceImpl implements BudgetAllocationService {
@@ -33,18 +33,16 @@ public class BudgetAllocationServiceImpl implements BudgetAllocationService {
                 .sorted(Comparator.comparingInt(SlotMeta::getStepOrder))
                 .toList();
         BigDecimal budgetAmount = BigDecimal.valueOf(budget);
-        List<String> selectionOrder = new ArrayList<>();
         List<BudgetAllocationItem> allocation = new ArrayList<>();
         for (SlotMeta slot : sortedSlots) {
             BigDecimal sharePct = purposeMeta.getSharePct(slot.getSlotId());
             long amount = budgetAmount.multiply(sharePct).divide(ONE_HUNDRED, 0, RoundingMode.HALF_UP).longValueExact();
-            selectionOrder.add(slot.getComponentCode());
             allocation.add(BudgetAllocationItem.builder()
                     .component(slot.getComponentCode())
                     .sharePct(sharePct)
                     .amount(amount)
                     .build());
         }
-        return BuildPlan.builder().selectionOrder(selectionOrder).allocation(allocation).build();
+        return BuildPlan.builder().allocation(allocation).build();
     }
 }

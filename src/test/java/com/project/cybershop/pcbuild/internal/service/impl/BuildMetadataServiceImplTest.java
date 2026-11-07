@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** Nạp khuôn + chia ngân sách: cùng phép kiểm và cùng maxBuildPrice với /requirements/analyze. */
+/** Nạp khuôn bộ PC: nguồn metadata chung của /requirements/analyze và /builds/auto. */
 class BuildMetadataServiceImplTest {
 
     private final List<BuildTemplateSlot> slots = new ArrayList<>();

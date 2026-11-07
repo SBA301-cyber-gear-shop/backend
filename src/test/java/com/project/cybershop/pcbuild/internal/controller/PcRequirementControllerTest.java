@@ -57,7 +57,7 @@ class PcRequirementControllerTest {
 
         RequirementAnalyzeRequest request = new RequirementAnalyzeRequest(30_000_000L, "Build PC chơi game");
 
-        mockMvc.perform(post("/api/v1/pc-build/requirements/analyze")
+        mockMvc.perform(post("/api/pc-build/requirements/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
@@ -72,7 +72,7 @@ class PcRequirementControllerTest {
     void invalidBudget_returns400() throws Exception {
         String invalidJson = "{\"budget\": -100, \"message\": \"chơi game\"}";
 
-        mockMvc.perform(post("/api/v1/pc-build/requirements/analyze")
+        mockMvc.perform(post("/api/pc-build/requirements/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidJson))
                 .andExpect(status().isBadRequest())
@@ -85,7 +85,7 @@ class PcRequirementControllerTest {
     void blankMessage_returns400() throws Exception {
         String invalidJson = "{\"budget\": 20000000, \"message\": \"   \"}";
 
-        mockMvc.perform(post("/api/v1/pc-build/requirements/analyze")
+        mockMvc.perform(post("/api/pc-build/requirements/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidJson))
                 .andExpect(status().isBadRequest())
@@ -103,7 +103,7 @@ class PcRequirementControllerTest {
 
         RequirementAnalyzeRequest request = new RequirementAnalyzeRequest(20_000_000L, "chơi game");
 
-        mockMvc.perform(post("/api/v1/pc-build/requirements/analyze")
+        mockMvc.perform(post("/api/pc-build/requirements/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isTooManyRequests())

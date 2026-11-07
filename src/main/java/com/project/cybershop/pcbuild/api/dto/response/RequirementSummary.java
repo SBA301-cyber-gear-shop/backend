@@ -5,8 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.List;
-
+/** Nhu cầu đã chuẩn hóa; frontend gửi nguyên {budget, purpose} này cho /builds/auto để chia tiền và build. */
 @Data
 @Builder
 @NoArgsConstructor
@@ -14,7 +13,5 @@ import java.util.List;
 public class RequirementSummary {
     private Long budget;
     private String purpose;
-    private List<String> selectionOrder;
-    private List<BudgetAllocationItem> budgetAllocation;
 }
 

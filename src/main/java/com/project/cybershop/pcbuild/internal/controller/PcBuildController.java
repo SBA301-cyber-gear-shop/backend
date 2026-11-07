@@ -1,48 +1,86 @@
 package com.project.cybershop.pcbuild.internal.controller;
 
+import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.pcbuild.api.dto.request.AutoBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.ReplacementRequest;
+import com.project.cybershop.pcbuild.api.dto.request.SaveBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.BuildResultResponse;
+import com.project.cybershop.pcbuild.api.dto.response.ReplacementOptionResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SaveBuildResponse;
 import com.project.cybershop.pcbuild.internal.service.PcBuildService;
+import com.project.cybershop.pcbuild.internal.support.ClientKeys;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.security.Principal;
+import java.util.List;
+
 /**
- * Bước 4–6 của AI Build PC: tự build và kiểm tra bộ PC. Không gọi AI nên không qua rate limit AI.
+ * Bước 4–9 của AI Build PC: tự build (kèm lời giải thích AI ở bước 8), kiểm lại, đổi món và lưu bộ PC.
  */
-@Tag(name = "AI PC Builder – bước 4–6", description = "Chia ngân sách, chọn linh kiện, kiểm tra tương thích")
+@Tag(name = "AI PC Builder – bước 4–9", description = "Chia ngân sách, chọn linh kiện, kiểm tra, giải thích, đổi món, lưu")
 @RestController
 @RequestMapping("/api/pc-build/builds")
 @RequiredArgsConstructor
 public class PcBuildController {
 
     private final PcBuildService pcBuildService;
+    private final IdentityApi identityApi;
 
-    @Operation(summary = "Tự build bộ PC theo ngân sách và mục đích",
+    @Operation(summary = "Tự build bộ PC theo ngân sách và mục đích, kèm lời giải thích",
             description = """
                     Lấy `budget` và `purpose` từ `data.requirement` của /api/pc-build/requirements/analyze
                     (trạng thái READY hoặc BUDGET_WARNING), hoặc purpose khách chọn trong `suggestedPurposes`.
-                    Trả bộ PC VALID theo step_order. Lỗi: 400 PURPOSE_INVALID / BUDGET_TOO_LOW / BUDGET_TOO_HIGH,
-                    422 BUILD_NOT_FOUND (kho không ráp được, `data.slot` là loại bị vướng), 503 METADATA_INVALID.""")
+                    Trả bộ PC VALID theo step_order và `message` (bước 8: AI viết, sai số hoặc AI lỗi thì là câu mẫu).
+                    Lỗi: 400 PURPOSE_INVALID / BUDGET_TOO_LOW / BUDGET_TOO_HIGH, 422 BUILD_NOT_FOUND, 503 METADATA_INVALID.""")
     @PostMapping("/auto")
-    public ApiResponseDTO<BuildResultResponse> autoBuild(@Valid @RequestBody AutoBuildRequest request) {
-        return ApiResponseDTO.success(pcBuildService.autoBuild(request));
+    public ApiResponseDTO<BuildResultResponse> autoBuild(@Valid @RequestBody AutoBuildRequest request,
+                                                         Principal principal, HttpServletRequest httpRequest) {
+        return ApiResponseDTO.success(pcBuildService.autoBuild(request, ClientKeys.of(principal, httpRequest)));
     }
 
     @Operation(summary = "Kiểm tra lại bộ PC sau khi khách đổi món",
             description = """
                     Nhận ngân sách và danh sách {variantId, qty}. Trả `status` VALID / INCOMPATIBLE (xung đột phần cứng,
                     xem `violations`) / OVER_BUDGET (chỉ vượt tiền, xem `budgetWarning`), kèm `maxQty` thật của từng món.
+                    Không gọi AI: `message` luôn null, frontend giữ lời giải thích của lần tự build.
                     Lỗi: 400 VARIANT_NOT_FOUND khi id không tồn tại.""")
     @PostMapping("/validate")
     public ApiResponseDTO<BuildResultResponse> validate(@Valid @RequestBody ValidateBuildRequest request) {
         return ApiResponseDTO.success(pcBuildService.validate(request));
+    }
+
+    @Operation(summary = "Danh sách món tương thích cho dropdown đổi món",
+            description = """
+                    Nhận `category` (mã slot, ví dụ GPU) và bộ PC hiện tại. Chỉ trả món còn hàng, không tạo xung đột mới với
+                    các món còn lại, kèm `qty` đề xuất và `maxQty` thật. Lỗi: 400 CATEGORY_INVALID, 400 VARIANT_NOT_FOUND.""")
+    @PostMapping("/replacements")
+    public ApiResponseDTO<List<ReplacementOptionResponse>> replacements(@Valid @RequestBody ReplacementRequest request) {
+        return ApiResponseDTO.success(pcBuildService.replacements(request));
+    }
+
+    @Operation(summary = "Lưu bộ PC (cần đăng nhập)",
+            description = """
+                    Kiểm lại bộ PC với giá mới nhất rồi lưu pc_customs + pc_custom_items. INCOMPATIBLE → 422 BUILD_INCOMPATIBLE.
+                    OVER_BUDGET mà chưa có `confirmOverBudget = true` → 409 OVER_BUDGET_NOT_CONFIRMED, `message` là câu popup
+                    của bước 7; khách bấm "Tiếp tục" thì gửi lại kèm `confirmOverBudget = true`.""")
+    @PostMapping("/save")
+    public ApiResponseDTO<SaveBuildResponse> save(@Valid @RequestBody SaveBuildRequest request, Principal principal) {
+        // SecurityConfig đã chặn khi chưa đăng nhập; kiểm thêm ở đây để sửa nhầm matcher thì vẫn ra 401, không ra 500
+        if (principal == null) {
+            throw new InsufficientAuthenticationException("Bạn cần đăng nhập để lưu bộ PC.");
+        }
+        Integer userId = identityApi.requireActiveUser(principal.getName()).getId();
+        return ApiResponseDTO.success(pcBuildService.save(request, userId));
     }
 }

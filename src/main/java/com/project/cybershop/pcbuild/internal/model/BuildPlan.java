@@ -8,13 +8,12 @@ import lombok.NoArgsConstructor;
 
 import java.util.List;
 
-/** Kế hoạch phân bổ ngân sách và thứ tự chọn linh kiện theo cấu hình purpose. */
+/** Kế hoạch phân bổ ngân sách theo cấu hình purpose; allocation đã xếp theo step_order nên cũng là thứ tự chọn. */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class BuildPlan {
-    private List<String> selectionOrder;
     private List<BudgetAllocationItem> allocation;
 }
 
