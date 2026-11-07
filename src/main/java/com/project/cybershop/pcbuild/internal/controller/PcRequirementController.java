@@ -16,7 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.security.Principal;
 
 /**
- * Controller tiếp nhận yêu cầu phân tích nhu cầu và thẩm định ngân sách (Phase 1).
+ * Controller tiếp nhận yêu cầu phân tích nhu cầu và thẩm định ngân sách (Phase
+ * 1).
  * Không chứa business logic, chỉ validate DTO và gọi RequirementService.
  */
 @Tag(name = "AI PC Builder", description = "Các API tư vấn và xây dựng cấu hình PC thông minh")
@@ -27,7 +28,7 @@ public class PcRequirementController {
     private final RequirementService requirementService;
 
     @Operation(summary = "Phân tích nhu cầu tự nhiên và kiểm tra ngân sách cấu hình PC")
-    @PostMapping({"/api/v1/pc-build/requirements/analyze", "/api/pc-build/requirements/analyze"})
+    @PostMapping("/api/pc-build/requirements/analyze")
     public ApiResponseDTO<RequirementAnalyzeResponse> analyze(
             @Valid @RequestBody RequirementAnalyzeRequest request,
             Principal principal,
@@ -49,4 +50,3 @@ public class PcRequirementController {
         return request.getRemoteAddr() != null ? request.getRemoteAddr() : "unknown";
     }
 }
-
