@@ -51,6 +51,9 @@ class CatalogPublicApiImplTest {
     @Mock
     private SpecificationOptionRepository specificationOptionRepository;
 
+    @Mock
+    private com.project.cybershop.catalog.internal.repository.CategoryRepository categoryRepository;
+
     @InjectMocks
     private CatalogPublicApiImpl catalogPublicApi;
 

@@ -134,9 +134,6 @@ app:
   jwt:
     secret: ${JWT_SECRET:4LU_zjRsuAOUXG7V964B5clG6u26svjh3Nuck26NUz4}
     expiration-ms: 86400000
-  seed:
-    enabled: ${APP_SEED_ENABLED:true}       # IdentityDataInitializer: tạo 4 role + 4 tài khoản mẫu nếu chưa có
-    password: ${APP_SEED_PASSWORD:Cybershop@123}  # mật khẩu chung của tài khoản mẫu, chỉ dùng khi tạo mới
   ai:
     provider: gemini
     api-key: ${AI_API_KEY:}

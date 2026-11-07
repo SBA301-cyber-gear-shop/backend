@@ -19,4 +19,6 @@ public interface CatalogPublicApi {
     List<CategorySpecDto> getSpecificationCatalog();
 
     List<String> getAllBrandNames();
+
+    List<com.project.cybershop.catalog.api.dto.response.CategoryResponse> getAllCategories();
 }

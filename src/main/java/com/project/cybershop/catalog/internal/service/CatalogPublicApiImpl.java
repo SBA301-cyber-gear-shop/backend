@@ -3,12 +3,14 @@ package com.project.cybershop.catalog.internal.service;
 import com.project.cybershop.catalog.api.CatalogPublicApi;
 import com.project.cybershop.catalog.api.dto.CategorySpecDto;
 import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
 import com.project.cybershop.catalog.internal.entity.Brand;
 import com.project.cybershop.catalog.internal.entity.CategorySpecification;
 import com.project.cybershop.catalog.internal.entity.ProductVariant;
 import com.project.cybershop.catalog.internal.entity.SpecificationOption;
 import com.project.cybershop.catalog.internal.entity.SpecificationValue;
 import com.project.cybershop.catalog.internal.repository.BrandRepository;
+import com.project.cybershop.catalog.internal.repository.CategoryRepository;
 import com.project.cybershop.catalog.internal.repository.CategorySpecificationRepository;
 import com.project.cybershop.catalog.internal.repository.ProductVariantRepository;
 import com.project.cybershop.catalog.internal.repository.SpecificationOptionRepository;
@@ -30,6 +32,7 @@ public class CatalogPublicApiImpl implements CatalogPublicApi {
     private final BrandRepository brandRepository;
     private final CategorySpecificationRepository categorySpecificationRepository;
     private final SpecificationOptionRepository specificationOptionRepository;
+    private final CategoryRepository categoryRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -124,6 +127,22 @@ public class CatalogPublicApiImpl implements CatalogPublicApi {
                 .map(String::trim)
                 .filter(name -> !name.isEmpty())
                 .distinct()
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CategoryResponse> getAllCategories() {
+        return categoryRepository.findAll().stream()
+                .map(cat -> new CategoryResponse(
+                        cat.getId(),
+                        cat.getName(),
+                        cat.getSlug(),
+                        cat.getParent() != null ? cat.getParent().getId() : null,
+                        cat.getDescription(),
+                        Collections.emptyList(),
+                        Collections.emptyList()
+                ))
                 .toList();
     }
 }

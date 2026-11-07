@@ -1,14 +1,12 @@
-package com.project.cybershop.pcbuild.internal.service.impl;
+package com.project.cybershop.pcbuild.internal.support;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.project.cybershop.pcbuild.internal.service.LlmClientService;
-import com.project.cybershop.pcbuild.internal.support.AiUnavailableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -20,10 +18,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Gọi Gemini generateContent với responseSchema. Key chỉ đi qua header x-goog-api-key, không nằm trong URL. */
+/**
+ * Client hỗ trợ gọi Gemini API với cấu hình responseSchema, timeout và retry.
+ * Key chỉ đi qua header x-goog-api-key, không nằm trong URL.
+ */
 @Slf4j
-@Service
-public class LlmClientServiceImpl implements LlmClientService {
+@Component
+public class LlmClient {
 
     private static final String GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
 
@@ -34,12 +35,12 @@ public class LlmClientServiceImpl implements LlmClientService {
     private final int maxRetries;
     private final String thinkingLevel;
 
-    public LlmClientServiceImpl(ObjectMapper objectMapper,
-                                @Value("${app.ai.api-key:}") String apiKey,
-                                @Value("${app.ai.model}") String modelName,
-                                @Value("${app.ai.profile-timeout-ms:6000}") long timeoutMs,
-                                @Value("${app.ai.max-retries:1}") int maxRetries,
-                                @Value("${app.ai.profile-thinking-level:low}") String thinkingLevel) {
+    public LlmClient(ObjectMapper objectMapper,
+                     @Value("${app.ai.api-key:}") String apiKey,
+                     @Value("${app.ai.model}") String modelName,
+                     @Value("${app.ai.profile-timeout-ms:6000}") long timeoutMs,
+                     @Value("${app.ai.max-retries:1}") int maxRetries,
+                     @Value("${app.ai.profile-thinking-level:low}") String thinkingLevel) {
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.modelName = modelName;
@@ -51,7 +52,6 @@ public class LlmClientServiceImpl implements LlmClientService {
         this.restClient = RestClient.builder().requestFactory(factory).build();
     }
 
-    @Override
     public <T> T generateJson(String step, String systemPrompt, String userJson, Map<String, Object> responseSchema, Class<T> type) {
         if (apiKey == null || apiKey.isBlank()) {
             log.error("Chưa cấu hình app.ai.api-key (biến môi trường AI_API_KEY), không gọi được AI bước {}", step);
@@ -71,7 +71,6 @@ public class LlmClientServiceImpl implements LlmClientService {
                 log.warn("AI bước {} lần {}: {} (model {})", step, attempt, lastError, modelName);
                 continue;
             } catch (HttpClientErrorException e) {
-                // Lỗi request của ta (400, 401, 403…): thử lại cũng vô ích
                 log.warn("AI bước {} bị từ chối: HTTP {} (model {})", step, e.getStatusCode().value(), modelName);
                 throw new AiUnavailableException("yêu cầu bị từ chối (HTTP " + e.getStatusCode().value() + ")");
             }
@@ -104,7 +103,6 @@ public class LlmClientServiceImpl implements LlmClientService {
         return firstText(response);
     }
 
-    // Phần text đầu tiên không phải "thought" của candidate đầu tiên
     private String firstText(String response) {
         try {
             for (JsonNode part : objectMapper.readTree(response).path("candidates").path(0).path("content").path("parts")) {
@@ -126,3 +124,4 @@ public class LlmClientServiceImpl implements LlmClientService {
         return trimmed;
     }
 }
+
