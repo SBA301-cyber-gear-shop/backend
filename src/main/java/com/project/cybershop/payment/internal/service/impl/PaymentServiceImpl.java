@@ -59,13 +59,13 @@ public class PaymentServiceImpl implements PaymentService {
         if (count != null && count > 0) {
             jdbc.update("""
                     UPDATE payments SET method_type='vnpay', provider='VNPAY',
-                    display_name='VNPAY Sandbox (QR / ATM / Internet Banking)',
+                    display_name='VNPAY (QR / ATM / Internet Banking)',
                     amount=?, status='PENDING', paid_at=NULL WHERE order_id=?
                     """, amount, orderId);
         } else {
             jdbc.update("""
                     INSERT INTO payments (order_id, method_type, provider, display_name, amount, status, created_at, paid_at)
-                    VALUES (?, 'vnpay', 'VNPAY', 'VNPAY Sandbox (QR / ATM / Internet Banking)', ?, 'PENDING', ?, NULL)
+                    VALUES (?, 'vnpay', 'VNPAY', 'VNPAY (QR / ATM / Internet Banking)', ?, 'PENDING', ?, NULL)
                     """, orderId, amount, LocalDateTime.now(clock));
         }
 
