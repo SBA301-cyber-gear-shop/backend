@@ -70,6 +70,10 @@ public class WarrantyCardService {
         this.jdbc = jdbc;
     }
 
+    public WarrantyCardService(WarrantyCardRepository cards, ServiceRequestRepository requests, ServiceRequestEventRepository events, ServiceIntakeRepository intakes, OrderLookup orderLookup, AftersalesMapper mapper) {
+        this(cards, requests, events, intakes, orderLookup, mapper, null);
+    }
+
     @Transactional
     public void syncMissingCards() {
         if (jdbc == null) return;
