@@ -47,12 +47,23 @@ public interface OrderMapper {
 
     @Mapping(target = "status", source = "order.status")
     @Mapping(target = "paymentStatus", source = "payment.status")
+    @Mapping(target = "paymentUrl", source = "paymentUrl")
     OrderResponse toResponse(
             Order order,
             PaymentApi.Payment payment,
             String promotionCode,
-            List<OrderResponse.Item> items
+            List<OrderResponse.Item> items,
+            String paymentUrl
     );
+
+    default OrderResponse toResponse(
+            Order order,
+            PaymentApi.Payment payment,
+            String promotionCode,
+            List<OrderResponse.Item> items
+    ) {
+        return toResponse(order, payment, promotionCode, items, null);
+    }
 
     OrderResponse.Item toItemResponse(OrderItemProjection item);
 }

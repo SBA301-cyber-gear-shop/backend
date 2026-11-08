@@ -84,7 +84,7 @@ spring:
     name: cybershop
 
   # ==========================================
-  # DATABASE (Local Docker PostgreSQL)
+  # DATABASE (Neon PostgreSQL Cloud)
   # ==========================================
   datasource:
     # url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SBA301_WebPC}
@@ -128,7 +128,7 @@ server:
   port: 8080
 
 # ==========================================
-# JWT & AI ENGINE
+# JWT, AI ENGINE & VNPAY
 # ==========================================
 app:
   jwt:
@@ -158,3 +158,8 @@ app:
     max-budget: 9999999999          # [ĐÃ CHỐT] khớp numeric(12,2)
     rate-limit-per-minute: 6        # /ai-suggest: mỗi user, hoặc mỗi IP khi chưa đăng nhập (11.1)
     rate-limit-check-per-minute: 30 # /validate, /compatible-replacements, /options: mỗi endpoint
+  vnpay:
+    tmn-code: ${VNPAY_TMN_CODE:3RBH6UL5}
+    hash-secret: ${VNPAY_HASH_SECRET:WVWWFTHJALERWKHEOBBIHVXHVRTUYJRL}
+    pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+    return-url: ${VNPAY_RETURN_URL:http://localhost:5173/thanh-toan/ket-qua}
