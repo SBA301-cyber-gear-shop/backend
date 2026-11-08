@@ -42,7 +42,7 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/orders/**", "/api/checkout/**", "/api/operations/**", "/api/order-items/**", "/api/me/**").authenticated()
+                        .requestMatchers("/api/orders/**", "/api/checkout/**", "/api/operations/**", "/api/order-items/**", "/api/me/**", "/api/shipping/orders/**").authenticated()
                         // Toàn bộ /api/admin chỉ dành cho Admin, kể cả các API đọc và API thêm về sau.
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         // PC Build (DD 9.7): đề xuất/kiểm tra công khai (có rate limit); build đã lưu cần đăng nhập.

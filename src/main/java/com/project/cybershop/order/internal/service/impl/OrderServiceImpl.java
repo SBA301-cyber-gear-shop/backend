@@ -121,9 +121,27 @@ public class OrderServiceImpl implements OrderService {
         validateExpectedAmounts(request, checkout, voucher);
 
         BigDecimal finalAmount = checkout.totalAmount().subtract(voucher.discount());
+        BigDecimal shippingFee = BigDecimal.ZERO;
+        if (request.deliveryType() != null && "shipping".equalsIgnoreCase(request.deliveryType())) {
+            shippingFee = request.shippingFee() != null ? request.shippingFee() : BigDecimal.ZERO;
+            finalAmount = finalAmount.add(shippingFee);
+        }
+
         Order order = orderMapper.toOrder(
                 checkout, customer.getId(), orderCode, voucher.discount(), finalAmount, LocalDateTime.now(clock)
         );
+        if (request.deliveryType() != null && "shipping".equalsIgnoreCase(request.deliveryType())) {
+            order.setDeliveryType("shipping");
+            order.setShippingFee(shippingFee);
+            order.setShippingAddress(request.shippingAddress());
+            order.setToProvinceId(request.toProvinceId());
+            order.setToDistrictId(request.toDistrictId());
+            order.setToWardCode(request.toWardCode());
+            order.setCarrier("GHN");
+        } else {
+            order.setDeliveryType("store");
+            order.setShippingFee(BigDecimal.ZERO);
+        }
         order = orderRepository.saveAndFlush(order);
 
         createOrderItems(order.getId(), quantities);
@@ -195,6 +213,8 @@ public class OrderServiceImpl implements OrderService {
             case "pending" -> "confirmed";
             case "confirmed" -> "preparing";
             case "preparing" -> "ready_for_pickup";
+            case "ready_for_pickup" -> "shipping".equalsIgnoreCase(order.getDeliveryType()) ? "delivering" : "";
+            case "delivering" -> "completed";
             default -> "";
         };
 
@@ -203,6 +223,18 @@ public class OrderServiceImpl implements OrderService {
         }
 
         updateStatus(order, nextStatus);
+
+        if ("completed".equals(nextStatus)) {
+            try {
+                PaymentApi.Payment payment = paymentApi.get(order.getId());
+                if (payment != null && !"SUCCESS".equalsIgnoreCase(payment.status())) {
+                    paymentApi.collect(order.getId(), order.getFinalAmount(), "COD_GHN");
+                }
+            } catch (Exception ignored) {}
+            try {
+                promotionApi.markUsed(order.getId());
+            } catch (Exception ignored) {}
+        }
         return toResponse(order);
     }
 
@@ -297,9 +329,9 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private void validatePaymentMethod(Integer userId, PlaceOrderRequest request) {
-        if (!"store".equalsIgnoreCase(request.method()) && !"vnpay".equalsIgnoreCase(request.method())) {
+        if (!"store".equalsIgnoreCase(request.method()) && !"vnpay".equalsIgnoreCase(request.method()) && !"cod".equalsIgnoreCase(request.method())) {
             throw new BusinessException(
-                    "Phương thức thanh toán không hợp lệ. Vui lòng chọn thanh toán tại cửa hàng hoặc VNPAY."
+                    "Phương thức thanh toán không hợp lệ. Vui lòng chọn thanh toán tại cửa hàng, COD hoặc VNPAY."
             );
         }
 

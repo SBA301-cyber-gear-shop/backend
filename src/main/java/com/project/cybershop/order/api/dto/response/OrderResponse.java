@@ -11,7 +11,12 @@ public record OrderResponse(
         String promotionCode, String paymentStatus, String methodType,
         LocalDateTime createdAt, LocalDateTime updatedAt, LocalDateTime paidAt,
         List<Item> items,
-        String paymentUrl
+        String paymentUrl,
+        String deliveryType,
+        BigDecimal shippingFee,
+        String shippingAddress,
+        String trackingCode,
+        String carrier
 ) {
     public OrderResponse(
             Integer id, String orderCode, Integer userId, String status,
@@ -23,7 +28,21 @@ public record OrderResponse(
     ) {
         this(id, orderCode, userId, status, pickupName, pickupPhone, note,
              totalAmount, discountAmount, finalAmount, promotionCode, paymentStatus, methodType,
-             createdAt, updatedAt, paidAt, items, null);
+             createdAt, updatedAt, paidAt, items, null, "store", BigDecimal.ZERO, null, null, "GHN");
+    }
+
+    public OrderResponse(
+            Integer id, String orderCode, Integer userId, String status,
+            String pickupName, String pickupPhone, String note,
+            BigDecimal totalAmount, BigDecimal discountAmount, BigDecimal finalAmount,
+            String promotionCode, String paymentStatus, String methodType,
+            LocalDateTime createdAt, LocalDateTime updatedAt, LocalDateTime paidAt,
+            List<Item> items,
+            String paymentUrl
+    ) {
+        this(id, orderCode, userId, status, pickupName, pickupPhone, note,
+             totalAmount, discountAmount, finalAmount, promotionCode, paymentStatus, methodType,
+             createdAt, updatedAt, paidAt, items, paymentUrl, "store", BigDecimal.ZERO, null, null, "GHN");
     }
 
     public record Item(Integer id, Integer productVariantId, String productName, int quantity,

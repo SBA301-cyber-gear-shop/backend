@@ -17,10 +17,22 @@ public record PlaceOrderRequest(
         @DecimalMin(value = "0", message = "Tổng tiền dự kiến không được âm") BigDecimal expectedTotal,
         @NotNull(message = "Thiếu số tiền giảm dự kiến")
         @DecimalMin(value = "0", message = "Số tiền giảm dự kiến không được âm") BigDecimal expectedDiscount,
-        List<Integer> itemVariantIds
+        List<Integer> itemVariantIds,
+        String deliveryType,
+        BigDecimal shippingFee,
+        String shippingAddress,
+        Integer toProvinceId,
+        Integer toDistrictId,
+        String toWardCode
 ) {
     public PlaceOrderRequest(String pickupName, String pickupPhone, String note, String promotionCode,
                             String method, Integer paymentMethodId, BigDecimal expectedTotal, BigDecimal expectedDiscount) {
-        this(pickupName, pickupPhone, note, promotionCode, method, paymentMethodId, expectedTotal, expectedDiscount, null);
+        this(pickupName, pickupPhone, note, promotionCode, method, paymentMethodId, expectedTotal, expectedDiscount, null, "store", BigDecimal.ZERO, null, null, null, null);
+    }
+
+    public PlaceOrderRequest(String pickupName, String pickupPhone, String note, String promotionCode,
+                            String method, Integer paymentMethodId, BigDecimal expectedTotal, BigDecimal expectedDiscount,
+                            List<Integer> itemVariantIds) {
+        this(pickupName, pickupPhone, note, promotionCode, method, paymentMethodId, expectedTotal, expectedDiscount, itemVariantIds, "store", BigDecimal.ZERO, null, null, null, null);
     }
 }
