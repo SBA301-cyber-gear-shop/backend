@@ -1,24 +1,31 @@
 package com.project.cybershop.pcbuild.internal.service;
 
-import com.project.cybershop.pcbuild.internal.model.CompatibilitySnapshot;
-import com.project.cybershop.pcbuild.internal.model.SolverResult;
-import com.project.cybershop.pcbuild.internal.model.ValidatedProfile;
+import com.project.cybershop.pcbuild.internal.model.BuildLine;
 
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.Map;
+import java.util.List;
 
-/** AI viết lời giải thích cho bộ máy solver đã chọn (DD 8.4). AI không chọn, thêm hay bớt linh kiện. */
+/**
+ * Bước 8: AI viết lời giải thích cho bộ PC vừa tự build, chỉ diễn đạt lại số liệu code đã tính.
+ * Không bao giờ ném lỗi: AI lỗi, bị giới hạn tần suất hay viết sai số thì trả câu mẫu soạn sẵn.
+ */
 public interface BuildExplainer {
 
-    String PROMPT_VERSION = "EXPLAIN_V4";
+    /**
+     * @param purposeLabel nhãn mục đích khách đọc được, ví dụ "PC chơi game"
+     * @param lines        bộ PC VALID theo step_order
+     * @param total        tổng tiền code đã tính ở bước 6 (≤ budget)
+     * @param clientKey    khóa đếm rate limit AI (user hoặc IP)
+     */
+    Explanation explain(String purposeLabel, long budget, List<BuildLine> lines, long total, String clientKey);
 
-    /** @param aiStatus OK, hoặc PARTIAL khi AI trả lý do cho variantId không thuộc bộ máy (dòng đó bị bỏ) */
-    record Explanation(String buildName, String aiReasoning, String performanceHighlight,
-                       Map<Integer, String> partReasons, String aiStatus) {
+    /**
+     * @param reason lý do dùng câu mẫu, null khi dùng được câu của AI
+     */
+    record Explanation(String message, Source source, String reason) {
     }
 
-    /** @param fullSetBudget ngân sách trọn bộ khách nhập khi chọn kèm màn, phím, chuột; null = chỉ thùng máy */
-    Explanation explain(ValidatedProfile profile, SolverResult result, BigDecimal budget, String purpose, String userPrompt,
-                        CompatibilitySnapshot snapshot, Instant deadline, BigDecimal fullSetBudget);
+    enum Source {
+        AI,
+        TEMPLATE
+    }
 }
