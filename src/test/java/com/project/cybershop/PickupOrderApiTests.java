@@ -197,9 +197,67 @@ class PickupOrderApiTests {
         code=place(UUID.randomUUID().toString(),100000,"SAVE");
         assertEquals("RESERVED",jdbc.queryForObject("SELECT status FROM promotion_usages",String.class));
         for (int i=0;i<2;i++) mvc.perform(post("/api/orders/"+code+"/cancel").header("Authorization",customer))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("canceled"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("canceled"))
+                .andExpect(jsonPath("$.cancelReason").value("Khách hàng yêu cầu hủy đơn"));
         assertEquals(5,jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=201",Integer.class));
         assertEquals("REVOKED",jdbc.queryForObject("SELECT status FROM promotion_usages",String.class));
         assertEquals("CANCELED",jdbc.queryForObject("SELECT status FROM payments",String.class));
+        assertEquals("Khách hàng yêu cầu hủy đơn", jdbc.queryForObject("SELECT cancel_reason FROM orders", String.class));
+        mvc.perform(post("/api/operations/orders/"+code+"/cancel").header("Authorization",staff)
+                        .contentType("application/json").content("{\"reason\":\"Đổi lý do sau khi hủy\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.cancelReason").value("Khách hàng yêu cầu hủy đơn"));
+    }
+
+    @Test
+    void staffCancellationRequiresAReasonAndKeepsPickupNotesIntact() throws Exception {
+        code = place(UUID.randomUUID().toString(), 0, "");
+        {
+            String base = "/api/operations/orders/";
+            String actor = staff;
+            for (String body : new String[]{"{}", "{\"reason\":null}", "{\"reason\":\"   \"}",
+                    "{\"reason\":\"" + "a".repeat(501) + "\"}"}) {
+                mvc.perform(post(base + code + "/cancel").header("Authorization", actor)
+                                .contentType("application/json").content(body))
+                        .andExpect(status().isBadRequest());
+            }
+            mvc.perform(post(base + code + "/cancel").header("Authorization", actor))
+                    .andExpect(status().isBadRequest());
+        }
+        assertEquals("pending", jdbc.queryForObject("SELECT status FROM orders", String.class));
+        assertEquals(3, jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=201", Integer.class));
+        mvc.perform(post("/api/operations/orders/" + code + "/cancel").header("Authorization", staff)
+                        .contentType("application/json").content("{\"reason\":\"Khách yêu cầu đổi cấu hình\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.cancelReason").value("Khách yêu cầu đổi cấu hình"))
+                .andExpect(jsonPath("$.note").value("Nhận tại quầy"));
+        mvc.perform(get("/api/orders/" + code).header("Authorization", customer))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.cancelReason").value("Khách yêu cầu đổi cấu hình"));
+        assertEquals(5, jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=201", Integer.class));
+    }
+
+    @Test
+    void handoverAcceptsEquivalentVietnamesePhoneFormatsButRejectsInvalidCharacters() throws Exception {
+        String key = UUID.randomUUID().toString();
+        mvc.perform(post("/api/orders").header("Authorization", customer).header("Idempotency-Key", key)
+                        .contentType("application/json").content(payload(0, "").replace("0900000128", "+84900000128")))
+                .andExpect(status().isCreated());
+        code = "TZ-" + UUID.fromString(key).toString().replace("-", "").toUpperCase();
+        advance("confirmed"); advance("preparing"); advance("ready_for_pickup");
+        mvc.perform(post("/api/operations/orders/" + code + "/collect").header("Authorization", staff)
+                        .contentType("application/json").content("{\"receivedAmount\":2000000}"))
+                .andExpect(status().isOk());
+        int itemId = jdbc.queryForObject("SELECT id FROM order_items", Integer.class);
+        String handover = """
+                {"recipientPhone":"%s","recipientVerified":true,"devices":[
+                 {"orderItemId":%d,"serialNumber":"PHONE-A"},{"orderItemId":%d,"serialNumber":"PHONE-B"}]}
+                """;
+        for (String invalid : new String[]{"abc0900000128", "0900000999", "++84900000128"}) {
+            mvc.perform(post("/api/operations/orders/" + code + "/handover").header("Authorization", staff)
+                            .contentType("application/json").content(handover.formatted(invalid, itemId, itemId)))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(post("/api/operations/orders/" + code + "/handover").header("Authorization", staff)
+                        .contentType("application/json").content(handover.formatted("0900 000 128", itemId, itemId)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("completed"));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM warranty_cards", Integer.class));
     }
 }

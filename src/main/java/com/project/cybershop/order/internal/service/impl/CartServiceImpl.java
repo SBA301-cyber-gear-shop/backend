@@ -30,6 +30,7 @@ public class CartServiceImpl implements CartService {
     private final CartItemRepository cartItemRepository;
     private final CatalogInternalApi catalogApi;
     private final IdentityApi identityApi;
+    private final com.project.cybershop.promotion.api.PromotionApi promotions;
 
     @Override
     @Transactional
@@ -118,7 +119,7 @@ public class CartServiceImpl implements CartService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public CartResponse getMyCart(Integer userId) {
         validateUserId(userId);
         Cart cart = cartRepository.findByUserId(userId).orElse(null);
@@ -127,6 +128,8 @@ public class CartServiceImpl implements CartService {
         }
 
         List<CartResponse.CartItemResponse> items = new ArrayList<>();
+        promotions.syncProductPrices(cartItemRepository.findByCartIdOrderByIdAsc(cart.getId()).stream()
+                .map(CartItem::getProductVariantId).toList());
         int totalQuantity = 0;
         BigDecimal totalAmount = BigDecimal.ZERO;
         for (CartItem cartItem : cartItemRepository.findByCartIdOrderByIdAsc(cart.getId())) {

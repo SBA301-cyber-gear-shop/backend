@@ -106,6 +106,7 @@ public class OrderServiceImpl implements OrderService {
         }
         Map<Integer, Integer> quantities = groupQuantities(cartItems);
         catalogApi.lockVariantsForPurchase(new ArrayList<>(quantities.keySet()));
+        promotionApi.syncProductPrices(new ArrayList<>(quantities.keySet()));
 
         CheckoutDetailsResponse checkout = checkoutDetailsService.preview(
                 email,
@@ -263,8 +264,11 @@ public class OrderServiceImpl implements OrderService {
     // HỦY ĐƠN VÀ HOÀN TỒN KHO
     // =========================================
     @Override
-    public OrderResponse cancel(String email, String orderCode, boolean staff) {
+    public OrderResponse cancel(String email, String orderCode, boolean staff, String reason) {
         UserDto actor = requireActor(email, staff);
+        if (reason == null || reason.isBlank() || reason.length() > 500) {
+            throw new BusinessException("Vui lòng nhập lý do hủy đơn từ 1 đến 500 ký tự.");
+        }
         Order order = findOrderForUpdate(orderCode, staff ? null : actor.getId());
 
         if ("canceled".equals(order.getStatus())) {
@@ -287,6 +291,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         promotionApi.release(order.getId());
+        order.setCancelReason(reason.trim());
         updateStatus(order, "canceled");
         return toResponse(order);
     }
@@ -488,6 +493,8 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private String normalizePhone(String phone) {
-        return phone == null ? "" : phone.replaceAll("[^0-9]", "");
+        String normalized = phone == null ? "" : phone.replaceAll("[ .()-]", "");
+        return normalized.matches("\\+84[0-9]{9}")
+                ? "0" + normalized.substring(3) : normalized;
     }
 }

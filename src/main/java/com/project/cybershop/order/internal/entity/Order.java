@@ -75,6 +75,9 @@ public class Order {
     @Column(name = "carrier", length = 50)
     private String carrier;
 
+    @Column(name = "cancel_reason", length = 500)
+    private String cancelReason;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

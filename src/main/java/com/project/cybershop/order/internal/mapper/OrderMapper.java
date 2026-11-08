@@ -20,6 +20,7 @@ public interface OrderMapper {
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "status", constant = "pending")
+    @Mapping(target = "cancelReason", ignore = true)
     @Mapping(target = "discountAmount", source = "discountAmount")
     @Mapping(target = "finalAmount", source = "finalAmount")
     @Mapping(target = "createdAt", source = "createdAt")
