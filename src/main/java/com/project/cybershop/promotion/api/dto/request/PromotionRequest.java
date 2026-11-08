@@ -21,5 +21,6 @@ public record PromotionRequest(
         @Size(max=150, message = "Tiêu đề banner tối đa 150 ký tự") String bannerTitle,
         @Size(max=255, message = "Đường dẫn ảnh banner tối đa 255 ký tự") String bannerImage,
         @Size(max=255, message = "Liên kết banner tối đa 255 ký tự") String bannerLink,
-        @Min(value = 0, message = "Thứ tự banner không được âm") int bannerOrder, boolean bannerActive
+        @Min(value = 0, message = "Thứ tự banner không được âm") int bannerOrder, boolean bannerActive,
+        @Pattern(regexp = "PUBLIC|ASSIGNED", message = "Đối tượng nhận voucher không hợp lệ") String audience
 ) {}

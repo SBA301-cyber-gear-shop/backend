@@ -51,6 +51,9 @@ class CatalogPublicApiImplTest {
     @Mock
     private SpecificationOptionRepository specificationOptionRepository;
 
+    @Mock
+    private CategoryService categoryService;
+
     @InjectMocks
     private CatalogPublicApiImpl catalogPublicApi;
 
@@ -209,5 +212,17 @@ class CatalogPublicApiImplTest {
         var brands = catalogPublicApi.getAllBrandNames();
 
         assertThat(brands).containsExactly("Intel", "Kingston");
+    }
+
+    @Test
+    @DisplayName("getAllCategories: Ủy quyền qua CategoryService.getFlatCategories()")
+    void shouldReturnAllCategoriesFromCategoryService() {
+        com.project.cybershop.catalog.api.dto.response.CategoryResponse c1 =
+                new com.project.cybershop.catalog.api.dto.response.CategoryResponse(1, "CPU", "cpu", null, null, List.of(), List.of());
+        when(categoryService.getFlatCategories()).thenReturn(List.of(c1));
+
+        var categories = catalogPublicApi.getAllCategories();
+
+        assertThat(categories).containsExactly(c1);
     }
 }

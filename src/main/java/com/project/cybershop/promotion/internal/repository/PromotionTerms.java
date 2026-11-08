@@ -14,13 +14,14 @@ public record PromotionTerms(
         Integer usageLimit,
         Boolean active,
         LocalDateTime startDate,
-        LocalDateTime endDate
+        LocalDateTime endDate,
+        String audience
 ) {
     public static PromotionTerms from(Promotion promotion) {
         return new PromotionTerms(
                 promotion.getId(), promotion.getCode(), promotion.getDiscountType(),
                 promotion.getDiscountValue(), promotion.getUsageLimit(), promotion.getIsActive(),
-                promotion.getStartDate(), promotion.getEndDate()
+                promotion.getStartDate(), promotion.getEndDate(), promotion.getAudience()
         );
     }
 }

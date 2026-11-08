@@ -1,15 +1,29 @@
 package com.project.cybershop.pcbuild.internal.service;
 
+import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.pcbuild.internal.entity.CompatibilityRule;
+import com.project.cybershop.pcbuild.internal.model.BuildCheck;
+import com.project.cybershop.pcbuild.internal.model.BuildContext;
 import com.project.cybershop.pcbuild.internal.model.BuildLine;
-import com.project.cybershop.pcbuild.internal.model.EngineReport;
-import com.project.cybershop.pcbuild.internal.model.EvaluationContext;
+import com.project.cybershop.pcbuild.internal.model.BuildMetadata.SlotMeta;
+import com.project.cybershop.pcbuild.internal.model.RuleViolation;
 
 import java.util.List;
 
 /**
- * Nơi duy nhất quyết định tương thích (DD 7). Thuần bộ nhớ: mọi dữ liệu (luật, thông số bắt buộc,
- * spec đã phân tích) lấy từ ctx.snapshot(), không gọi DB, HTTP hay LLM.
+ * Bước 6: rule engine. Hàm thuần, không gọi DB hay AI; bước 5 dùng chung để lọc nên hai bước luôn khớp nhau.
  */
 public interface CompatibilityEngine {
-    EngineReport evaluate(List<BuildLine> lines, EvaluationContext ctx);
+
+    /** Lỗi theo luật DB và công suất nguồn (R7); chỉ xét cặp mà cả hai loại đều có mặt. */
+    List<RuleViolation> checkRules(List<BuildLine> lines, List<CompatibilityRule> rules);
+
+    /** Số lượng tối đa thật của part = min(max_qty của slot, giới hạn từ thông số các món khác). */
+    int maxQuantity(SlotMeta slot, ComponentCandidateDTO part, List<BuildLine> others, List<CompatibilityRule> rules);
+
+    /** true khi part (thuộc required_if_category_id của slot) làm slot đó thành bắt buộc, ví dụ CPU không có iGPU. */
+    boolean triggersRequiredSlot(SlotMeta slot, ComponentCandidateDTO part);
+
+    /** Kiểm cả bộ: khuôn + luật + công suất nguồn + tiền. */
+    BuildCheck checkBuild(long budget, List<BuildLine> lines, BuildContext context);
 }

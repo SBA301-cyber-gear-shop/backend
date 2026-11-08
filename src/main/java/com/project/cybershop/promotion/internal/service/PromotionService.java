@@ -8,6 +8,7 @@ import java.util.List;
 
 public interface PromotionService extends PromotionApi {
     List<PromotionResponse> list(String email);
+    List<com.project.cybershop.promotion.api.dto.response.StaffVoucherResponse> listForStaff(String email);
     PromotionResponse save(String email, Integer id, PromotionRequest request);
     List<PromotionResponse> publicList();
     PromotionUsageHistoryResponse history(String email, Integer id, int page, int size, String status, String search);

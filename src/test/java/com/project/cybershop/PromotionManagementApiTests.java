@@ -22,6 +22,7 @@ class PromotionManagementApiTests {
     @Autowired JdbcTemplate jdbc;
     @Autowired JwtUtil jwt;
     @Autowired Clock clock;
+    @Autowired jakarta.persistence.EntityManager entityManager;
     String admin, customer;
 
     @BeforeEach void setup() {
@@ -33,7 +34,7 @@ class PromotionManagementApiTests {
         return """
                 {"code":"%s","name":"Ưu đãi nhận tại cửa hàng","type":"percentage","value":10,"limit":%d,
                  "start":"%s","end":"%s","active":%s,"bannerTitle":"Ưu đãi","bannerImage":"/banner.png",
-                 "bannerLink":"/san-pham","bannerOrder":0,"bannerActive":true}
+                 "bannerLink":"/san-pham","bannerOrder":0,"bannerActive":true,"audience":"PUBLIC"}
                 """.formatted(code,limit,LocalDateTime.now(clock).minusDays(1),LocalDateTime.now(clock).plusDays(1),active);
     }
 
@@ -41,6 +42,48 @@ class PromotionManagementApiTests {
         mvc.perform(post("/api/admin/promotions").header("Authorization",admin).contentType("application/json").content(payload(code,10,true)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(code.trim().toUpperCase()));
         return jdbc.queryForObject("SELECT id FROM promotions WHERE code=?",Integer.class,code.trim().toUpperCase());
+    }
+
+    @Test void staffCanReadAllVoucherStatesWithoutCustomerRecipientData() throws Exception {
+        int active = create("STAFF-ACTIVE");
+        int disabled = create("STAFF-DISABLED");
+        int expired = create("STAFF-EXPIRED");
+        jdbc.update("UPDATE promotions SET is_active=false WHERE id=?", disabled);
+        jdbc.update("UPDATE promotions SET end_date=? WHERE id=?", LocalDateTime.now(clock).minusHours(1), expired);
+        jdbc.update("UPDATE promotions SET audience='ASSIGNED' WHERE id=?", active);
+        entityManager.clear();
+        String staff = "Bearer " + jwt.generateToken("staff@techzone.demo", "STAFF");
+        mvc.perform(get("/api/operations/promotions").header("Authorization", staff))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[?(@.code=='STAFF-ACTIVE')].audience").value("ASSIGNED"))
+                .andExpect(jsonPath("$[?(@.code=='STAFF-DISABLED')].active").value(false))
+                .andExpect(jsonPath("$[0].bannerImage").doesNotExist())
+                .andExpect(jsonPath("$[0].recipients").doesNotExist());
+        mvc.perform(get("/api/operations/promotions").header("Authorization", admin)).andExpect(status().isOk());
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM promotions", Integer.class));
+    }
+
+    @Test void voucherLookupRequiresActualStaffOrAdminAndDoesNotGrantWritePermissions() throws Exception {
+        int id = create("STAFF-READONLY");
+        String staff = "Bearer " + jwt.generateToken("staff@techzone.demo", "STAFF");
+        mvc.perform(get("/api/operations/promotions")).andExpect(status().isUnauthorized());
+        for (String actor : new String[]{customer,
+                "Bearer " + jwt.generateToken("technician@techzone.demo", "TECHNICIAN"),
+                "Bearer " + jwt.generateToken("customer@techzone.demo", "STAFF")}) {
+            mvc.perform(get("/api/operations/promotions").header("Authorization", actor)).andExpect(status().isForbidden());
+        }
+        mvc.perform(get("/api/admin/promotions").header("Authorization", staff)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/promotions").header("Authorization", staff).contentType("application/json").content(payload("STAFF-CREATE", 10, true))).andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/promotions/" + id).header("Authorization", staff).contentType("application/json").content(payload("STAFF-READONLY", 10, false))).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/admin/promotions/" + id).header("Authorization", staff)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/promotions/" + id + "/recipients").header("Authorization", staff).contentType("application/json").content("{\"userIds\":[1]}")).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/admin/promotions/" + id + "/recipients/1").header("Authorization", staff)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/promotions/" + id + "/recipients").header("Authorization", staff)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/promotions/" + id + "/usages").header("Authorization", staff)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/operations/promotions").header("Authorization", staff).contentType("application/json").content(payload("STAFF-CREATE", 10, true))).andExpect(status().isMethodNotAllowed());
+        assertEquals(true, jdbc.queryForObject("SELECT is_active FROM promotions WHERE id=?", Boolean.class, id));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM promotions", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM promotion_assignments", Integer.class));
     }
 
     @Test void adminCreatesNormalizesUpdatesAndDeactivatesPublicPromotion() throws Exception {
