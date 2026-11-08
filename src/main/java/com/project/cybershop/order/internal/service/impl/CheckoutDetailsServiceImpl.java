@@ -21,7 +21,7 @@ public class CheckoutDetailsServiceImpl implements CheckoutDetailsService {
     }
 
     @Override
-    @Transactional(readOnly=true)
+    @Transactional
     public CheckoutDetailsResponse preview(String email, CheckoutDetailsRequest request) {
         if (request == null) throw new BusinessException("Thiếu thông tin nhận hàng.");
 

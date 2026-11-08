@@ -16,7 +16,7 @@ public interface OrderService {
 
     OrderResponse myOrder(String email, String orderCode);
 
-    OrderResponse cancel(String email, String orderCode, boolean staff);
+    OrderResponse cancel(String email, String orderCode, boolean staff, String reason);
 
     List<OrderResponse> operations(String email, String search, String status);
 

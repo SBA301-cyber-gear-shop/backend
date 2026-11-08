@@ -1,90 +1,9 @@
-# spring:
-#   application:
-#     name: cybershop
-
-#   # ==========================================
-#   # DATABASE (Local Docker PostgreSQL)
-#   # ==========================================
-#   datasource:
-#     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SBA301_WebPC}
-#     username: ${SPRING_DATASOURCE_USERNAME:postgres}
-#     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
-#     # Cloud Neon (Uncomment if needed):
-#     # url: jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech:5432/neondb?sslmode=require
-#     # username: neondb_owner
-#     # password: npg_E3lTM5aYOpNA
-#     driver-class-name: org.postgresql.Driver
-#     # hikari:
-#     #   connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
-
-#   # ==========================================
-#   # JPA / HIBERNATE
-#   # ==========================================
-#   jpa:
-#     open-in-view: false
-#     hibernate:
-#       ddl-auto: update
-#     show-sql: true
-#     properties:
-#       hibernate:
-#         format_sql: true
-#         default_batch_fetch_size: 100
-
-# # ==========================================
-# # SWAGGER / OPENAPI
-# # ==========================================
-# springdoc:
-#   api-docs:
-#     path: /v3/api-docs
-#   swagger-ui:
-#     path: /swagger-ui.html
-#     operationsSorter: method
-
-# # ==========================================
-# # SERVER
-# # ==========================================
-# server:
-#   port: 8080
-
-# # ==========================================
-# # JWT & AI ENGINE
-# # ==========================================
-# app:
-#   jwt:
-#     secret: ${JWT_SECRET:4LU_zjRsuAOUXG7V964B5clG6u26svjh3Nuck26NUz4}
-#     expiration-ms: 86400000
-#   ai:
-#     provider: gemini
-#     api-key: ${AI_API_KEY:}
-#     model: gemini-3.5-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
-#     profile-thinking-level: low     # trích hồ sơ: suy luận nhẹ để đặt số liệu hợp lý
-#     explain-thinking-level: minimal # giải thích: chỉ viết lại dữ liệu có sẵn, ưu tiên nhanh
-#     profile-timeout-ms: 6000        # trích hồ sơ, tối đa cho MỘT lần gọi
-#     timeout-ms: 8000                # giải thích, tối đa cho MỘT lần gọi
-#     max-retries: 1                  # chỉ thử lại khi timeout / 5xx / 429 / JSON hỏng, và chỉ khi còn thời gian (8.5.1)
-#     request-deadline-ms: 14000      # TRẦN TỔNG cho mọi lời gọi AI của một request /ai-suggest
-#     min-call-ms: 2000               # còn ít hơn mức này tới deadline thì không gọi / không thử lại
-#     circuit-failure-threshold: 5    # số lỗi nhà cung cấp LIÊN TIẾP để ngắt mạch
-#     circuit-open-seconds: 30        # thời gian ngắt mạch
-#   pcbuild:
-#     budget-window-min: 0.90         # [ĐÃ CHỐT] cận dưới để đánh giá độ sát; cận trên luôn là B
-#     max-solver-iterations: 200
-#     candidate-cache-seconds: 60
-#     profile-cache-hours: 24
-#     profile-cache-max-entries: 5000
-#     needs-unclear-confidence: 0.4
-#     min-budget: 8000000             # [ĐÃ CHỐT] ngân sách tối thiểu chấp nhận
-#     max-budget: 9999999999          # [ĐÃ CHỐT] khớp numeric(12,2)
-#     rate-limit-per-minute: 6        # /ai-suggest: mỗi user, hoặc mỗi IP khi chưa đăng nhập (11.1)
-#     rate-limit-check-per-minute: 30 # /validate, /compatible-replacements, /options: mỗi endpoint
-
-
 spring:
   application:
     name: cybershop
 
   # ==========================================
-  # DATABASE (Local Docker PostgreSQL)
+  # DATABASE (Neon PostgreSQL Cloud)
   # ==========================================
   datasource:
     # url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SBA301_WebPC}
@@ -128,7 +47,7 @@ server:
   port: 8080
 
 # ==========================================
-# JWT & AI ENGINE
+# JWT, AI ENGINE
 # ==========================================
 app:
   jwt:
@@ -137,7 +56,7 @@ app:
   ai:
     provider: gemini
     api-key: ${AI_API_KEY:}
-    model: gemini-3.1-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
+    model: gemini-3.5-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
     profile-thinking-level: low     # trích hồ sơ: suy luận nhẹ để đặt số liệu hợp lý
     explain-thinking-level: minimal # giải thích: chỉ viết lại dữ liệu có sẵn, ưu tiên nhanh
     profile-timeout-ms: 6000        # trích hồ sơ, tối đa cho MỘT lần gọi
@@ -158,3 +77,26 @@ app:
     max-budget: 9999999999          # [ĐÃ CHỐT] khớp numeric(12,2)
     rate-limit-per-minute: 6        # /ai-suggest: mỗi user, hoặc mỗi IP khi chưa đăng nhập (11.1)
     rate-limit-check-per-minute: 30 # /validate, /compatible-replacements, /options: mỗi endpoint
+  
+  #Reload after 5 mins
+  product-sales:
+    scheduler-enabled: true
+    refresh-ms: 300000  
+  # ==========================================
+  # VNPAY SANDBOX & GHN SHIPPING (Mở rộng)
+  # ==========================================
+  vnpay:
+    tmn-code: ${VNPAY_TMN_CODE:3RBH6UL5}
+    hash-secret: ${VNPAY_HASH_SECRET:WVWWFTHJALERWKHEOBBIHVXHVRTUYJRL}
+    pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+    return-url: ${VNPAY_RETURN_URL:http://localhost:5173/thanh-toan/ket-qua}
+  shipping:
+    ghn:
+      base-url: ${GHN_BASE_URL:https://dev-online-gateway.ghn.vn/shiip/public-api}
+      token: ${GHN_TOKEN:ded5127b-4d11-452c-9bef-969b96d76cbf}
+      shop-id: ${GHN_SHOP_ID:236292}
+      from-district-id: ${GHN_FROM_DISTRICT_ID:1454}
+      from-ward-code: ${GHN_FROM_WARD_CODE:21210}
+      from-name: ${GHN_FROM_NAME:CyberShop Store}
+      from-phone: ${GHN_FROM_PHONE:0877771230}
+      from-address: ${GHN_FROM_ADDRESS:Hẻm 282 Lê Thị Riêng, P. Thới An, Quận 12, TP.HCM}

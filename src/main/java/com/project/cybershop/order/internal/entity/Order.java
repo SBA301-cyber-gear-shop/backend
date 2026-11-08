@@ -51,6 +51,33 @@ public class Order {
     @Column(name = "note", columnDefinition = "text")
     private String note;
 
+    @Column(name = "delivery_type", length = 20)
+    private String deliveryType = "store";
+
+    @Column(name = "shipping_fee", precision = 12, scale = 2)
+    private BigDecimal shippingFee = BigDecimal.ZERO;
+
+    @Column(name = "shipping_address", columnDefinition = "text")
+    private String shippingAddress;
+
+    @Column(name = "to_province_id")
+    private Integer toProvinceId;
+
+    @Column(name = "to_district_id")
+    private Integer toDistrictId;
+
+    @Column(name = "to_ward_code", length = 20)
+    private String toWardCode;
+
+    @Column(name = "tracking_code", length = 100)
+    private String trackingCode;
+
+    @Column(name = "carrier", length = 50)
+    private String carrier;
+
+    @Column(name = "cancel_reason", length = 500)
+    private String cancelReason;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

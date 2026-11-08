@@ -2,6 +2,7 @@ package com.project.cybershop.promotion.internal.controller;
 
 import com.project.cybershop.promotion.api.dto.request.PromotionRequest;
 import com.project.cybershop.promotion.api.dto.response.PromotionResponse;
+import com.project.cybershop.promotion.api.dto.response.PromotionUsageHistoryResponse;
 import com.project.cybershop.promotion.internal.service.PromotionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,14 @@ public class PromotionController {
             @Valid @RequestBody PromotionRequest request
     ) {
         return promotionService.save(authentication.getName(), null, request);
+    }
+
+    @GetMapping("/api/admin/promotions/{id}/usages")
+    @PreAuthorize("hasRole('ADMIN')")
+    public PromotionUsageHistoryResponse history(Authentication authentication, @PathVariable Integer id,
+            @RequestParam(defaultValue="0") int page, @RequestParam(defaultValue="20") int size,
+            @RequestParam(defaultValue="ALL") String status, @RequestParam(defaultValue="") String search) {
+        return promotionService.history(authentication.getName(), id, page, size, status, search);
     }
 
     @PutMapping("/api/admin/promotions/{id}")

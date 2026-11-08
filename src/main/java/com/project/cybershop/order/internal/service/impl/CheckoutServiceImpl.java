@@ -26,14 +26,17 @@ public class CheckoutServiceImpl implements CheckoutService {
     private final CheckoutRepository checkoutRepository;
     private final CartRepository cartRepository;
     private final CheckoutMapper checkoutMapper;
+    private final com.project.cybershop.promotion.api.PromotionApi promotions;
 
     @Override
+    @Transactional
     public CheckoutPreviewResponse validate(String loginEmail) {
         return validate(loginEmail, null);
     }
 
     // Kiểm tra giỏ và tính tổng tiền; chưa tạo đơn hoặc thay đổi tồn kho.
     @Override
+    @Transactional
     public CheckoutPreviewResponse validate(String loginEmail, List<Integer> itemVariantIds) {
         Integer userId = checkoutRepository.findActiveUserId(loginEmail)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy tài khoản đang hoạt động."));
@@ -46,16 +49,24 @@ public class CheckoutServiceImpl implements CheckoutService {
             throw new BusinessException("Giỏ hàng đang trống.");
         }
 
-        if (itemVariantIds != null && !itemVariantIds.isEmpty()) {
+        if (itemVariantIds != null) {
+            if (itemVariantIds.isEmpty()
+                    || itemVariantIds.stream().anyMatch(id -> id == null || id <= 0)) {
+                throw new BusinessException("Danh sách sản phẩm được chọn không hợp lệ.");
+            }
             Set<Integer> allowed = new HashSet<>(itemVariantIds);
             cartItems = cartItems.stream()
                     .filter(item -> allowed.contains(item.getProductVariantId()))
                     .toList();
-            if (cartItems.isEmpty()) {
-                throw new BusinessException("Không có sản phẩm nào được chọn trong giỏ hàng.");
+            if (cartItems.size() != allowed.size()) {
+                throw new BusinessException("Sản phẩm được chọn đã thay đổi. Vui lòng kiểm tra lại giỏ hàng.");
             }
         }
 
+        var selectedIds = cartItems.stream().map(CheckoutItemProjection::getProductVariantId).collect(java.util.stream.Collectors.toSet());
+        promotions.syncProductPrices(selectedIds.stream().toList());
+        cartItems = checkoutRepository.findItemsForPreview(cart.getId()).stream()
+                .filter(item -> selectedIds.contains(item.getProductVariantId())).toList();
         List<CheckoutItemResponse> items = cartItems.stream()
                 .map(this::validateAndMapItem)
                 .toList();

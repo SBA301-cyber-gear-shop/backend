@@ -9,4 +9,5 @@ public interface PromotionApi {
     void reserve(Quote quote, Integer userId, Integer orderId, boolean paid);
     void markUsed(Integer orderId);
     void release(Integer orderId);
+    void syncProductPrices(java.util.List<Integer> variantIds);
 }

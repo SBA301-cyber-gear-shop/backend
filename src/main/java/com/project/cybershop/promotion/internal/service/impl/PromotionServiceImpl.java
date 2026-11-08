@@ -3,6 +3,8 @@ package com.project.cybershop.promotion.internal.service.impl;
 import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.promotion.api.dto.request.PromotionRequest;
 import com.project.cybershop.promotion.api.dto.response.PromotionResponse;
+import com.project.cybershop.promotion.api.dto.response.PromotionUsageHistoryResponse;
+import org.springframework.data.domain.PageRequest;
 import com.project.cybershop.promotion.internal.entity.Banner;
 import com.project.cybershop.promotion.internal.entity.Promotion;
 import com.project.cybershop.promotion.internal.entity.PromotionUsage;
@@ -12,6 +14,7 @@ import com.project.cybershop.promotion.internal.repository.PromotionRepository;
 import com.project.cybershop.promotion.internal.repository.PromotionTerms;
 import com.project.cybershop.promotion.internal.repository.PromotionUsageRepository;
 import com.project.cybershop.promotion.internal.service.PromotionService;
+import com.project.cybershop.promotion.internal.service.ProductSalePriceService;
 import com.project.cybershop.shared.exception.BusinessException;
 import com.project.cybershop.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +40,31 @@ public class PromotionServiceImpl implements PromotionService {
     private final PromotionMapper promotionMapper;
     private final IdentityApi identityApi;
     private final Clock clock;
+    private final ProductSalePriceService productSalePrices;
+
+    @Override
+    @Transactional(readOnly = true)
+    public PromotionUsageHistoryResponse history(String email, Integer id, int page, int size, String status, String search) {
+        requireAdmin(email);
+        if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE)
+            throw new BusinessException("Trang không hợp lệ; số dòng mỗi trang từ 1 đến 100.");
+        String selectedStatus = status == null ? "ALL" : status.trim().toUpperCase(Locale.ROOT);
+        if (!List.of("ALL", "RESERVED", "USED", "REVOKED").contains(selectedStatus))
+            throw new BusinessException("Trạng thái lượt dùng voucher không hợp lệ.");
+        String term = search == null ? "" : search.trim();
+        if (term.length() > 100) throw new BusinessException("Từ khóa tìm kiếm tối đa 100 ký tự.");
+        Promotion promotion = promotionRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy chương trình."));
+        String pattern = "%" + term.toLowerCase(Locale.ROOT).replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
+        var result = usageRepository.findHistory(id, selectedStatus, pattern, PageRequest.of(page, size));
+        var items = result.getContent().stream().map(row -> new PromotionUsageHistoryResponse.Item(
+                row.getId(), row.getUserId(), row.getCustomerName(), row.getCustomerEmail(), row.getOrderId(),
+                row.getOrderCode(), row.getOrderCreatedAt(), row.getOrderStatus(), row.getDiscountAmount(), row.getStatus())).toList();
+        return new PromotionUsageHistoryResponse(id, promotion.getCode(), page, size, result.getTotalElements(), result.getTotalPages(), items);
+    }
+
+    @Override
+    public void syncProductPrices(List<Integer> variantIds) { productSalePrices.sync(variantIds); }
 
     @Override
     public Quote quote(Integer userId, String code, BigDecimal total, boolean lock) {

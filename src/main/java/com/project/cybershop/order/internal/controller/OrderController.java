@@ -29,5 +29,7 @@ public class OrderController {
     public OrderResponse one(Authentication auth, @PathVariable String code) { return service.myOrder(auth.getName(), code); }
 
     @PostMapping("/{code}/cancel")
-    public OrderResponse cancel(Authentication auth, @PathVariable String code) { return service.cancel(auth.getName(), code, false); }
+    public OrderResponse cancel(Authentication auth, @PathVariable String code) {
+        return service.cancel(auth.getName(), code, false, "Khách hàng yêu cầu hủy đơn");
+    }
 }

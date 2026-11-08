@@ -47,12 +47,11 @@ public class ReviewServiceImpl implements ReviewService {
             throw new BusinessException("Đánh giá cần từ 1 đến 5 sao và có nhận xét.");
         }
 
-        Review review = reviewRepository.findFirstByOrderItemIdOrderByIdAsc(itemId)
-                .orElseGet(() -> {
-                    Review created = new Review();
-                    created.setOrderItemId(itemId);
-                    return created;
-                });
+        if (reviewRepository.findFirstByOrderItemIdOrderByIdAsc(itemId).isPresent()) {
+            throw new BusinessException("Sản phẩm trong đơn này đã được đánh giá. Mỗi sản phẩm chỉ được đánh giá một lần.");
+        }
+        Review review = new Review();
+        review.setOrderItemId(itemId);
 
         reviewMapper.updateEntity(request, review);
         review.setReviewDate(LocalDateTime.now(clock));
