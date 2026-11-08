@@ -381,6 +381,7 @@ public class ShippingServiceImpl implements ShippingService {
             if (!"SUCCESS".equalsIgnoreCase(order.paymentStatus())) {
                 jdbcTemplate.update("UPDATE payments SET status = 'SUCCESS', paid_at = now() WHERE order_id = ?", order.id());
             }
+            issueShippingWarrantyCards(order.id(), order.orderCode());
         } else if ("cancel".equalsIgnoreCase(newStatus)) {
             jdbcTemplate.update("UPDATE orders SET status = 'canceled', updated_at = now() WHERE id = ?", order.id());
         }
@@ -447,6 +448,36 @@ public class ShippingServiceImpl implements ShippingService {
         }
 
         shipmentRepository.save(shipment);
+    }
+
+    private void issueShippingWarrantyCards(Integer orderId, String orderCode) {
+        try {
+            List<Map<String, Object>> items = jdbcTemplate.queryForList("""
+                    SELECT oi.id, oi.quantity, oi.warranty_period_months
+                    FROM order_items oi
+                    WHERE oi.order_id = ? AND oi.warranty_period_months > 0
+                    """, orderId);
+            String suffix = (orderCode != null && orderCode.length() >= 6)
+                    ? orderCode.substring(orderCode.length() - 6).toUpperCase(Locale.ROOT)
+                    : "GHN";
+            LocalDateTime now = LocalDateTime.now();
+            for (Map<String, Object> item : items) {
+                Integer itemId = ((Number) item.get("id")).intValue();
+                int qty = ((Number) item.get("quantity")).intValue();
+                int months = ((Number) item.get("warranty_period_months")).intValue();
+                Integer count = jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM warranty_cards WHERE order_item_id = ?",
+                        Integer.class, itemId);
+                if (count != null && count > 0) continue;
+                for (int i = 0; i < qty; i++) {
+                    String serial = "SN-GHN-" + suffix + "-" + itemId + (qty > 1 ? "-" + (i + 1) : "");
+                    jdbcTemplate.update("""
+                            INSERT INTO warranty_cards (order_item_id, serial_number, start_date, end_date, status)
+                            VALUES (?, ?, ?, ?, 'active')
+                            """, itemId, serial, now, now.plusMonths(months));
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     private TrackingResponse buildTrackingResponse(OrderRecord order, Shipment shipment) {

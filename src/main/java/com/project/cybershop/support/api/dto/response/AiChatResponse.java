@@ -41,6 +41,8 @@ public class AiChatResponse {
         private Integer id;
         private Integer variantId;
         private String name;
+        private String brand;
+        private String description;
         private String variantName;
         private String category;
         private Double price;

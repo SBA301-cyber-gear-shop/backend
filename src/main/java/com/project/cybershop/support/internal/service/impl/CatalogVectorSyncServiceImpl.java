@@ -229,15 +229,18 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
             String queryVector = embeddingService.embedText(query);
             int safeLimit = Math.min(Math.max(limit, 1), 10);
 
-            // Sửa triệt để BUG-01: Truyền đủ 3 tham số queryVector cho 3 vị trí ?::vector + 1 safeLimit cho LIMIT ?
-            // Thêm ngưỡng 1 - (v.embedding <=> ?::vector) >= 0.55
-            // LEFT JOIN product_variants pv để lấy live price và live stock loại bỏ vòng lặp N+1
+            // Sửa triệt để BUG-01 & Mở rộng Context: JOIN products p & brands b để lấy thông số kỹ thuật (live_description) và thương hiệu (live_brand)
+            // Truyền đủ 3 tham số queryVector cho 3 vị trí ?::vector + 1 safeLimit cho LIMIT ?
             String sql = """
                 SELECT v.doc_title, v.chunk_content, v.metadata,
                        pv.price as live_price, pv.stock_quantity as live_stock,
+                       p.description as live_description,
+                       COALESCE(b.name, 'Chính hãng') as live_brand,
                        1 - (v.embedding <=> ?::vector) as similarity
                 FROM cyberbot_knowledge_vectors v
                 LEFT JOIN product_variants pv ON pv.id = (v.metadata->>'variantId')::int
+                LEFT JOIN products p ON p.id = (v.metadata->>'productId')::int
+                LEFT JOIN brands b ON b.id = p.brand_id
                 WHERE v.doc_category = 'PRODUCT_CATALOG'
                   AND 1 - (v.embedding <=> ?::vector) >= 0.45
                 ORDER BY v.embedding <=> ?::vector
@@ -267,9 +270,12 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                     String imageUrl = meta.has("imageUrl") && !meta.get("imageUrl").isNull() ? meta.get("imageUrl").asText() : null;
                     String route = meta.has("route") ? meta.get("route").asText() : ("/san-pham/" + productId);
 
-                    // Cập nhật giá và tồn kho thời gian thực từ câu JOIN trực tiếp
+                    // Cập nhật giá, tồn kho, thương hiệu và mô tả kỹ thuật thời gian thực từ câu JOIN
                     Number livePrice = (Number) r.get("live_price");
                     Number liveStock = (Number) r.get("live_stock");
+                    String liveBrand = (String) r.get("live_brand");
+                    String liveDescription = (String) r.get("live_description");
+
                     if (livePrice != null) {
                         price = livePrice.doubleValue();
                     }
@@ -281,6 +287,8 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                             .id(productId)
                             .variantId(variantId)
                             .name(name)
+                            .brand(liveBrand != null ? liveBrand : "Chính hãng")
+                            .description(liveDescription)
                             .variantName(variantName)
                             .category(category)
                             .price(price)

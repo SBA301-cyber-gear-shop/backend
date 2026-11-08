@@ -40,12 +40,15 @@ public class KnowledgeVectorInitializer implements ApplicationRunner {
             Integer count = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM cyberbot_knowledge_vectors WHERE doc_category != 'PRODUCT_CATALOG'", Integer.class);
 
-            if (count != null && count > 0) {
+            if (count != null && count >= 6) {
                 log.info("Kho tri thức văn bản chính sách CyberBot đã có {} bản ghi, bỏ qua khởi tạo.", count);
                 return;
             }
 
-            log.info("Bắt đầu nạp tài liệu chính sách & thông số kỹ thuật vào Vector DB CyberBot...");
+            // Nếu chưa đủ 6 tài liệu, làm mới các bản ghi chính sách để nạp trọn bộ 6 tài liệu chuẩn hóa
+            jdbcTemplate.update("DELETE FROM cyberbot_knowledge_vectors WHERE doc_category != 'PRODUCT_CATALOG'");
+
+            log.info("Bắt đầu nạp 6 tài liệu chính sách & thông số kỹ thuật vào Vector DB CyberBot...");
             List<KnowledgeDoc> docs = getSeedKnowledge();
 
             for (KnowledgeDoc doc : docs) {
@@ -120,6 +123,32 @@ public class KnowledgeVectorInitializer implements ApplicationRunner {
                            - Tản nhiệt nước AIO 240mm/360mm cần kiểm tra độ dày nóc case để không cấn tản nhiệt VRM của mainboard.
                         """,
                         "{\"source\": \"cam-nang-phan-cung\", \"type\": \"hardware\"}"
+                ),
+                new KnowledgeDoc(
+                        "TECHNICAL_TROUBLESHOOTING",
+                        "Hướng dẫn chẩn đoán và xử lý sự cố kỹ thuật PC thường gặp",
+                        """
+                        1. Máy tính bật nguồn, quạt quay, đèn sáng nhưng màn hình không lên tín hiệu (No Signal):
+                           - Nguyên nhân phổ biến nhất: Cắm nhầm dây màn hình (HDMI/DisplayPort) vào cổng trên Mainboard thay vì cắm vào Card đồ họa rời (VGA), đặc biệt với các CPU không có iGPU (như Intel dòng F: i5-13400F, i5-14400F hoặc AMD Ryzen 5 7500F).
+                           - Lỏng RAM: Tắt nguồn, rút dây điện, tháo thanh RAM ra lau nhẹ chân đồng bằng gôm/giấy khô rồi cắm chặt lại vào khe số 2 và số 4 cho tới khi nghe tiếng 'tạch'.
+                        2. Máy bị màn hình xanh (BSOD) hoặc tự khởi động lại khi chơi game nặng:
+                           - Kiểm tra xung nhịp XMP/EXPO của RAM trong BIOS (thử tắt XMP về xung mặc định để kiểm tra độ ổn định).
+                           - Kiểm tra nhiệt độ CPU/GPU và công suất nguồn (PSU) có bị sụt áp khi tải nặng hay không.
+                        3. Dịch vụ hỗ trợ kỹ thuật tại TechZone:
+                           - Miễn phí vệ sinh máy, tra keo tản nhiệt và kiểm tra lỗi phần cứng trực tiếp tại cửa hàng cho mọi bộ PC mua tại TechZone.
+                        """,
+                        "{\"source\": \"huong-dan-ky-thuat\", \"type\": \"troubleshooting\"}"
+                ),
+                new KnowledgeDoc(
+                        "SERVICE_BUILD_AND_INSTALL",
+                        "Chính sách lắp ráp PC, cài đặt phần mềm, trả góp và ưu đãi tại TechZone",
+                        """
+                        1. Dịch vụ lắp ráp & Đi dây thẩm mỹ: Miễn phí 100% công lắp ráp, đi dây gọn gàng, cập nhật BIOS mới nhất và burn-in test tải nặng trước khi bàn giao.
+                        2. Cài đặt hệ điều hành & Phần mềm: Hỗ trợ cài đặt sẵn Windows 11 bản quyền dùng thử, đầy đủ Driver chuẩn hãng và các bộ công cụ kiểm tra phần cứng.
+                        3. Hộp linh kiện (Full Box): Khi đặt mua trọn bộ PC lắp sẵn giao qua GHN, TechZone luôn đóng gói gửi kèm đầy đủ toàn bộ vỏ hộp (Full Box) và phụ kiện thừa của từng linh kiện để đảm bảo quyền lợi bảo hành chính hãng.
+                        4. Hỗ trợ đơn hàng doanh nghiệp (B2B) & Hóa đơn VAT: Hỗ trợ xuất hóa đơn giá trị gia tăng (e-Invoice VAT 8% - 10%) cho công ty và chiết khấu ưu đãi từ 3% - 8% cho đơn hàng dự án từ 5 bộ PC trở lên (vui lòng kết nối chuyên viên tư vấn để nhận báo giá đóng dấu).
+                        """,
+                        "{\"source\": \"dich-vu-lap-rap\", \"type\": \"service\"}"
                 )
         );
     }

@@ -17,6 +17,7 @@ public class AiChatRequest {
     @NotBlank(message = "Nội dung câu hỏi không được để trống")
     private String message;
     private String conversationId;
+    private String currentPath;
     @Builder.Default
     private String mode = "ai"; // "ai" or "staff"
     @Builder.Default

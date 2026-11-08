@@ -55,7 +55,7 @@
 #     expiration-ms: 86400000
 #   ai:
 #     provider: gemini
-#     api-key: ${AI_API_KEY:}
+#     api-key: ${AI_API_KEY:AIzaSyD2oc4_8RIgCIw4bk9RA6f9WohZwpl5r2w}
 #     model: gemini-3.5-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
 #     profile-thinking-level: low     # trích hồ sơ: suy luận nhẹ để đặt số liệu hợp lý
 #     explain-thinking-level: minimal # giải thích: chỉ viết lại dữ liệu có sẵn, ưu tiên nhanh
@@ -132,7 +132,7 @@ app:
     expiration-ms: 86400000
   ai:
     provider: gemini
-    api-key: ${AI_API_KEY:}
+    api-key: ${AI_API_KEY:AIzaSyD2oc4_8RIgCIw4bk9RA6f9WohZwpl5r2w}
     model: gemini-3.1-flash-lite    # ghim bản Stable cho AI Build PC của người trước (DD 8.2)
     chatbox-model: gemini-3.6-flash # Dành riêng cho Customer Support Chatbox CyberBot
     profile-thinking-level: low     # trích hồ sơ: suy luận nhẹ để đặt số liệu hợp lý

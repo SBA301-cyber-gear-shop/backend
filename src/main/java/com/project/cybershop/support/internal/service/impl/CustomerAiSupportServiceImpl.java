@@ -128,12 +128,18 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                     .build();
         }
 
-        // 3. Tìm kiếm trong Vector Database (RAG similarity search cho chính sách & hướng dẫn)
-        String knowledgeContext = searchVectorKnowledge(message);
+        // 0. Giải đại từ tham chiếu đơn lẻ (Follow-up Pronoun) từ History hoặc URL hiện tại (Ví dụ: "tư vấn sản phẩm đó", "con này tốn điện không")
+        String resolvedQuery = resolveContextualSearchQuery(message, request.getHistory(), request.getCurrentPath());
 
-        // 4. Xử lý ngữ cảnh nối tiếp (Referral Query) ví dụ: "gửi tôi list linh kiện này trên shop"
+        // 1. Nhận diện mã đơn hàng động gõ trực tiếp trong câu chat (ví dụ "TZ-8219", "ORD-1234")
+        String dynamicOrderContext = resolveDynamicOrderContext(message);
+
+        // 2. Tìm kiếm trong Vector Database (RAG similarity search cho chính sách & hướng dẫn)
+        String knowledgeContext = searchVectorKnowledge(resolvedQuery);
+
+        // 3. Xử lý ngữ cảnh nối tiếp (Referral Query) ví dụ: "gửi tôi list linh kiện này trên shop"
         boolean isReferral = isReferralComponentQuery(message);
-        String searchContext = message;
+        String searchContext = resolvedQuery;
         if (isReferral && request.getHistory() != null && !request.getHistory().isEmpty()) {
             String bestBotContext = null;
             int maxComponents = 0;
@@ -255,21 +261,38 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                     }
                 }
             }
-        } else if (isProductQuery(message)) {
-            // Khi không phải referral nhưng là câu hỏi linh kiện/sản phẩm
+        } else if (isProductQuery(resolvedQuery)) {
+            // Khi không phải referral nhưng là câu hỏi linh kiện/sản phẩm (hoặc câu hỏi follow-up đã resolve)
             if (catalogVectorSyncService != null) {
-                List<AiChatResponse.ProductSummary> vectorProds = catalogVectorSyncService.searchProductsByVector(searchContext, 6);
+                List<AiChatResponse.ProductSummary> vectorProds = catalogVectorSyncService.searchProductsByVector(resolvedQuery, 6);
                 if (vectorProds != null && !vectorProds.isEmpty()) {
                     products.addAll(vectorProds);
                 }
             }
-            CatalogSearchResult catalogResult = searchCatalogProducts(searchContext);
+            CatalogSearchResult catalogResult = searchCatalogProducts(resolvedQuery);
             if (products.isEmpty() && !catalogResult.products().isEmpty()) {
                 products.addAll(catalogResult.products());
             }
+
+            // Nếu sản phẩm khớp nhất bị hết hàng (stock == 0), tự động lấy thêm 3 mẫu cùng danh mục đang còn hàng (stock > 0)
+            if (!products.isEmpty() && (products.get(0).getStock() == null || products.get(0).getStock() <= 0)) {
+                String catName = products.get(0).getCategory();
+                if (catName != null && !catName.isBlank() && catalogVectorSyncService != null) {
+                    List<AiChatResponse.ProductSummary> alternatives = catalogVectorSyncService.searchProductsByVector(catName + " chính hãng", 4);
+                    if (alternatives != null) {
+                        for (AiChatResponse.ProductSummary alt : alternatives) {
+                            if (!alt.getId().equals(products.get(0).getId()) && alt.getStock() != null && alt.getStock() > 0) {
+                                if (products.stream().noneMatch(existing -> existing.getId().equals(alt.getId()))) {
+                                    products.add(alt);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        CatalogSearchResult catalogResult = searchCatalogProducts(searchContext);
+        CatalogSearchResult catalogResult = searchCatalogProducts(resolvedQuery);
         String catalogTextContext = !products.isEmpty()
                 ? buildCatalogContextFromSummaries(products)
                 : catalogResult.textContext();
@@ -318,7 +341,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         // 7. Kiểm tra điều hướng nhanh CHỈ KHI là câu xác nhận ngắn gọn (TUYỆT ĐỐI không chặn câu hỏi)
         AiChatResponse fastNavResponse = checkQuickNavigationIntent(message, request.getHistory(), customerCtx, conversationId);
         if (fastNavResponse != null) {
-            if (fastNavResponse.getProducts().isEmpty() && !products.isEmpty() && isProductQuery(message)) {
+            if (fastNavResponse.getProducts().isEmpty() && !products.isEmpty() && isProductQuery(resolvedQuery)) {
                 fastNavResponse.setProducts(products);
             }
             return fastNavResponse;
@@ -328,19 +351,19 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         AiChatResponse finalResponse = null;
         if (apiKey != null && !apiKey.isBlank()) {
             try {
-                finalResponse = callGeminiWithFallback(message, request.getHistory(), customerCtx, knowledgeContext, catalogTextContext, conversationId);
+                finalResponse = callGeminiWithFallback(message, resolvedQuery, request.getHistory(), customerCtx, knowledgeContext, catalogTextContext, conversationId);
             } catch (Exception e) {
                 log.warn("Lỗi khi gọi Gemini LLM, chuyển sang chế độ phản hồi tự động thông minh: {}", e.getMessage());
             }
         }
 
-        // 9. Fallback thông minh dựa trên dữ liệu thực tế
+        // 9. Fallback thông minh 12 nhánh nghiệp vụ chuyên sâu (không dump catalog context thô)
         if (finalResponse == null) {
-            finalResponse = generateRuleBasedResponse(message, customerCtx, knowledgeContext, catalogTextContext, conversationId);
+            finalResponse = generateRuleBasedResponse(message, resolvedQuery, products, customerCtx, knowledgeContext, dynamicOrderContext, conversationId);
         }
 
         // 10. Gắn danh sách Product Cards để hiển thị UI Card trực quan CHỈ KHI có ý định hỏi sản phẩm (BUG-05)
-        if (finalResponse.getProducts().isEmpty() && !products.isEmpty() && (isReferral || isProductQuery(message))) {
+        if (finalResponse.getProducts().isEmpty() && !products.isEmpty() && (isReferral || isProductQuery(resolvedQuery))) {
             finalResponse.setProducts(products);
         }
 
@@ -579,9 +602,15 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         for (AiChatResponse.ProductSummary p : products) {
             sb.append("- ").append(p.getName())
               .append(" (Phiên bản: ").append(p.getVariantName() != null ? p.getVariantName() : "Tiêu chuẩn").append(")")
+              .append(" | Thương hiệu: ").append(p.getBrand() != null ? p.getBrand() : "Chính hãng")
+              .append(" | Phân loại: ").append(p.getCategory() != null ? p.getCategory() : "Linh kiện")
               .append(" | Giá bán: ").append(p.getPrice() != null ? MONEY_FMT.format(p.getPrice()) : "Liên hệ")
-              .append(" | Tồn kho: ").append(p.getStock())
-              .append(" | Link: /san-pham/").append(p.getId()).append("\n");
+              .append(" | Tồn kho: ").append(p.getStock() != null ? p.getStock() : 0)
+              .append(" | Link: /san-pham/").append(p.getId());
+            if (p.getDescription() != null && !p.getDescription().isBlank()) {
+                sb.append(" | Thông số kỹ thuật: ").append(p.getDescription().trim());
+            }
+            sb.append("\n");
         }
         return sb.toString();
     }
@@ -613,53 +642,255 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             List<AiChatResponse.ProductSummary> products
     ) {}
 
+    private record PriceAndSortFilter(Double minPrice, Double maxPrice, String orderByClause, String categoryHint) {}
+
+    private boolean isFollowUpPronounQuery(String message) {
+        if (message == null) return false;
+        String m = message.toLowerCase().trim();
+        return m.matches(".*\\b(đó|này|kia|ấy|nó|vừa rồi|ở trên|phía trên|con đầu|mẫu đầu|con thứ 2|con thứ hai|mẫu này|sản phẩm đó|sản phẩm này|con đó|con này|mã đó|mã này|rẻ hơn|mạnh hơn|tốt hơn|thay thế|đi kèm|tương thích)\\b.*")
+                || m.matches("^(tư vấn|đánh giá|chi tiết|thông số|giá|bảo hành|tồn kho|còn hàng)\\s*(sản phẩm|linh kiện|mẫu|con|mã)?\\s*(đó|này|kia|trên|ấy)?\\??$");
+    }
+
+    private String resolveContextualSearchQuery(String message, List<AiChatRequest.HistoryItem> history, String currentPath) {
+        if (message == null || message.isBlank()) return "";
+
+        // 1. Nếu khách đang đứng trực tiếp trên trang chi tiết sản phẩm (/san-pham/{id}) và hỏi "con này / sản phẩm này"
+        if (currentPath != null && currentPath.matches("^/san-pham/\\d+.*") && isFollowUpPronounQuery(message)) {
+            try {
+                String idStr = currentPath.replaceAll("^/san-pham/(\\d+).*", "$1");
+                int pid = Integer.parseInt(idStr);
+                List<String> names = jdbcTemplate.queryForList("SELECT name FROM products WHERE id = ? LIMIT 1", String.class, pid);
+                if (!names.isEmpty()) {
+                    return names.get(0) + " - " + message;
+                }
+            } catch (Exception ignored) {}
+        }
+
+        if (!isFollowUpPronounQuery(message) || history == null || history.isEmpty()) {
+            return message;
+        }
+
+        // Nếu câu hiện tại đã nêu đích danh một mã linh kiện mới (ví dụ "i5 13400f", "epyc 9575f", "rtx 5060") thì giữ nguyên
+        if (message.toLowerCase().matches(".*\\b(i[3579][\\s\\-]\\d{4,5}|ryzen\\s*[3579]|epyc\\s*\\d+|threadripper|rtx\\s*\\d{4}|rx\\s*\\d{4}|gtx\\s*\\d{4}|b760|z790|b650|x670|x870|h610|a520)\\b.*")) {
+            return message;
+        }
+
+        // 2. Quét ngược lịch sử để tìm sản phẩm vừa được nhắc đến ở lượt trước
+        for (int i = history.size() - 1; i >= 0; i--) {
+            AiChatRequest.HistoryItem item = history.get(i);
+            if (item.getText() == null || item.getText().isBlank()) continue;
+            String text = item.getText().trim();
+
+            // Ưu tiên lấy từ câu hỏi gần nhất của User có chứa tên sản phẩm
+            if ("user".equalsIgnoreCase(item.getSender()) && !isFollowUpPronounQuery(text) && isProductQuery(text)) {
+                String cleanedUserProduct = text.replaceAll("(?i)^(tư vấn|cho hỏi|kiểm tra|xem|đánh giá|mua|tìm|sản phẩm|linh kiện)\\s+", "").trim();
+                return cleanedUserProduct + " - " + message;
+            }
+
+            // Hoặc lấy sản phẩm đầu tiên được liệt kê trong tin nhắn của Bot liền trước
+            if ("bot".equalsIgnoreCase(item.getSender())) {
+                for (String line : text.split("\\r?\\n")) {
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("### Tư vấn chi tiết:")) {
+                        String prodName = trimmed.replace("### Tư vấn chi tiết:", "").replace("**", "").trim();
+                        if (!prodName.isEmpty()) return prodName + " - " + message;
+                    }
+                    if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("🔹") || trimmed.startsWith("* ")) {
+                        String cleaned = trimmed.replaceAll("^[\\-•🔹\\*]+\\s*", "")
+                                .replaceAll("\\*\\*", "")
+                                .replaceAll("\\(Phiên bản:.*?\\)", "")
+                                .split("\\|")[0]
+                                .split("—")[0]
+                                .trim();
+                        if (cleaned.length() >= 4 && !cleaned.toLowerCase().matches("^(tra cứu|kiểm tra|tư vấn|giải đáp|phân loại|giá niêm yết|tình trạng|đánh giá|điểm nổi bật|thời gian|đồng kiểm|thanh toán|1 đổi 1|linh kiện).*")) {
+                            return cleaned + " - " + message;
+                        }
+                    }
+                }
+            }
+        }
+        return message;
+    }
+
+    private String resolveDynamicOrderContext(String message) {
+        if (message == null || message.isBlank()) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\\b(TZ-[A-Za-z0-9]+|ORD-[A-Za-z0-9]+|DH[A-Za-z0-9]+)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(message);
+        if (m.find()) {
+            String code = m.group(1);
+            try {
+                String sql = """
+                    SELECT o.id, o.order_code, o.status, o.delivery_type, o.tracking_code, o.final_amount, o.created_at,
+                           string_agg(oi.product_name || ' (x' || oi.quantity || ')', ', ') as items
+                    FROM orders o
+                    LEFT JOIN order_items oi ON o.id = oi.order_id
+                    WHERE UPPER(o.order_code) = UPPER(?)
+                    GROUP BY o.id, o.order_code, o.status, o.delivery_type, o.tracking_code, o.final_amount, o.created_at
+                    LIMIT 1
+                """;
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, code);
+                if (!rows.isEmpty()) {
+                    Map<String, Object> r = rows.get(0);
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("* **Mã đơn hàng**: `").append(r.get("order_code")).append("`\n");
+                    sb.append("* **Trạng thái**: **").append(mapStatusVietnamese((String) r.get("status"))).append("**\n");
+                    if (r.get("tracking_code") != null) {
+                        sb.append("* **Mã vận đơn GHN**: `").append(r.get("tracking_code")).append("`\n");
+                    }
+                    if (r.get("final_amount") != null) {
+                        sb.append("* **Tổng thanh toán**: **").append(MONEY_FMT.format(((Number) r.get("final_amount")).doubleValue())).append("**\n");
+                    }
+                    if (r.get("items") != null) {
+                        sb.append("* **Sản phẩm trong đơn**: ").append(r.get("items")).append("\n");
+                    }
+                    return sb.toString();
+                }
+            } catch (Exception e) {
+                log.warn("Lỗi tra cứu đơn theo mã tự do: {}", e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    private PriceAndSortFilter parsePriceAndSortFilter(String msgLower) {
+        Double min = null;
+        Double max = null;
+        String orderBy = "pv.stock_quantity DESC, pv.price ASC";
+
+        // Bắt khoảng giá: "từ X đến Y triệu" hoặc "X - Y triệu"
+        java.util.regex.Matcher rangeMatcher = java.util.regex.Pattern
+                .compile("(\\d+(?:[.,]\\d+)?)\\s*(?:đến|tới|\\-)\\s*(\\d+(?:[.,]\\d+)?)\\s*(triệu|tr|m|củ)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(msgLower);
+        if (rangeMatcher.find()) {
+            double v1 = Double.parseDouble(rangeMatcher.group(1).replace(",", ".")) * 1_000_000;
+            double v2 = Double.parseDouble(rangeMatcher.group(2).replace(",", ".")) * 1_000_000;
+            min = Math.min(v1, v2);
+            max = Math.max(v1, v2);
+        } else {
+            // Bắt "dưới X triệu" / "tối đa X triệu"
+            java.util.regex.Matcher underMatcher = java.util.regex.Pattern
+                    .compile("(?:dưới|tối đa|không quá|nhỏ hơn|<)\\s*(\\d+(?:[.,]\\d+)?)\\s*(triệu|tr|m|củ)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                    .matcher(msgLower);
+            if (underMatcher.find()) {
+                max = Double.parseDouble(underMatcher.group(1).replace(",", ".")) * 1_000_000;
+            } else {
+                // Bắt "trên X triệu"
+                java.util.regex.Matcher overMatcher = java.util.regex.Pattern
+                        .compile("(?:trên|từ|hơn|>)\\s*(\\d+(?:[.,]\\d+)?)\\s*(triệu|tr|m|củ)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(msgLower);
+                if (overMatcher.find()) {
+                    min = Double.parseDouble(overMatcher.group(1).replace(",", ".")) * 1_000_000;
+                } else {
+                    // Bắt "tầm / khoảng X triệu" (±25%)
+                    java.util.regex.Matcher aroundMatcher = java.util.regex.Pattern
+                            .compile("(?:tầm|khoảng|quanh|giá)\\s*(\\d+(?:[.,]\\d+)?)\\s*(triệu|tr|m|củ)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                            .matcher(msgLower);
+                    if (aroundMatcher.find()) {
+                        double target = Double.parseDouble(aroundMatcher.group(1).replace(",", ".")) * 1_000_000;
+                        min = target * 0.75;
+                        max = target * 1.25;
+                    }
+                }
+            }
+        }
+
+        if (msgLower.matches(".*(rẻ nhất|giá rẻ|tiết kiệm|thấp nhất|sinh viên|văn phòng giá rẻ).*")) {
+            orderBy = "pv.price ASC";
+        } else if (msgLower.matches(".*(mạnh nhất|cao cấp nhất|đắt nhất|khủng nhất|xịn nhất|top đầu|flagship|hi-end|high-end).*")) {
+            orderBy = "pv.price DESC";
+        }
+
+        String catHint = null;
+        if (msgLower.matches(".*\\b(cpu|vi xử lý|chip|core i|ryzen|epyc|threadripper)\\b.*")) catHint = "vi xử lý";
+        else if (msgLower.matches(".*\\b(vga|card đồ họa|card màn hình|gpu|rtx|gtx|radeon|rx)\\b.*")) catHint = "card đồ họa";
+        else if (msgLower.matches(".*\\b(mainboard|main|bo mạch)\\b.*")) catHint = "bo mạch chủ";
+        else if (msgLower.matches(".*\\b(ram|bộ nhớ trong)\\b.*")) catHint = "ram";
+        else if (msgLower.matches(".*\\b(ssd|ổ cứng|nvme|hdd)\\b.*")) catHint = "ổ cứng";
+        else if (msgLower.matches(".*\\b(nguồn|psu)\\b.*")) catHint = "nguồn";
+        else if (msgLower.matches(".*\\b(màn hình|monitor)\\b.*")) catHint = "màn hình";
+        else if (msgLower.matches(".*\\b(vỏ case|thùng máy|case)\\b.*")) catHint = "case";
+        else if (msgLower.matches(".*\\b(tản nhiệt|cooler|aio)\\b.*")) catHint = "tản nhiệt";
+
+        return new PriceAndSortFilter(min, max, orderBy, catHint);
+    }
+
     private CatalogSearchResult searchCatalogProducts(String message) {
         String msgLower = message.toLowerCase();
-        boolean isHardwareQuery = msgLower.matches(".*(ram|cpu|vga|gpu|card|mainboard|main|nguồn|psu|ssd|màn|chuột|bàn phím|ddr|ghz|mhz|gb|tb|rtx|gtx|intel|amd|ryzen|core|i3|i5|i7|i9|asus|msi|gigabyte|corsair|kingston).*");
+        boolean isHardwareQuery = msgLower.matches(".*(ram|cpu|vga|gpu|card|mainboard|main|nguồn|psu|ssd|màn|chuột|bàn phím|ddr|ghz|mhz|gb|tb|rtx|gtx|intel|amd|ryzen|core|i3|i5|i7|i9|asus|msi|gigabyte|corsair|kingston|epyc|threadripper).*");
         if (!isHardwareQuery) {
             return new CatalogSearchResult("", List.of());
         }
 
         try {
+            PriceAndSortFilter filter = parsePriceAndSortFilter(msgLower);
+
             List<String> keywords = new ArrayList<>();
-            String[] tokens = msgLower.replaceAll("[^a-zA-Z0-9\\s]", " ").split("\\s+");
-            Set<String> ignore = Set.of("shop", "co", "khong", "nao", "hay", "cho", "hoi", "la", "va", "gia", "ban", "mua", "voi", "dung", "de");
+            String[] tokens = msgLower.replaceAll("[^a-zA-Z0-9À-ỹ\\s]", " ").split("\\s+");
+            Set<String> ignore = Set.of(
+                    "shop", "co", "khong", "nao", "hay", "cho", "hoi", "la", "va", "gia", "ban", "mua", "voi", "dung", "de",
+                    "tu", "van", "san", "pham", "mau", "manh", "nhat", "re", "hien", "nay", "cua", "toi", "minh", "chiec",
+                    "con", "cai", "loai", "tot", "tam", "duoi", "tren", "khoang", "trieu", "cung", "khi", "nhung"
+            );
             for (String t : tokens) {
                 if (t.length() >= 2 && !ignore.contains(t)) {
                     keywords.add(t);
                 }
             }
 
-            if (keywords.isEmpty()) {
+            if (keywords.isEmpty() && filter.categoryHint() == null) {
                 return new CatalogSearchResult("", List.of());
             }
 
             StringBuilder sql = new StringBuilder("""
-                SELECT p.id as product_id, p.name as product_name, c.name as category_name,
+                SELECT p.id as product_id, p.name as product_name, p.description as product_desc,
+                       COALESCE(b.name, 'Chính hãng') as brand_name,
+                       c.name as category_name,
                        pv.id as variant_id, pv.variant_name, pv.price, pv.original_price,
                        pv.stock_quantity as stock, pv.image_url
                 FROM product_variants pv
                 JOIN products p ON pv.product_id = p.id
+                LEFT JOIN brands b ON p.brand_id = b.id
                 JOIN categories c ON p.category_id = c.id
-                WHERE UPPER(p.status) = 'ACTIVE' AND (
+                WHERE UPPER(p.status) = 'ACTIVE'
             """);
 
             List<Object> params = new ArrayList<>();
-            int count = Math.min(keywords.size(), 4);
-            for (int i = 0; i < count; i++) {
-                if (i > 0) sql.append(" OR ");
-                sql.append("LOWER(p.name) LIKE ? OR LOWER(pv.variant_name) LIKE ? OR LOWER(c.name) LIKE ? OR LOWER(c.slug) LIKE ?");
-                String pattern = "%" + keywords.get(i) + "%";
-                params.add(pattern);
-                params.add(pattern);
+
+            if (filter.minPrice() != null) {
+                sql.append(" AND pv.price >= ?");
+                params.add(filter.minPrice());
+            }
+            if (filter.maxPrice() != null) {
+                sql.append(" AND pv.price <= ?");
+                params.add(filter.maxPrice());
+            }
+
+            if (!keywords.isEmpty()) {
+                sql.append(" AND (");
+                int count = Math.min(keywords.size(), 4);
+                for (int i = 0; i < count; i++) {
+                    if (i > 0) sql.append(" OR ");
+                    sql.append("LOWER(p.name) LIKE ? OR LOWER(pv.variant_name) LIKE ? OR LOWER(c.name) LIKE ? OR LOWER(c.slug) LIKE ?");
+                    String pattern = "%" + keywords.get(i) + "%";
+                    params.add(pattern);
+                    params.add(pattern);
+                    params.add(pattern);
+                    params.add(pattern);
+                }
+                sql.append(")");
+            } else if (filter.categoryHint() != null) {
+                sql.append(" AND (LOWER(c.name) LIKE ? OR LOWER(p.name) LIKE ?)");
+                String pattern = "%" + filter.categoryHint() + "%";
                 params.add(pattern);
                 params.add(pattern);
             }
-            sql.append(") ORDER BY pv.stock_quantity DESC LIMIT 6");
+
+            sql.append(" ORDER BY ").append(filter.orderByClause()).append(" LIMIT 6");
 
             List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql.toString(), params.toArray());
             if (rows.isEmpty()) {
-                return new CatalogSearchResult("CyberShop hiện tại không tìm thấy linh kiện nào khớp với từ khóa tìm kiếm này.", List.of());
+                return new CatalogSearchResult("TechZone hiện tại không tìm thấy linh kiện nào khớp với từ khóa tìm kiếm này.", List.of());
             }
 
             StringBuilder sb = new StringBuilder();
@@ -672,20 +903,29 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 String pName = (String) r.get("product_name");
                 String vName = (String) r.get("variant_name");
                 String cName = (String) r.get("category_name");
+                String bName = (String) r.get("brand_name");
+                String pDesc = (String) r.get("product_desc");
                 Number price = (Number) r.get("price");
                 Number origPrice = (Number) r.get("original_price");
                 Number stock = (Number) r.get("stock");
                 String img = (String) r.get("image_url");
 
-                sb.append("- ").append(pName).append(" (Phiên bản: ").append(vName).append(")")
+                sb.append("- ").append(pName).append(" (Phiên bản: ").append(vName != null ? vName : "Tiêu chuẩn").append(")")
+                  .append(" | Thương hiệu: ").append(bName != null ? bName : "Chính hãng")
                   .append(" | Giá bán: ").append(price != null ? MONEY_FMT.format(price.doubleValue()) : "Liên hệ")
                   .append(" | Tồn kho: ").append(stock != null ? stock : 0)
-                  .append(" | Link: /san-pham/").append(pid).append("\n");
+                  .append(" | Link: /san-pham/").append(pid);
+                if (pDesc != null && !pDesc.isBlank()) {
+                    sb.append(" | Thông số: ").append(pDesc.trim());
+                }
+                sb.append("\n");
 
                 products.add(AiChatResponse.ProductSummary.builder()
                         .id(pid)
                         .variantId(vid)
                         .name(pName)
+                        .brand(bName != null ? bName : "Chính hãng")
+                        .description(pDesc)
                         .variantName(vName)
                         .category(cName)
                         .price(price != null ? price.doubleValue() : null)
@@ -948,14 +1188,14 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
     /**
      * Gọi Gemini với cơ chế fallback tự động sang gemini-2.5-flash nếu model chính gặp lỗi HTTP 404/400 (BUG-06)
      */
-    private AiChatResponse callGeminiWithFallback(String message, List<AiChatRequest.HistoryItem> history, CustomerContext ctx, String knowledgeContext, String catalogContext, String conversationId) throws Exception {
+    private AiChatResponse callGeminiWithFallback(String message, String resolvedQuery, List<AiChatRequest.HistoryItem> history, CustomerContext ctx, String knowledgeContext, String catalogContext, String conversationId) throws Exception {
         try {
-            return executeGeminiCall(modelName, message, history, ctx, knowledgeContext, catalogContext, conversationId);
+            return executeGeminiCall(modelName, message, resolvedQuery, history, ctx, knowledgeContext, catalogContext, conversationId);
         } catch (Exception e) {
             log.warn("Gọi Gemini model '{}' thất bại ({}). Đang tự động thử lại với model dự phòng 'gemini-2.5-flash'...", modelName, e.getMessage());
             if (!"gemini-2.5-flash".equalsIgnoreCase(modelName)) {
                 try {
-                    return executeGeminiCall("gemini-2.5-flash", message, history, ctx, knowledgeContext, catalogContext, conversationId);
+                    return executeGeminiCall("gemini-2.5-flash", message, resolvedQuery, history, ctx, knowledgeContext, catalogContext, conversationId);
                 } catch (Exception fallbackEx) {
                     log.warn("Model dự phòng 'gemini-2.5-flash' cũng thất bại: {}", fallbackEx.getMessage());
                     throw fallbackEx;
@@ -965,7 +1205,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         }
     }
 
-    private AiChatResponse executeGeminiCall(String targetModel, String message, List<AiChatRequest.HistoryItem> history, CustomerContext ctx, String knowledgeContext, String catalogContext, String conversationId) throws Exception {
+    private AiChatResponse executeGeminiCall(String targetModel, String message, String resolvedQuery, List<AiChatRequest.HistoryItem> history, CustomerContext ctx, String knowledgeContext, String catalogContext, String conversationId) throws Exception {
         String systemInstruction = buildSystemPrompt(ctx, knowledgeContext, catalogContext);
 
         String jsonSchemaPrompt = """
@@ -991,7 +1231,10 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 contents.add(Map.of("role", role, "parts", List.of(Map.of("text", h.getText()))));
             }
         }
-        contents.add(Map.of("role", "user", "parts", List.of(Map.of("text", message))));
+        String effectiveUserMessage = (resolvedQuery != null && !resolvedQuery.isBlank() && !resolvedQuery.equalsIgnoreCase(message.trim()))
+                ? message + "\n[Ngữ cảnh sản phẩm/linh kiện đang xét: " + resolvedQuery + "]"
+                : message;
+        contents.add(Map.of("role", "user", "parts", List.of(Map.of("text", effectiveUserMessage))));
 
         Map<String, Object> body = Map.of(
                 "systemInstruction", Map.of("parts", List.of(Map.of("text", systemInstruction + jsonSchemaPrompt))),
@@ -1078,10 +1321,13 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         StringBuilder sb = new StringBuilder();
         sb.append("""
             BẠN LÀ CYBERBOT - Trợ lý AI thông minh, chuyên nghiệp và am hiểu kỹ thuật của cửa hàng công nghệ TechZone.
-            NHIỆM VỤ:
-            1. Trả lời bằng tiếng Việt chuyên nghiệp, súc tích, văn phong chuyên gia công nghệ TechZone. Hạn chế tối đa sử dụng emoji hoạt hình để đảm bảo giao diện chuẩn mực, lịch sự và đáng tin cậy.
+            NHIỆM VỤ CỐT LÕI:
+            1. Trả lời bằng tiếng Việt chuyên nghiệp, súc tích, chuẩn mực kỹ sư phần cứng TechZone. Hạn chế tối đa sử dụng emoji hoạt hình để đảm bảo giao diện lịch sự, đáng tin cậy.
             2. Trả lời đúng trọng tâm câu hỏi của khách hàng:
-               - Khách hỏi về tìm kiếm linh kiện / RAM / CPU / VGA / màn hình -> Dựa vào KHO LINH KIỆN THỰC TẾ của TechZone để trả lời chính xác có hay không, tư vấn mẫu phù hợp và đưa nút xem sản phẩm (/san-pham/{id}).
+               - Khách hỏi về linh kiện / RAM / CPU / VGA / màn hình -> Dựa vào KHO LINH KIỆN THỰC TẾ của TechZone để trả lời chính xác thông số, tồn kho, giá bán và đề xuất nút xem sản phẩm (/san-pham/{id}).
+               - Khách hỏi các sản phẩm ngoài danh mục (Laptop, Macbook, Điện thoại...) -> Lịch sự giải thích TechZone chuyên sâu vào linh kiện Máy tính để bàn PC và Máy trạm Workstation, không kinh doanh laptop/điện thoại; gợi ý cấu hình PC để bàn tương đương về ngân sách nhưng hiệu năng vượt trội.
+               - Khách hỏi xử lý sự cố (Troubleshooting: Không lên hình, lỏng RAM, màn hình xanh BSOD, quá nhiệt) -> Chẩn đoán nguyên nhân kỹ thuật và hướng dẫn xử lý từng bước (cắm dây vào cổng VGA rời, lau chân RAM, kiểm tra đèn Debug LED, miễn phí vệ sinh tra keo tại shop).
+               - Khách hỏi so sánh hoặc tính tương thích -> Phân tích rõ ràng sự khác biệt về socket (LGA1700 vs AM5), chuẩn RAM (DDR4 vs DDR5), công suất nguồn (PSU) và khuyến nghị mẫu phù hợp.
                - Khách hỏi về chính sách bảo hành, GHN, thanh toán -> Dựa vào TRI THỨC TỪ VECTOR DATABASE để giải đáp.
                - Khách hỏi về đơn hàng hoặc bảo hành cá nhân -> Dựa vào THÔNG TIN KHÁCH HÀNG (nếu đã đăng nhập).
             3. HỖ TRỢ ĐIỀU HƯỚNG THÔNG MINH (Smart Navigation):
@@ -1128,27 +1374,248 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         }
 
         if (catalogContext != null && !catalogContext.isBlank()) {
-            sb.append("\n=== KHO LINH KIỆN THỰC TẾ CỦA CYBERSHOP (THỜI GIAN THỰC) ===\n");
+            sb.append("\n=== KHO LINH KIỆN THỰC TẾ CỦA TECHZONE (THỜI GIAN THỰC) ===\n");
             sb.append(catalogContext).append("\n");
-            sb.append("LƯU Ý TƯ VẤN: Nếu khách hỏi mẫu linh kiện KHÔNG có trong danh sách trên (ví dụ khách hỏi RAM 8GB 4800 nhưng shop chỉ có 8GB 5600 hoặc 16GB 4800), bạn hãy trả lời lịch sự rằng shop hiện chưa có sẵn mẫu chính xác đó, và tư vấn gợi ý các mẫu tương đương ở trên kèm nút bấm xem sản phẩm (/san-pham/{id})!\n");
+            sb.append("LƯU Ý TƯ VẤN: Nếu khách hỏi mẫu linh kiện KHÔNG có trong danh sách trên hoặc có sản phẩm ghi Tồn kho = 0, bạn hãy thông báo rõ ràng tình trạng kho và tư vấn gợi ý các mẫu tương đương ở trên kèm nút bấm xem sản phẩm (/san-pham/{id})!\n");
         }
 
-        sb.append("\n=== TRI THỨC TỪ VECTOR DATABASE (CHÍNH SÁCH & PHẦN CỨNG) ===\n");
+        sb.append("\n=== TRI THỨC TỪ VECTOR DATABASE (CHÍNH SÁCH, LẮP RÁP & TROUBLESHOOTING) ===\n");
         sb.append(knowledgeContext).append("\n");
 
         return sb.toString();
     }
 
-    private AiChatResponse generateRuleBasedResponse(String message, CustomerContext ctx, String knowledgeContext, String catalogContext, String conversationId) {
+    private AiChatResponse buildSmartProductAdvisory(String message, String resolvedQuery, List<AiChatResponse.ProductSummary> products, String conversationId) {
+        StringBuilder reply = new StringBuilder();
+        List<AiChatResponse.QuickAction> actions = new ArrayList<>();
+        String messageType = "info";
+        String messageRoute = null;
+
+        if (products == null || products.isEmpty()) {
+            reply.append("Dạ, CyberBot đã tra cứu kho linh kiện TechZone nhưng hiện tại chưa tìm thấy linh kiện khớp chính xác với yêu cầu: **").append(resolvedQuery).append("**.\n\n");
+            reply.append("* Bạn có thể kiểm tra lại tên mã hoặc liên hệ chuyên viên để shop hỗ trợ kiểm tra nguồn hàng.\n");
+            reply.append("* Bạn cũng có thể dùng công cụ **AI Build PC** để chọn các linh kiện có sẵn tương thích 100%!");
+            actions.add(new AiChatResponse.QuickAction("Mở AI Build PC", "navigate", "/build-pc"));
+            actions.add(new AiChatResponse.QuickAction("Nhờ chuyên viên hỗ trợ", "connect_staff", null));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType(messageType)
+                    .quickActions(actions)
+                    .build();
+        }
+
+        AiChatResponse.ProductSummary primary = products.get(0);
+        boolean isOutOfStock = (primary.getStock() == null || primary.getStock() <= 0);
+
+        if (isOutOfStock) {
+            reply.append("### Thông tin sản phẩm: **").append(primary.getName()).append("**\n\n");
+            reply.append("* **Thương hiệu**: ").append(primary.getBrand() != null ? primary.getBrand() : "Chính hãng").append("\n");
+            reply.append("* **Giá tham khảo**: ").append(primary.getPrice() != null ? MONEY_FMT.format(primary.getPrice()) : "Liên hệ").append("\n");
+            reply.append("* **Tình trạng kho**: ⚠️ **Tạm hết hàng tại kho**\n");
+            if (primary.getDescription() != null && !primary.getDescription().isBlank()) {
+                reply.append("* **Thông số kỹ thuật**: ").append(primary.getDescription().trim()).append("\n");
+            }
+            reply.append("\n💡 **Gợi ý linh kiện thay thế đang CÒN HÀNG tại TechZone:**\n\n");
+
+            int altCount = 0;
+            for (int i = 1; i < products.size() && altCount < 3; i++) {
+                AiChatResponse.ProductSummary alt = products.get(i);
+                if (alt.getStock() != null && alt.getStock() > 0) {
+                    altCount++;
+                    reply.append(altCount).append(". **").append(alt.getName()).append("**")
+                            .append(" (").append(alt.getVariantName() != null ? alt.getVariantName() : "Tiêu chuẩn").append(")")
+                            .append(" — **").append(alt.getPrice() != null ? MONEY_FMT.format(alt.getPrice()) : "Liên hệ").append("**")
+                            .append(" (Sẵn: ").append(alt.getStock()).append(" chiếc)\n");
+                    if (alt.getDescription() != null && !alt.getDescription().isBlank()) {
+                        reply.append("   - *Thông số*: ").append(alt.getDescription().trim()).append("\n");
+                    }
+                }
+            }
+
+            if (altCount == 0) {
+                reply.append("Hiện các sản phẩm tương tự cùng phân khúc cũng đang được cập nhật thêm. Bạn có thể nhấn 'Nhờ chuyên viên lên đơn' để kiểm tra kho tổng nhé!\n");
+            } else {
+                reply.append("\nBạn có thể bấm trực tiếp vào từng thẻ sản phẩm bên dưới để xem chi tiết hoặc thêm vào giỏ hàng!");
+            }
+
+            actions.add(new AiChatResponse.QuickAction("Mở AI Build PC", "navigate", "/build-pc"));
+            actions.add(new AiChatResponse.QuickAction("Nhờ chuyên viên lên đơn", "connect_staff", null));
+        } else {
+            reply.append("### Tư vấn chi tiết: **").append(primary.getName()).append("**\n\n");
+            reply.append("* **Thương hiệu**: ").append(primary.getBrand() != null ? primary.getBrand() : "Chính hãng").append("\n");
+            reply.append("* **Phân loại**: ").append(primary.getCategory() != null ? primary.getCategory() : "Linh kiện").append("\n");
+            reply.append("* **Giá niêm yết**: **").append(primary.getPrice() != null ? MONEY_FMT.format(primary.getPrice()) : "Liên hệ").append("**");
+            if (primary.getOriginalPrice() != null && primary.getOriginalPrice() > (primary.getPrice() != null ? primary.getPrice() : 0)) {
+                reply.append(" *(Giá gốc: ~~").append(MONEY_FMT.format(primary.getOriginalPrice())).append("~~)*");
+            }
+            reply.append("\n* **Tình trạng kho**: ✅ **Còn hàng** (Sẵn ").append(primary.getStock()).append(" sản phẩm)\n");
+            reply.append("* **Chế độ bảo hành**: 36 tháng chính hãng, 1 đổi 1 trong 30 ngày đầu nếu phát sinh lỗi phần cứng NSX.\n");
+            if (primary.getDescription() != null && !primary.getDescription().isBlank()) {
+                reply.append("* **Thông số nổi bật**: ").append(primary.getDescription().trim()).append("\n");
+            }
+
+            if (products.size() > 1) {
+                reply.append("\n**Các phiên bản / lựa chọn liên quan khác:**\n");
+                for (int i = 1; i < Math.min(products.size(), 4); i++) {
+                    AiChatResponse.ProductSummary other = products.get(i);
+                    reply.append("• **").append(other.getName()).append("**: ")
+                            .append(other.getPrice() != null ? MONEY_FMT.format(other.getPrice()) : "Liên hệ")
+                            .append(other.getStock() != null && other.getStock() > 0 ? " (Sẵn hàng)" : " (Hết hàng)")
+                            .append("\n");
+                }
+            }
+
+            reply.append("\n👉 Bạn có thể nhấn vào thẻ sản phẩm bên dưới để xem đầy đủ thông số kỹ thuật hoặc bấm **Thêm vào giỏ hàng**!");
+
+            messageRoute = "/san-pham/" + primary.getId();
+            actions.add(new AiChatResponse.QuickAction("Xem chi tiết sản phẩm", "navigate", messageRoute));
+            actions.add(new AiChatResponse.QuickAction("Mở AI Build PC", "navigate", "/build-pc"));
+            actions.add(new AiChatResponse.QuickAction("Nhờ chuyên viên lên đơn", "connect_staff", null));
+        }
+
+        return AiChatResponse.builder()
+                .conversationId(conversationId)
+                .message(reply.toString())
+                .messageType(messageType)
+                .messageRoute(messageRoute)
+                .products(products)
+                .quickActions(actions)
+                .build();
+    }
+
+    private AiChatResponse buildCompatibilityAdvisory(String message, String conversationId) {
+        StringBuilder reply = new StringBuilder();
+        reply.append("### Hướng dẫn kiểm tra tính tương thích phần cứng TechZone:\n\n");
+        reply.append("Khi tự chọn hoặc nâng cấp linh kiện PC, bạn cần lưu ý 4 quy tắc tương thích cốt lõi sau:\n\n");
+        reply.append("1. **CPU & Mainboard (Socket)**:\n");
+        reply.append("   - **Intel Gen 12 / 13 / 14**: Dùng socket **LGA1700** (Mainboard H610, B760, Z790).\n");
+        reply.append("   - **Intel Core Ultra (Gen 15 / Arrow Lake)**: Dùng socket **LGA1851** (Mainboard Z890, B860).\n");
+        reply.append("   - **AMD Ryzen 7000 / 8000 / 9000**: Dùng socket **AM5** (Mainboard B650, X670, X870).\n");
+        reply.append("   - **AMD Ryzen 3000 / 5000**: Dùng socket **AM4** (Mainboard B450, B550, A520).\n");
+        reply.append("   *(Tuyệt đối không lắp chéo socket vì sẽ gãy chân socket hoặc cong CPU)*.\n\n");
+
+        reply.append("2. **Mainboard & RAM (DDR4 vs DDR5)**:\n");
+        reply.append("   - Mainboard chỉ hỗ trợ **DUY NHẤT một chuẩn RAM** (hoặc DDR4 hoặc DDR5).\n");
+        reply.append("   - Khe cắm DDR4 và DDR5 có rãnh khóa (notch) lệch nhau, không thể cắm chung.\n\n");
+
+        reply.append("3. **Công suất nguồn (PSU)**:\n");
+        reply.append("   - Card RTX 3050 / RTX 4060 / RX 6600: Cần nguồn tối thiểu **550W – 650W 80 Plus**.\n");
+        reply.append("   - Card RTX 4070 / 4070 Super / RX 7700 XT: Cần nguồn tối thiểu **650W – 750W 80 Plus Bronze/Gold**.\n");
+        reply.append("   - Card RTX 4080 / 4090: Cần nguồn tối thiểu **850W – 1000W chuẩn ATX 3.0 (PCIe 5.0 12VHPWR)**.\n\n");
+
+        reply.append("4. **Kích thước Card VGA & Vỏ Case / Tản nhiệt**:\n");
+        reply.append("   - Đo chiều dài card đồ họa (GPU Clearance) xem vừa kích thước vỏ case không.\n");
+        reply.append("   - Tản nhiệt nước AIO 240mm/360mm cần case có vị trí bắt rad nóc hoặc mặt trước phù hợp.\n\n");
+
+        reply.append("👉 Để đảm bảo chuẩn xác 100% không lo xung đột, bạn có thể sử dụng công cụ **AI Build PC** của TechZone để hệ thống tự động kiểm tra tương thích thời gian thực!");
+
+        return AiChatResponse.builder()
+                .conversationId(conversationId)
+                .message(reply.toString())
+                .messageType("proposal")
+                .messageRoute("/build-pc")
+                .quickActions(List.of(
+                        new AiChatResponse.QuickAction("Mở AI Build PC kiểm tra", "navigate", "/build-pc"),
+                        new AiChatResponse.QuickAction("Nhờ chuyên viên kiểm tra", "connect_staff", null)
+                ))
+                .build();
+    }
+
+    private AiChatResponse buildComparisonAdvisory(String message, List<AiChatResponse.ProductSummary> products, String conversationId) {
+        StringBuilder reply = new StringBuilder();
+        List<AiChatResponse.QuickAction> actions = new ArrayList<>();
+
+        if (products.size() < 2) {
+            return buildSmartProductAdvisory(message, message, products, conversationId);
+        }
+
+        AiChatResponse.ProductSummary p1 = products.get(0);
+        AiChatResponse.ProductSummary p2 = products.get(1);
+
+        reply.append("### So sánh đối chiếu linh kiện TechZone:\n\n");
+        reply.append("| Tiêu chí so sánh | **").append(p1.getName()).append("** | **").append(p2.getName()).append("** |\n");
+        reply.append("| :--- | :--- | :--- |\n");
+        reply.append("| **Thương hiệu** | ").append(p1.getBrand() != null ? p1.getBrand() : "Chính hãng").append(" | ").append(p2.getBrand() != null ? p2.getBrand() : "Chính hãng").append(" |\n");
+        reply.append("| **Phiên bản** | ").append(p1.getVariantName() != null ? p1.getVariantName() : "Tiêu chuẩn").append(" | ").append(p2.getVariantName() != null ? p2.getVariantName() : "Tiêu chuẩn").append(" |\n");
+        reply.append("| **Giá niêm yết** | **").append(p1.getPrice() != null ? MONEY_FMT.format(p1.getPrice()) : "Liên hệ").append("** | **").append(p2.getPrice() != null ? MONEY_FMT.format(p2.getPrice()) : "Liên hệ").append("** |\n");
+        reply.append("| **Tình trạng kho** | ").append(p1.getStock() != null && p1.getStock() > 0 ? "Còn " + p1.getStock() + " chiếc" : "Tạm hết hàng")
+                .append(" | ").append(p2.getStock() != null && p2.getStock() > 0 ? "Còn " + p2.getStock() + " chiếc" : "Tạm hết hàng").append(" |\n");
+
+        if (p1.getDescription() != null || p2.getDescription() != null) {
+            String d1 = p1.getDescription() != null ? p1.getDescription().replace("\n", " ") : "Thông số tiêu chuẩn";
+            String d2 = p2.getDescription() != null ? p2.getDescription().replace("\n", " ") : "Thông số tiêu chuẩn";
+            reply.append("| **Thông số tóm tắt** | ").append(d1).append(" | ").append(d2).append(" |\n");
+        }
+
+        reply.append("\n💡 **Đánh giá & Khuyến nghị lựa chọn:**\n\n");
+        if (p1.getPrice() != null && p2.getPrice() != null) {
+            AiChatResponse.ProductSummary cheaper = p1.getPrice() <= p2.getPrice() ? p1 : p2;
+            AiChatResponse.ProductSummary higher = p1.getPrice() > p2.getPrice() ? p1 : p2;
+            reply.append("* **Lựa chọn tối ưu ngân sách (P/P)**: **").append(cheaper.getName()).append("** giúp tiết kiệm chi phí mà vẫn đáp ứng rất tốt nhu cầu cơ bản đến trung bình khá.\n");
+            reply.append("* **Lựa chọn tối đa hiệu năng / đầu tư dài hạn**: **").append(higher.getName()).append("** mang lại sức mạnh xử lý vượt trội, linh hoạt cho tác vụ nặng hoặc đồ họa nâng cao.\n");
+        } else {
+            reply.append("* Tùy thuộc vào nhu cầu cụ thể (chơi game, dựng hình 3D hay render video) và mức ngân sách tổng thể của dàn máy, bạn có thể cân nhắc giữa 2 mẫu trên.\n");
+        }
+
+        reply.append("\nBạn có thể bấm vào thẻ sản phẩm bên dưới để xem chi tiết từng mẫu hoặc nhấn nút để nhờ chuyên viên tư vấn chi tiết hơn!");
+
+        actions.add(new AiChatResponse.QuickAction("Xem " + p1.getName(), "navigate", "/san-pham/" + p1.getId()));
+        actions.add(new AiChatResponse.QuickAction("Xem " + p2.getName(), "navigate", "/san-pham/" + p2.getId()));
+        actions.add(new AiChatResponse.QuickAction("Mở AI Build PC", "navigate", "/build-pc"));
+
+        return AiChatResponse.builder()
+                .conversationId(conversationId)
+                .message(reply.toString())
+                .messageType("info")
+                .products(products)
+                .quickActions(actions)
+                .build();
+    }
+
+    private AiChatResponse generateRuleBasedResponse(
+            String message,
+            String resolvedQuery,
+            List<AiChatResponse.ProductSummary> products,
+            CustomerContext ctx,
+            String knowledgeContext,
+            String dynamicOrderContext,
+            String conversationId) {
+
         String msgLower = message.toLowerCase();
         List<AiChatResponse.QuickAction> actions = new ArrayList<>();
         String messageType = "info";
         String messageRoute = null;
         StringBuilder reply = new StringBuilder();
 
-        boolean isHardware = isProductQuery(msgLower);
-        boolean isOrderQuery = msgLower.contains("đơn") || msgLower.contains("order") || msgLower.contains("vận đơn") || (msgLower.contains("tiến độ") && msgLower.contains("giao"));
+        // Branch 1: Tra cứu mã đơn hàng cụ thể xuất hiện trong tin nhắn (dynamicOrderContext)
+        if (dynamicOrderContext != null && !dynamicOrderContext.isBlank()) {
+            reply.append("Dạ, CyberBot đã tra cứu thông tin đơn hàng theo mã của bạn:\n\n");
+            reply.append(dynamicOrderContext).append("\n");
+            reply.append("👉 **Bạn có muốn mình đưa bạn tới trang chi tiết đơn hàng để theo dõi tiến trình giao hàng của shipper không?**");
 
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("\\b(TZ-[A-Za-z0-9]+|ORD-[A-Za-z0-9]+|DH[A-Za-z0-9]+)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                    .matcher(message);
+            String foundCode = m.find() ? m.group(1).toUpperCase() : null;
+
+            messageType = "proposal";
+            if (foundCode != null) {
+                messageRoute = "/don-hang/" + foundCode;
+                actions.add(new AiChatResponse.QuickAction("Xem chi tiết đơn " + foundCode, "navigate", messageRoute));
+            }
+            actions.add(new AiChatResponse.QuickAction("Trang bảo hành linh kiện", "navigate", "/bao-hanh"));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType(messageType)
+                    .messageRoute(messageRoute)
+                    .quickActions(actions)
+                    .build();
+        }
+
+        // Branch 2: Tra cứu đơn hàng của Member
+        boolean isOrderQuery = msgLower.contains("đơn") || msgLower.contains("order") || msgLower.contains("vận đơn") || (msgLower.contains("tiến độ") && msgLower.contains("giao"));
         if (isOrderQuery) {
             if (ctx.isMember() && !ctx.recentOrders().isEmpty()) {
                 OrderSummary o = ctx.recentOrders().get(0);
@@ -1163,22 +1630,116 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
 
                 messageType = "proposal";
                 messageRoute = "/don-hang/" + o.code();
-                actions.add(new AiChatResponse.QuickAction("🚀 Xem chi tiết đơn " + o.code(), "navigate", "/don-hang/" + o.code()));
-                actions.add(new AiChatResponse.QuickAction("🛡️ Kiểm tra bảo hành", "navigate", "/bao-hanh"));
+                actions.add(new AiChatResponse.QuickAction("Xem chi tiết đơn " + o.code(), "navigate", messageRoute));
+                actions.add(new AiChatResponse.QuickAction("Kiểm tra bảo hành", "navigate", "/bao-hanh"));
             } else if (!ctx.isMember()) {
                 reply.append("Để tra cứu tình trạng đơn hàng hoặc kiểm tra tiến độ giao linh kiện của bạn, bạn vui lòng **Đăng nhập** tài khoản nhé! 😊\n\n");
-                reply.append("CyberShop đồng bộ lộ trình giao hàng trực tiếp qua GHN Express, bạn sẽ xem được ngay vị trí bưu kiện của mình.");
-                actions.add(new AiChatResponse.QuickAction("🔑 Đăng nhập ngay", "navigate", "/dang-nhap"));
+                reply.append("TechZone đồng bộ lộ trình giao hàng trực tiếp qua GHN Express, bạn sẽ xem được ngay vị trí bưu kiện của mình.");
+                actions.add(new AiChatResponse.QuickAction("Đăng nhập ngay", "navigate", "/dang-nhap"));
             } else {
-                reply.append("Hiện tại bạn chưa có đơn hàng nào tại CyberShop. Bạn có muốn tham khảo các mẫu linh kiện hot hoặc công cụ AI Build PC không ạ? 🖥️");
-                actions.add(new AiChatResponse.QuickAction("🖥️ Thử AI Build PC", "navigate", "/build-pc"));
+                reply.append("Hiện tại bạn chưa có đơn hàng nào tại TechZone. Bạn có muốn tham khảo các mẫu linh kiện hot hoặc công cụ AI Build PC không ạ? 🖥️");
+                actions.add(new AiChatResponse.QuickAction("Thử AI Build PC", "navigate", "/build-pc"));
             }
-        } else if (isHardware && catalogContext != null && !catalogContext.isBlank()) {
-            reply.append("Dạ CyberBot đã tra cứu danh mục linh kiện thực tế tại CyberShop:\n\n");
-            reply.append(catalogContext).append("\n\n");
-            reply.append("👉 Bạn có muốn xem thêm linh kiện nào hoặc cần mình tư vấn tương thích không ạ?");
-            actions.add(new AiChatResponse.QuickAction("🖥️ Thử AI Build PC", "navigate", "/build-pc"));
-        } else if (msgLower.contains("bảo hành") || msgLower.contains("serial") || msgLower.contains("hỏng") || msgLower.contains("lỗi")) {
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType(messageType)
+                    .messageRoute(messageRoute)
+                    .quickActions(actions)
+                    .build();
+        }
+
+        // Branch 3: Sản phẩm ngoài danh mục kinh doanh (Laptop, Macbook, Điện thoại...)
+        if (msgLower.matches(".*\\b(laptop|macbook|ipad|máy tính bảng|tablet|iphone|điện thoại|smartphone)\\b.*")) {
+            reply.append("Dạ, **TechZone hiện chuyên sâu vào dải sản phẩm Máy tính để bàn (Desktop PC), Máy trạm Workstation và Linh kiện PC lắp ráp chính hãng**, shop hiện **chưa kinh doanh dòng sản phẩm máy tính xách tay (Laptop/Macbook) hay điện thoại di động**.\n\n");
+            reply.append("💡 **Gợi ý từ TechZone**:\n");
+            reply.append("* Nếu bạn cần hiệu năng cao để làm việc, dựng hình đồ họa hoặc chơi game ổn định, một bộ **Desktop PC cùng tầm giá sẽ mạnh hơn từ 40% đến 60%** so với Laptop cùng ngân sách, đồng thời dễ dàng nâng cấp linh kiện sau này.\n");
+            reply.append("* TechZone hỗ trợ **miễn phí công lắp ráp, cài đặt hệ điều hành và giao hàng tận nơi toàn quốc**.\n\n");
+            reply.append("Bạn có muốn tham khảo cấu hình Desktop PC tối ưu cho tầm ngân sách của mình không?");
+
+            actions.add(new AiChatResponse.QuickAction("Thử AI Build PC", "navigate", "/build-pc"));
+            actions.add(new AiChatResponse.QuickAction("Nhờ chuyên viên tư vấn", "connect_staff", null));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType("proposal")
+                    .messageRoute("/build-pc")
+                    .quickActions(actions)
+                    .build();
+        }
+
+        // Branch 4: Hướng dẫn xử lý sự cố kỹ thuật (Troubleshooting)
+        if (msgLower.matches(".*\\b(không lên|đen màn|không tín hiệu|no signal|màn hình xanh|bsod|quạt rú|nóng|sập nguồn|không nhận ram|lau ram|kêu bíp|chập chờn|treo máy)\\b.*")) {
+            reply.append("### Chẩn đoán & Hướng dẫn xử lý sự cố kỹ thuật từ TechZone:\n\n");
+            reply.append("CyberBot gợi ý các bước kiểm tra nhanh và hiệu quả nhất cho sự cố của bạn:\n\n");
+
+            if (msgLower.matches(".*\\b(không lên|đen màn|không tín hiệu|no signal)\\b.*")) {
+                reply.append("1. **Kiểm tra cổng cắm dây xuất hình (HDMI / DisplayPort)**:\n");
+                reply.append("   - Nếu máy có card màn hình rời (VGA), **bắt buộc phải cắm dây vào cổng của Card rời (ở phía dưới)**, TUYỆT ĐỐI không cắm vào cổng trên Mainboard (phía trên gần cổng USB).\n");
+                reply.append("2. **Vệ sinh và cắm lại chân RAM (Reseat RAM)**:\n");
+                reply.append("   - Rút nguồn điện, tháo các thanh RAM ra, dùng gôm/tẩy mềm lau nhẹ phần chân đồng tiếp xúc, sau đó cắm chặt lại vào đúng khe ưu tiên (khe 2 và khe 4 nếu chạy Dual Channel).\n");
+                reply.append("3. **Kiểm tra đèn báo Debug LED trên Mainboard**:\n");
+                reply.append("   - Quan sát xem đèn LED dừng ở vị trí nào (CPU, DRAM, VGA hay BOOT) để khoanh vùng chính xác linh kiện gặp vấn đề.\n\n");
+            } else if (msgLower.matches(".*\\b(màn hình xanh|bsod|treo máy)\\b.*")) {
+                reply.append("1. **Kiểm tra xung đột Driver hoặc cập nhật Windows**:\n");
+                reply.append("   - Ghi lại mã lỗi dừng (Stop Code như MEMORY_MANAGEMENT, CRITICAL_PROCESS_DIED).\n");
+                reply.append("   - Dùng phần mềm DDU gỡ sạch driver card đồ họa và cài lại bản mới nhất từ NVIDIA/AMD.\n");
+                reply.append("2. **Kiểm tra profile XMP / EXPO của RAM**:\n");
+                reply.append("   - Thử tạm tắt XMP/EXPO trong BIOS về tốc độ mặc định để kiểm tra tính ổn định.\n\n");
+            } else {
+                reply.append("1. **Kiểm tra nhiệt độ linh kiện & nguồn điện**:\n");
+                reply.append("   - Quạt tản nhiệt quay mạnh nhưng máy sập nguồn thường do CPU bị quá nhiệt (khô keo tản nhiệt hoặc bơm tản nước AIO gặp sự cố).\n");
+                reply.append("   - Đảm bảo đầu cấp nguồn 8-pin CPU và đầu 12VHPWR/PCIe cho VGA đã được cắm ngập khít hoàn toàn.\n\n");
+            }
+
+            reply.append("🔧 **Hỗ trợ miễn phí tại TechZone**:\n");
+            reply.append("* Quý khách có thể mang máy đến trực tiếp showroom TechZone để được kỹ thuật viên hỗ trợ vệ sinh, tra keo tản nhiệt và chẩn đoán lỗi hoàn toàn **miễn phí**!\n");
+            reply.append("* Hoặc bấm nút bên dưới để kết nối ngay với Chuyên viên kỹ thuật trực tuyến.");
+
+            actions.add(new AiChatResponse.QuickAction("Kết nối chuyên viên kỹ thuật", "connect_staff", null));
+            actions.add(new AiChatResponse.QuickAction("Tra cứu bảo hành", "navigate", "/bao-hanh"));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType("info")
+                    .quickActions(actions)
+                    .build();
+        }
+
+        // Branch 5: Tư vấn tương thích phần cứng (Compatibility)
+        if (msgLower.matches(".*\\b(tương thích|lắp được không|cắm được không|chạy chung|đi với nhau|hợp không|nguồn bao nhiêu watt|cần nguồn mấy watt|lga1700|am5|ddr4.*ddr5|ddr5.*ddr4)\\b.*")) {
+            return buildCompatibilityAdvisory(message, conversationId);
+        }
+
+        // Branch 6: So sánh sản phẩm (Comparison)
+        boolean isComparison = (msgLower.contains("so sánh") || msgLower.contains(" vs ") || msgLower.matches(".*(chọn|lấy|nên mua).*?(hay|hoặc|hơn).*"));
+        if (isComparison && products.size() >= 2) {
+            return buildComparisonAdvisory(message, products, conversationId);
+        }
+
+        // Branch 7: Tư vấn build cấu hình PC
+        if (msgLower.contains("build") || msgLower.contains("cấu hình") || msgLower.contains("dàn máy") || msgLower.matches(".*(pc gaming|pc đồ họa|pc văn phòng|pc đồ hoạ).*")) {
+            reply.append("### Tư vấn cấu hình máy tính TechZone:\n\n");
+            reply.append("* Để chọn linh kiện tối ưu ngân sách và đảm bảo **tương thích 100%**, bạn có thể sử dụng tính năng **AI Build PC** độc quyền của TechZone.\n");
+            reply.append("* Bạn chỉ cần nhập số tiền dự kiến và nhu cầu (chơi game esports/AAA, đồ họa 3D, dựng phim hay lập trình), hệ thống sẽ tự động phân bổ tỷ lệ ngân sách chuẩn xác từng linh kiện!\n");
+            reply.append("* **Đặc quyền tại TechZone**: Miễn phí công lắp ráp, đi dây thẩm mỹ, test stress-test 100% trước khi giao và tặng kèm cài đặt Windows dùng thử.\n\n");
+            reply.append("👉 Bạn có muốn mình đưa bạn tới công cụ AI Build PC ngay bây giờ không?");
+
+            messageType = "proposal";
+            messageRoute = "/build-pc";
+            actions.add(new AiChatResponse.QuickAction("Mở công cụ AI Build PC", "navigate", "/build-pc"));
+            actions.add(new AiChatResponse.QuickAction("Nhờ chuyên viên lên cấu hình", "connect_staff", null));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType(messageType)
+                    .messageRoute(messageRoute)
+                    .quickActions(actions)
+                    .build();
+        }
+
+        // Branch 8: Chính sách bảo hành
+        if (msgLower.contains("bảo hành") || msgLower.contains("serial") || msgLower.contains("đổi trả") || msgLower.contains("1 đổi 1")) {
             if (ctx.isMember() && !ctx.activeWarranties().isEmpty()) {
                 reply.append("CyberBot đã tìm thấy các linh kiện đang trong thời hạn bảo hành của bạn:\n\n");
                 for (WarrantySummary w : ctx.activeWarranties()) {
@@ -1189,46 +1750,88 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 reply.append("\n👉 **Bạn có muốn mình đưa bạn tới trang Bảo hành cá nhân để xem chi tiết hoặc tạo yêu cầu hỗ trợ không?**");
                 messageType = "proposal";
                 messageRoute = "/bao-hanh";
-                actions.add(new AiChatResponse.QuickAction("🛡️ Đến trang Bảo hành", "navigate", "/bao-hanh"));
+                actions.add(new AiChatResponse.QuickAction("Đến trang Bảo hành", "navigate", "/bao-hanh"));
             } else {
-                reply.append("Chính sách bảo hành tại CyberShop:\n\n");
-                reply.append("* **1 đổi 1 trong 30 ngày** nếu gặp lỗi phần cứng do nhà sản xuất.\n");
-                reply.append("* Linh kiện chính hãng bảo hành từ 36 đến 60 tháng.\n");
-                reply.append("* Đầy đủ tem niêm phong và hóa đơn điện tử.\n\n");
-                reply.append("👉 Bạn có thể xem chi tiết chính sách tại trang Bảo hành!");
-                actions.add(new AiChatResponse.QuickAction("🛡️ Xem trang Bảo hành", "navigate", "/bao-hanh"));
+                reply.append("### Chính sách bảo hành chính hãng tại TechZone:\n\n");
+                reply.append("* **1 đổi 1 trong 30 ngày đầu**: Áp dụng ngay nếu linh kiện gặp lỗi phần cứng do nhà sản xuất.\n");
+                reply.append("* **Thời hạn bảo hành chuẩn hãng**: Từ 36 đến 60 tháng tùy dòng linh kiện (CPU, Main, VGA, Nguồn...).\n");
+                reply.append("* **Tem niêm phong & Serial điện tử**: Tra cứu tình trạng bảo hành trực tuyến 24/7 chỉ với Serial máy.\n");
+                reply.append("* **Hỗ trợ bảo hành tận tâm**: Kỹ thuật viên tiếp nhận và xử lý nhanh chóng trong 3 - 7 ngày làm việc.\n\n");
+                reply.append("👉 Bạn có thể xem chi tiết hoặc tra cứu thẻ bảo hành tại trang Bảo hành!");
+                actions.add(new AiChatResponse.QuickAction("Xem trang Bảo hành", "navigate", "/bao-hanh"));
             }
-        } else if (msgLower.contains("ship") || msgLower.contains("ghn") || msgLower.contains("vận chuyển") || msgLower.contains("bao lâu")) {
-            reply.append("**Chính sách giao hàng qua Giao Hàng Nhanh (GHN Express) tại TechZone**:\n\n");
-            reply.append("* **Thời gian**: Nội thành TP.HCM nhận hàng trong 24h, các tỉnh thành khác từ 1 - 3 ngày làm việc.\n");
-            reply.append("* **Đồng kiểm**: Áp dụng 'Cho xem hàng không cho thử' — bạn được mở hộp kiểm tra ngoại quan linh kiện và tem niêm phong trước khi nhận.\n");
-            reply.append("* **Thanh toán**: Hỗ trợ trả tiền mặt COD khi shipper giao tới nhà hoặc chuyển khoản online qua VNPay.");
-            actions.add(new AiChatResponse.QuickAction("Xem giỏ hàng", "navigate", "/gio-hang"));
-        } else if (msgLower.contains("build") || msgLower.contains("cấu hình") || msgLower.contains("pc")) {
-            reply.append("**Tư vấn cấu hình máy tính TechZone**:\n\n");
-            reply.append("* Để chọn linh kiện tối ưu ngân sách và tương thích 100%, bạn có thể dùng thử tính năng **AI Build PC** độc quyền của TechZone.\n");
-            reply.append("* Chỉ cần nhập số tiền và nhu cầu (chơi game, đồ họa 3D, làm việc văn phòng), AI sẽ tự động phân bổ linh kiện chuẩn nhất!\n\n");
-            reply.append("Bạn có muốn mình đưa bạn sang trang AI Build PC ngay bây giờ không?");
-            messageType = "proposal";
-            messageRoute = "/build-pc";
-            actions.add(new AiChatResponse.QuickAction("Mở công cụ AI Build PC", "navigate", "/build-pc"));
-        } else {
-            reply.append("Xin chào! Mình là **CyberBot** — Trợ lý ảo chính thức của TechZone.\n\n");
-            reply.append("Mình có thể hỗ trợ bạn:\n");
-            reply.append("* **Tra cứu linh kiện & kiểm tra kho hàng thực tế**\n");
-            reply.append("* **Tra cứu đơn hàng & vận chuyển GHN**\n");
-            reply.append("* **Kiểm tra thời hạn bảo hành linh kiện & số Serial**\n");
-            reply.append("* **Tư vấn cấu hình máy tính & tính tương thích phần cứng**\n");
-            reply.append("* **Giải đáp chính sách thanh toán VNPay / COD và đổi trả 1-1**\n\n");
-            reply.append("Bạn cần hỗ trợ điều gì hôm nay?");
-
-            if (ctx.isMember() && !ctx.recentOrders().isEmpty()) {
-                actions.add(new AiChatResponse.QuickAction("Đơn hàng gần nhất", "ask", "Đơn hàng gần nhất của tôi thế nào?"));
-            }
-            actions.add(new AiChatResponse.QuickAction("Kiểm tra bảo hành", "ask", "Linh kiện của tôi còn bảo hành bao lâu?"));
-            actions.add(new AiChatResponse.QuickAction("Tư vấn build PC", "navigate", "/build-pc"));
-            actions.add(new AiChatResponse.QuickAction("Chính sách GHN", "ask", "Chính sách giao hàng GHN thế nào?"));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType(messageType)
+                    .messageRoute(messageRoute)
+                    .quickActions(actions)
+                    .build();
         }
+
+        // Branch 9: Tư vấn chi tiết linh kiện / sản phẩm
+        if (!products.isEmpty() || isProductQuery(resolvedQuery)) {
+            return buildSmartProductAdvisory(message, resolvedQuery, products, conversationId);
+        }
+
+        // Branch 10: Chính sách giao hàng GHN
+        if (msgLower.contains("ship") || msgLower.contains("ghn") || msgLower.contains("giao hàng") || msgLower.contains("vận chuyển") || msgLower.contains("bao lâu") || msgLower.contains("đồng kiểm")) {
+            reply.append("### Chính sách vận chuyển qua Giao Hàng Nhanh (GHN Express) tại TechZone:\n\n");
+            reply.append("* **Thời gian giao hàng**:\n");
+            reply.append("  - Khu vực nội thành TP.HCM: Nhận hàng nhanh trong 24 giờ.\n");
+            reply.append("  - Các tỉnh thành khác trên toàn quốc: Từ 1 – 3 ngày làm việc.\n");
+            reply.append("* **Đặc quyền đồng kiểm (`CHOXEMHANGKHONGTHU`)**:\n");
+            reply.append("  - Quý khách được phép mở hộp kiểm tra ngoại quan gói hàng, tem niêm phong nguyên vẹn trước khi nhận hàng và thanh toán.\n");
+            reply.append("* **Quy cách đóng gói an toàn**:\n");
+            reply.append("  - Toàn bộ linh kiện giữ nguyên hộp Full Box nguyên seal của hãng, đóng thùng carton chèn túi khí chống sốc tiêu chuẩn hàng giá trị cao.\n");
+            reply.append("* **Phương thức thanh toán**:\n");
+            reply.append("  - Trả tiền mặt khi nhận hàng (COD) hoặc chuyển khoản trực tuyến qua cổng VNPay.\n");
+
+            actions.add(new AiChatResponse.QuickAction("Xem giỏ hàng", "navigate", "/gio-hang"));
+            actions.add(new AiChatResponse.QuickAction("Mở AI Build PC", "navigate", "/build-pc"));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType("info")
+                    .quickActions(actions)
+                    .build();
+        }
+
+        // Branch 11: Thanh toán & VAT
+        if (msgLower.contains("thanh toán") || msgLower.contains("vnpay") || msgLower.contains("cod") || msgLower.contains("hóa đơn") || msgLower.contains("vat") || msgLower.contains("trả góp")) {
+            reply.append("### Phương thức thanh toán & Xuất hóa đơn VAT tại TechZone:\n\n");
+            reply.append("1. **Thanh toán khi nhận hàng (COD)**: Áp dụng trên toàn quốc cho các đơn hàng linh kiện chuẩn.\n");
+            reply.append("2. **Thanh toán trực tuyến qua VNPay**: Hỗ trợ quét mã QR qua ứng dụng ngân hàng, thẻ ATM nội địa hoặc thẻ quốc tế Visa/Mastercard an toàn tuyệt đối.\n");
+            reply.append("3. **Hóa đơn điện tử VAT**: 100% sản phẩm và linh kiện tại TechZone đều có thể xuất hóa đơn VAT doanh nghiệp theo quy định. Quý khách vui lòng cung cấp Mã số thuế và Tên công ty khi đặt hàng hoặc nhắn chuyên viên hỗ trợ.\n\n");
+            reply.append("👉 Bạn cần hỗ trợ thêm về khâu thanh toán hay muốn kết nối chuyên viên để tạo đơn riêng?");
+
+            actions.add(new AiChatResponse.QuickAction("Xem giỏ hàng", "navigate", "/gio-hang"));
+            actions.add(new AiChatResponse.QuickAction("Kết nối chuyên viên CSKH", "connect_staff", null));
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message(reply.toString())
+                    .messageType("info")
+                    .quickActions(actions)
+                    .build();
+        }
+
+        // Branch 12: Chào hỏi chung & Menu nghiệp vụ
+        reply.append("Xin chào! Mình là **CyberBot** — Trợ lý AI kỹ thuật chính thức của TechZone.\n\n");
+        reply.append("Mình có thể hỗ trợ bạn ngay lập tức:\n");
+        reply.append("* **Tra cứu linh kiện & kiểm tra kho hàng thời gian thực** (giá bán, tồn kho, thông số)\n");
+        reply.append("* **Kiểm tra tiến độ đơn hàng & lộ trình bưu tá GHN Express**\n");
+        reply.append("* **Tra cứu thời hạn bảo hành linh kiện & số Serial điện tử**\n");
+        reply.append("* **Tư vấn tính tương thích phần cứng & cấu hình máy tính tối ưu**\n");
+        reply.append("* **Hướng dẫn xử lý sự cố kỹ thuật máy tính (không lên hình, lỏng RAM, BSOD)**\n");
+        reply.append("* **Giải đáp chính sách thanh toán VNPay / COD và bảo hành 1 đổi 1 trong 30 ngày**\n\n");
+        reply.append("Bạn cần hỗ trợ điều gì hôm nay?");
+
+        if (ctx.isMember() && !ctx.recentOrders().isEmpty()) {
+            actions.add(new AiChatResponse.QuickAction("Đơn hàng gần nhất", "ask", "Đơn hàng gần nhất của tôi thế nào?"));
+        }
+        actions.add(new AiChatResponse.QuickAction("Kiểm tra bảo hành", "ask", "Linh kiện của tôi còn bảo hành bao lâu?"));
+        actions.add(new AiChatResponse.QuickAction("Tư vấn build PC", "navigate", "/build-pc"));
+        actions.add(new AiChatResponse.QuickAction("Chính sách GHN", "ask", "Chính sách giao hàng GHN thế nào?"));
 
         return AiChatResponse.builder()
                 .conversationId(conversationId)

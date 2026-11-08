@@ -234,6 +234,9 @@ public class OrderServiceImpl implements OrderService {
             try {
                 promotionApi.markUsed(order.getId());
             } catch (Exception ignored) {}
+            if ("shipping".equalsIgnoreCase(order.getDeliveryType())) {
+                autoIssueShippingWarranty(order);
+            }
         }
         return toResponse(order);
     }
@@ -489,5 +492,26 @@ public class OrderServiceImpl implements OrderService {
 
     private String normalizePhone(String phone) {
         return phone == null ? "" : phone.replaceAll("[^0-9]", "");
+    }
+
+    private void autoIssueShippingWarranty(Order order) {
+        try {
+            List<OrderResponse.Item> items = findOrderItems(order.getId());
+            String suffix = (order.getOrderCode() != null && order.getOrderCode().length() >= 6)
+                    ? order.getOrderCode().substring(order.getOrderCode().length() - 6).toUpperCase(Locale.ROOT)
+                    : "GHN";
+            List<PickupWarrantyApi.Unit> units = new ArrayList<>();
+            for (OrderResponse.Item item : items) {
+                if (item.warrantyPeriodMonths() > 0) {
+                    for (int i = 0; i < item.quantity(); i++) {
+                        String serial = "SN-GHN-" + suffix + "-" + item.id() + (item.quantity() > 1 ? "-" + (i + 1) : "");
+                        units.add(new PickupWarrantyApi.Unit(item.id(), serial, item.warrantyPeriodMonths()));
+                    }
+                }
+            }
+            if (!units.isEmpty()) {
+                pickupWarrantyApi.issue(units, LocalDateTime.now(clock));
+            }
+        } catch (Exception ignored) {}
     }
 }
