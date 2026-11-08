@@ -239,6 +239,7 @@ public class WarrantyCardService {
                     .valid(WarrantyCard.ACTIVE.equals(card.getStatus()) && !today.isBefore(card.getStartDate().toLocalDate())
                             && !today.isAfter(displayEnd.toLocalDate()))
                     .productName(order == null ? null : order.productName())
+                    .pcCustomId(order == null ? null : order.pcCustomId())
                     .variantName(order == null ? null : order.variantName())
                     .orderCode(order == null ? null : order.orderCode())
                     .replacedBySerialNumber(next == null ? null : next.getSerialNumber())
@@ -299,6 +300,7 @@ public class WarrantyCardService {
             WarrantyCard card = cardById.get(t.getWarrantyCardId());
             dto.setIntakeCode(codes.get(t.getIntakeId()));
             dto.setProductName(order == null ? null : order.productName());
+            dto.setPcCustomId(order == null ? null : order.pcCustomId());
             dto.setSerialNumber(card == null ? null : card.getSerialNumber());
             dto.setUnderWarrantyAtIntake(WarrantyRules.wasCoveredOn(card, ServiceRequestService.receivedDay(t)));
             dto.setWarrantyStartDate(card == null ? null : card.getStartDate());
@@ -351,6 +353,7 @@ public class WarrantyCardService {
         dto.setReplacementWarrantyEndDate(replacement == null ? null : replacement.getEndDate());
         dto.setReplacementWarrantyRemainingDays(replacementRemainingDays(replacement));
         dto.setProductName(order == null ? null : order.productName());
+        dto.setPcCustomId(order == null ? null : order.pcCustomId());
         dto.setOrderCode(order == null ? null : order.orderCode());
         return dto;
     }
