@@ -27,6 +27,7 @@ public class ServiceRequestSummaryDto {
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
     private Integer warrantyCardId;
+    private Integer pcCustomId;
     private boolean underWarrantyAtIntake;
     private String serialNumber;
     private LocalDateTime warrantyStartDate;

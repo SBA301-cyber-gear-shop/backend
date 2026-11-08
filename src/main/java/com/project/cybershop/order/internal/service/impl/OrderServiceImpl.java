@@ -30,6 +30,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -64,6 +66,7 @@ public class OrderServiceImpl implements OrderService {
     private final PaymentApi paymentApi;
     private final PickupWarrantyApi pickupWarrantyApi;
     private final Clock clock;
+    private final JdbcTemplate jdbc;
 
     // =========================================
     // ĐẶT HÀNG VÀ GIỮ TỒN KHO
@@ -105,6 +108,7 @@ public class OrderServiceImpl implements OrderService {
             }
         }
         Map<Integer, Integer> quantities = groupQuantities(cartItems);
+        validatePcGroups(request.pcGroups(), quantities);
         catalogApi.lockVariantsForPurchase(new ArrayList<>(quantities.keySet()));
         promotionApi.syncProductPrices(new ArrayList<>(quantities.keySet()));
 
@@ -145,7 +149,7 @@ public class OrderServiceImpl implements OrderService {
         }
         order = orderRepository.saveAndFlush(order);
 
-        createOrderItems(order.getId(), quantities);
+        createOrderItems(order.getId(), customer.getId(), quantities, request.pcGroups());
         promotionApi.reserve(voucher, customer.getId(), order.getId(), finalAmount.signum() == 0);
 
         String paymentUrl = null;
@@ -376,8 +380,35 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private void createOrderItems(Integer orderId, Map<Integer, Integer> quantities) {
+    static void validatePcGroups(List<PlaceOrderRequest.PcGroup> groups, Map<Integer, Integer> quantities) {
+        if (groups == null) return;
+        Set<Integer> used = new HashSet<>();
+        for (var group : groups) {
+            if (group == null || group.parts() == null || group.parts().size() < 2)
+                throw new BusinessException("Bộ PC không đầy đủ. Vui lòng kiểm tra giỏ hàng.");
+            for (var part : group.parts()) {
+                if (part == null || part.variantId() == null || part.quantity() == null || part.quantity() <= 0
+                        || part.role() == null || part.role().isBlank() || part.role().length() > 50
+                        || !used.add(part.variantId()) || !part.quantity().equals(quantities.get(part.variantId())))
+                    throw new BusinessException("Linh kiện bộ PC không khớp giỏ hàng hoặc trùng hàng mua lẻ. Vui lòng kiểm tra giỏ hàng.");
+            }
+        }
+    }
+
+    private void createOrderItems(Integer orderId, Integer userId, Map<Integer, Integer> quantities, List<PlaceOrderRequest.PcGroup> groups) {
         List<OrderItem> items = new ArrayList<>();
+        Map<Integer, Integer> groupIds = new HashMap<>();
+        if (groups != null) for (var group : groups) {
+            var keys = new GeneratedKeyHolder();
+            jdbc.update(connection -> {
+                var statement = connection.prepareStatement("INSERT INTO pc_customs (order_id, user_id, total_price) VALUES (?, ?, 0)", new String[]{"id"});
+                statement.setInt(1, orderId);
+                statement.setInt(2, userId);
+                return statement;
+            }, keys);
+            Integer pcId = java.util.Objects.requireNonNull(keys.getKey()).intValue();
+            for (var part : group.parts()) groupIds.put(part.variantId(), pcId);
+        }
         for (Map.Entry<Integer, Integer> entry : quantities.entrySet()) {
             PurchaseVariantResponse product = catalogApi.getPurchaseVariant(entry.getKey());
             Integer quantity = entry.getValue();
@@ -398,7 +429,17 @@ public class OrderServiceImpl implements OrderService {
             }
 
             BigDecimal subtotal = product.price().multiply(BigDecimal.valueOf(quantity));
-            items.add(orderMapper.toOrderItem(product, orderId, quantity, productName, subtotal));
+            OrderItem item = orderMapper.toOrderItem(product, orderId, quantity, productName, subtotal);
+            item.setPcCustomId(groupIds.get(product.variantId()));
+            items.add(item);
+        }
+
+        if (groups != null) for (var group : groups) {
+            for (var part : group.parts()) {
+                OrderItem item = items.stream().filter(i -> i.getProductVariantId().equals(part.variantId())).findFirst().orElseThrow();
+                jdbc.update("INSERT INTO pc_custom_items (pc_custom_id, product_variant_id, quantity, unit_price, component_role) VALUES (?, ?, ?, ?, ?)", item.getPcCustomId(), part.variantId(), part.quantity(), item.getUnitPrice(), part.role());
+                jdbc.update("UPDATE pc_customs SET total_price = total_price + ? WHERE id = ?", item.getSubtotal(), item.getPcCustomId());
+            }
         }
 
         // Ghi xong dòng hàng trước khi payment/bảo hành đọc qua API module khác.

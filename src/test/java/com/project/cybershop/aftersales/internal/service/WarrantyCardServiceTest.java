@@ -81,10 +81,12 @@ class WarrantyCardServiceTest {
         request.setCreatedAt(today.minusDays(5).atStartOfDay());
         request.setStatus(ServiceRequestStatus.REPAIRING);
         when(cards.findAllById(any())).thenReturn(List.of(card));
-        when(orders.byCardIds(any())).thenReturn(Map.of());
+        when(orders.byCardIds(any())).thenReturn(Map.of(1, new OrderLookup.OrderInfo(
+                1, 2, "RAM", null, null, 12, 3, "ORDER", null, null, 4, null, null, 7, 5)));
         when(mapper.toSummary(request)).thenAnswer(invocation -> new ServiceRequestSummaryDto());
 
         ServiceRequestSummaryDto open = service.summaries(List.of(request)).get(0);
+        assertEquals(7, open.getPcCustomId());
         assertEquals(today.minusDays(5), open.getWarrantyRemainingAsOf());
         assertEquals(25L, open.getWarrantyRemainingDays());
         assertEquals(card.getEndDate(), open.getWarrantyEndDate());
