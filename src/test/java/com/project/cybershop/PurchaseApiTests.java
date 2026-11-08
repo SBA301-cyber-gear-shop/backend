@@ -125,10 +125,10 @@ class PurchaseApiTests {
 
         mvc.perform(put("/api/order-items/611/review").header("Authorization", token)
                 .contentType("application/json").content("{\"rating\":3,\"comment\":\"Đã sửa nhận xét\"}"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isBadRequest());
         mvc.perform(get("/api/products"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].averageRating").value(3.5))
+                .andExpect(jsonPath("$[0].averageRating").value(4.5))
                 .andExpect(jsonPath("$[0].reviewCount").value(2))
                 .andExpect(jsonPath("$[0].buyerCount").value(2));
     }
@@ -325,4 +325,29 @@ class PurchaseApiTests {
                 "SELECT count(*) FROM cart_items WHERE product_variant_id = 101", Integer.class);
         assertEquals(0, purchasedCartItems);
     }
+
+    @Test
+    void explicitSelectionRejectsMissingAndInvalidItemsInsteadOfBuyingAnotherSubset() throws Exception {
+        addItem(101, 1);
+        for (String selection : new String[]{"[]", "[101,999]", "[101,null]", "[101,-1]"}) {
+            mvc.perform(post("/api/checkout/validate").header("Authorization", token)
+                            .contentType("application/json").content("{\"itemVariantIds\":" + selection + "}"))
+                    .andExpect(status().isBadRequest());
+            mvc.perform(post("/api/checkout/details/preview").header("Authorization", token)
+                            .contentType("application/json").content("{\"itemVariantIds\":" + selection + "}"))
+                    .andExpect(status().isBadRequest());
+            mvc.perform(post("/api/orders").header("Authorization", token)
+                            .header("Idempotency-Key", java.util.UUID.randomUUID().toString())
+                            .contentType("application/json").content("""
+                                    {"pickupName":"Khách","pickupPhone":"0900000128","method":"store",
+                                     "expectedTotal":1200000,"expectedDiscount":0,"itemVariantIds":%s}
+                                    """.formatted(selection)))
+                    .andExpect(status().isBadRequest());
+        }
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM orders", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payments", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT quantity FROM cart_items", Integer.class));
+        assertEquals(3, jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=101", Integer.class));
+    }
+
 }

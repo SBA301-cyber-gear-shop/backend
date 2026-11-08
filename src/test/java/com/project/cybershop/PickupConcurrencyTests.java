@@ -1,5 +1,8 @@
 package com.project.cybershop;
 
+import com.project.cybershop.order.api.dto.request.CollectPaymentRequest;
+import com.project.cybershop.order.api.dto.request.HandoverRequest;
+import com.project.cybershop.order.api.dto.response.OrderResponse;
 import com.project.cybershop.order.internal.service.OrderService;
 import com.project.cybershop.order.api.dto.request.PlaceOrderRequest;
 import org.junit.jupiter.api.*;
@@ -15,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class PickupConcurrencyTests {
     @Autowired JdbcTemplate jdbc;
     @Autowired OrderService orders;
+    @Autowired com.project.cybershop.order.internal.service.CartService carts;
     @Autowired com.project.cybershop.review.internal.service.ReviewService reviews;
     int first,second;
 
@@ -77,13 +81,13 @@ class PickupConcurrencyTests {
         ExecutorService pool = Executors.newFixedThreadPool(2);
 
         try {
-            Callable<com.project.cybershop.order.api.dto.response.OrderResponse> placeOrder = () -> {
+            Callable<OrderResponse> placeOrder = () -> {
                 barrier.await(10, TimeUnit.SECONDS);
                 return orders.place("customer@techzone.demo", key, request(""));
             };
 
-            Future<com.project.cybershop.order.api.dto.response.OrderResponse> firstAttempt = pool.submit(placeOrder);
-            Future<com.project.cybershop.order.api.dto.response.OrderResponse> retry = pool.submit(placeOrder);
+            Future<OrderResponse> firstAttempt = pool.submit(placeOrder);
+            Future<OrderResponse> retry = pool.submit(placeOrder);
 
             assertEquals(firstAttempt.get(20, TimeUnit.SECONDS).id(), retry.get(20, TimeUnit.SECONDS).id());
         } finally {
@@ -125,13 +129,13 @@ class PickupConcurrencyTests {
         var request=new PlaceOrderRequest("Khách","0900000128","","","store",null,new BigDecimal("2000000"),BigDecimal.ZERO);
         var order=orders.place("customer@techzone.demo",UUID.randomUUID().toString(),request);
         for(String status : new String[]{"confirmed","preparing","ready_for_pickup"}) orders.advance("staff@techzone.demo",order.orderCode(),status);
-        orders.collect("staff@techzone.demo",order.orderCode(),new com.project.cybershop.order.api.dto.request.CollectPaymentRequest(new BigDecimal("2000000"),null));
+        orders.collect("staff@techzone.demo",order.orderCode(),new CollectPaymentRequest(new BigDecimal("2000000"),null));
         int itemId=order.items().get(0).id();
         jdbc.update("INSERT INTO warranty_cards (order_item_id,serial_number,start_date,end_date,status) VALUES (?,'ALREADY-USED',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'active')",itemId);
-        var devices=java.util.List.of(new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId,"FIRST-NEW"),
-                new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId,"ALREADY-USED"));
+        var devices=java.util.List.of(new HandoverRequest.Device(itemId,"FIRST-NEW"),
+                new HandoverRequest.Device(itemId,"ALREADY-USED"));
         assertThrows(com.project.cybershop.shared.exception.BusinessException.class,()->orders.handover("staff@techzone.demo",order.orderCode(),
-                new com.project.cybershop.order.api.dto.request.HandoverRequest("0900000128",true,devices)));
+                new HandoverRequest("0900000128",true,devices)));
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM warranty_cards",Integer.class));
         assertEquals("ready_for_pickup",orders.myOrder("customer@techzone.demo",order.orderCode()).status());
     }
@@ -142,11 +146,11 @@ class PickupConcurrencyTests {
             orders.advance("staff@techzone.demo", order.orderCode(), status);
         }
         orders.collect("staff@techzone.demo", order.orderCode(),
-                new com.project.cybershop.order.api.dto.request.CollectPaymentRequest(new BigDecimal("1000000"), null));
+                new CollectPaymentRequest(new BigDecimal("1000000"), null));
         int itemId = order.items().get(0).id();
         orders.handover("staff@techzone.demo", order.orderCode(),
-                new com.project.cybershop.order.api.dto.request.HandoverRequest("0900000128", true,
-                        java.util.List.of(new com.project.cybershop.order.api.dto.request.HandoverRequest.Device(itemId, "REVIEW-RACE"))));
+                new HandoverRequest("0900000128", true,
+                        java.util.List.of(new HandoverRequest.Device(itemId, "REVIEW-RACE"))));
 
         var barrier = new CyclicBarrier(2);
         var pool = Executors.newFixedThreadPool(2);
@@ -170,5 +174,124 @@ class PickupConcurrencyTests {
         }
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM reviews WHERE order_item_id=?", Integer.class, itemId));
         assertEquals(1, reviews.forVariant(301).size());
+    }
+    @Test
+    void invalidBatchItemRollsBackEarlierCartChanges() {
+        jdbc.update("UPDATE product_variants SET stock_quantity=5 WHERE id=301");
+        assertThrows(com.project.cybershop.shared.exception.ResourceNotFoundException.class,
+                () -> carts.addBatchToCart(first, java.util.List.of(
+                        new com.project.cybershop.order.api.dto.request.AddToCartRequest(301, 1),
+                        new com.project.cybershop.order.api.dto.request.AddToCartRequest(999, 1))));
+        assertEquals(1, jdbc.queryForObject("""
+                SELECT quantity FROM cart_items WHERE cart_id=(SELECT id FROM carts WHERE user_id=?)
+                """, Integer.class, first));
+    }
+
+    @Test
+    void concurrentCartAddsMergeIntoOneLineWithoutLostQuantities() throws Exception {
+        jdbc.update("UPDATE product_variants SET stock_quantity=5 WHERE id=301");
+        var addition = new com.project.cybershop.order.api.dto.request.AddToCartRequest(301, 1);
+        assertEquals(2, runConcurrent(
+                () -> carts.addToCart(first, addition), () -> carts.addToCart(first, addition)));
+        assertEquals(1, jdbc.queryForObject("""
+                SELECT count(*) FROM cart_items WHERE cart_id=(SELECT id FROM carts WHERE user_id=?)
+                """, Integer.class, first));
+        assertEquals(3, jdbc.queryForObject("""
+                SELECT quantity FROM cart_items WHERE cart_id=(SELECT id FROM carts WHERE user_id=?)
+                """, Integer.class, first));
+        assertEquals(5, jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=301", Integer.class));
+    }
+
+    @Test
+    void distinctConcurrentCheckoutKeysCannotPurchaseTheSameCartTwice() throws Exception {
+        assertEquals(1, runConcurrent(
+                () -> orders.place("customer@techzone.demo", UUID.randomUUID().toString(), request("")),
+                () -> orders.place("customer@techzone.demo", UUID.randomUUID().toString(), request(""))));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM orders", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=301", Integer.class));
+    }
+
+    @Test
+    void simultaneousCollectionsRecordOnePaymentAndKeepTheFirstReference() throws Exception {
+        var order = orders.place("customer@techzone.demo", UUID.randomUUID().toString(), request(""));
+        assertEquals(2, runConcurrent(
+                () -> orders.collect("staff@techzone.demo", order.orderCode(),
+                        new CollectPaymentRequest(new BigDecimal("1000000"), "RECEIPT-A")),
+                () -> orders.collect("staff@techzone.demo", order.orderCode(),
+                        new CollectPaymentRequest(new BigDecimal("1000000"), "RECEIPT-B"))));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments", Integer.class));
+        assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments", String.class));
+        assertTrue(java.util.Set.of("RECEIPT-A", "RECEIPT-B").contains(
+                jdbc.queryForObject("SELECT transaction_reference FROM payments", String.class)));
+    }
+
+    @Test
+    void collectionRacingCancellationCannotLeaveAPaidCanceledOrder() throws Exception {
+        var order = orders.place("customer@techzone.demo", UUID.randomUUID().toString(), request(""));
+        assertEquals(1, runConcurrent(
+                () -> orders.collect("staff@techzone.demo", order.orderCode(),
+                        new CollectPaymentRequest(new BigDecimal("1000000"), "RACE-COLLECT")),
+                () -> orders.cancel("customer@techzone.demo", order.orderCode(), false, "Khách đổi nhu cầu")));
+        String status = jdbc.queryForObject("SELECT status FROM orders", String.class);
+        boolean canceled = "canceled".equals(status);
+        assertTrue(canceled || "pending".equals(status));
+        assertEquals(canceled ? "CANCELED" : "SUCCESS", jdbc.queryForObject("SELECT status FROM payments", String.class));
+        assertEquals(canceled ? 1 : 0, jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=301", Integer.class));
+    }
+
+    @Test
+    void concurrentHandoversIssueOnlyOneWarrantyPerDevice() throws Exception {
+        var order = orders.place("customer@techzone.demo", UUID.randomUUID().toString(), request(""));
+        for (String status : new String[]{"confirmed", "preparing", "ready_for_pickup"}) {
+            orders.advance("staff@techzone.demo", order.orderCode(), status);
+        }
+        orders.collect("staff@techzone.demo", order.orderCode(),
+                new CollectPaymentRequest(new BigDecimal("1000000"), null));
+        var handover = new HandoverRequest("+84900000128", true,
+                java.util.List.of(new HandoverRequest.Device(order.items().get(0).id(), "HANDOVER-RACE")));
+        assertEquals(1, runConcurrent(
+                () -> orders.handover("staff@techzone.demo", order.orderCode(), handover),
+                () -> orders.handover("staff@techzone.demo", order.orderCode(), handover)));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM warranty_cards", Integer.class));
+        assertEquals("completed", jdbc.queryForObject("SELECT status FROM orders", String.class));
+    }
+
+    @Test
+    void missingPaymentBlocksCollectionAndCancellationEvenForAFreeOrder() {
+        jdbc.update("UPDATE product_variants SET price=0 WHERE id=301");
+        var freeRequest = new PlaceOrderRequest("Khách", "0900000128", "", "", "store", null,
+                BigDecimal.ZERO, BigDecimal.ZERO);
+        var order = orders.place("customer@techzone.demo", UUID.randomUUID().toString(), freeRequest);
+        jdbc.update("DELETE FROM payments WHERE order_id=?", order.id());
+        assertThrows(com.project.cybershop.shared.exception.BusinessException.class,
+                () -> orders.collect("staff@techzone.demo", order.orderCode(), new CollectPaymentRequest(BigDecimal.ZERO, null)));
+        assertThrows(com.project.cybershop.shared.exception.BusinessException.class,
+                () -> orders.cancel("customer@techzone.demo", order.orderCode(), false, "Khách đổi nhu cầu"));
+        assertEquals("pending", jdbc.queryForObject("SELECT status FROM orders", String.class));
+        assertEquals(0, jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=301", Integer.class));
+    }
+
+    private int runConcurrent(Runnable firstAction, Runnable secondAction) throws Exception {
+        var barrier = new CyclicBarrier(2);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var firstResult = pool.submit(() -> runAfterBarrier(barrier, firstAction));
+            var secondResult = pool.submit(() -> runAfterBarrier(barrier, secondAction));
+            return (firstResult.get(20, TimeUnit.SECONDS) ? 1 : 0)
+                    + (secondResult.get(20, TimeUnit.SECONDS) ? 1 : 0);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private boolean runAfterBarrier(CyclicBarrier barrier, Runnable action) throws Exception {
+        barrier.await(10, TimeUnit.SECONDS);
+        try {
+            action.run();
+            return true;
+        } catch (com.project.cybershop.shared.exception.BusinessException rejected) {
+            return false;
+        }
     }
 }

@@ -38,7 +38,7 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     public void collect(Integer orderId, BigDecimal receivedAmount, String reference) {
-        jdbc.queryForList("SELECT id FROM payments WHERE order_id=? FOR UPDATE", orderId);
+        lockStoredPayment(orderId);
         var payment = get(orderId);
         if (receivedAmount == null || receivedAmount.compareTo(payment.amount()) < 0)
             throw new BusinessException("Chưa nhận đủ tiền. Chưa thể xác nhận thanh toán.");
@@ -51,9 +51,16 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     public void cancel(Integer orderId) {
+        lockStoredPayment(orderId);
         var payment = get(orderId);
         if ("SUCCESS".equals(payment.status()) && payment.amount().signum() > 0)
             throw new BusinessException("Đơn đã thanh toán cần được xử lý hoàn tiền trước khi hủy.");
         jdbc.update("UPDATE payments SET status='CANCELED' WHERE order_id=?", orderId);
+    }
+
+    private void lockStoredPayment(Integer orderId) {
+        if (jdbc.queryForList("SELECT id FROM payments WHERE order_id=? FOR UPDATE", orderId).size() != 1) {
+            throw new BusinessException("Không tìm thấy khoản thanh toán hợp lệ của đơn hàng.");
+        }
     }
 }

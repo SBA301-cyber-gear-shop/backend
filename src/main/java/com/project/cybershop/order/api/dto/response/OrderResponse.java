@@ -6,7 +6,7 @@ import java.util.List;
 
 public record OrderResponse(
         Integer id, String orderCode, Integer userId, String status,
-        String pickupName, String pickupPhone, String note,
+        String pickupName, String pickupPhone, String note, String cancelReason,
         BigDecimal totalAmount, BigDecimal discountAmount, BigDecimal finalAmount,
         String promotionCode, String paymentStatus, String methodType,
         LocalDateTime createdAt, LocalDateTime updatedAt, LocalDateTime paidAt,

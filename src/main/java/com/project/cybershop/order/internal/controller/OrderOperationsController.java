@@ -1,6 +1,8 @@
 package com.project.cybershop.order.internal.controller;
 
-import com.project.cybershop.order.api.dto.request.*;
+import com.project.cybershop.order.api.dto.request.CollectPaymentRequest;
+import com.project.cybershop.order.api.dto.request.CancelOrderRequest;
+import com.project.cybershop.order.api.dto.request.HandoverRequest;
 import com.project.cybershop.order.api.dto.response.OrderResponse;
 import com.project.cybershop.order.internal.service.OrderService;
 import jakarta.validation.Valid;
@@ -42,5 +44,7 @@ public class OrderOperationsController {
     }
 
     @PostMapping("/{code}/cancel")
-    public OrderResponse cancel(Authentication auth, @PathVariable String code) { return service.cancel(auth.getName(), code, true); }
+    public OrderResponse cancel(Authentication auth, @PathVariable String code, @Valid @RequestBody CancelOrderRequest request) {
+        return service.cancel(auth.getName(), code, true, request.reason());
+    }
 }
