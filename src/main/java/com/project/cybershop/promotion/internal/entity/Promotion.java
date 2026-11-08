@@ -42,4 +42,7 @@ public class Promotion {
 
     @Column(name = "is_active")
     private Boolean isActive = true;
+
+    @Column(name = "audience", nullable = false, length = 20)
+    private String audience = "ASSIGNED";
 }

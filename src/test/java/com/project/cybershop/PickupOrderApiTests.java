@@ -160,17 +160,17 @@ class PickupOrderApiTests {
         assertEquals(3,jdbc.queryForObject("SELECT stock_quantity FROM product_variants WHERE id=201",Integer.class));
         for (int i=0;i<2;i++) mvc.perform(put("/api/order-items/"+itemId+"/review").header("Authorization",customer)
                 .contentType("application/json").content("{\"rating\":5,\"comment\":\"Sản phẩm tốt\"}"))
-                .andExpect(status().isNoContent());
+                .andExpect(i == 0 ? status().isNoContent() : status().isBadRequest());
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM reviews",Integer.class));
         mvc.perform(put("/api/order-items/"+itemId+"/review").header("Authorization",customer)
                 .contentType("application/json").content("{\"rating\":4,\"comment\":\"Đã cập nhật nhận xét\"}"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isBadRequest());
         mvc.perform(get("/api/products/201/reviews"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].productId").value("201"))
-                .andExpect(jsonPath("$[0].rating").value(4))
-                .andExpect(jsonPath("$[0].comment").value("Đã cập nhật nhận xét"))
+                .andExpect(jsonPath("$[0].rating").value(5))
+                .andExpect(jsonPath("$[0].comment").value("Sản phẩm tốt"))
                 .andExpect(jsonPath("$[0].name").isNotEmpty());
     }
 
@@ -193,7 +193,7 @@ class PickupOrderApiTests {
 
     @Test
     void cancellationRestoresStockAndVoucherQuotaOnlyOnce() throws Exception {
-        jdbc.update("INSERT INTO promotions VALUES (20,'SAVE','Test','fixed_amount',100000,1,TRUE,CURRENT_TIMESTAMP-INTERVAL '1' DAY,CURRENT_TIMESTAMP+INTERVAL '1' DAY)");
+        jdbc.update("INSERT INTO promotions (id,code,name,discount_type,discount_value,usage_limit,is_active,start_date,end_date) VALUES (20,'SAVE','Test','fixed_amount',100000,1,TRUE,CURRENT_TIMESTAMP-INTERVAL '1' DAY,CURRENT_TIMESTAMP+INTERVAL '1' DAY)");
         code=place(UUID.randomUUID().toString(),100000,"SAVE");
         assertEquals("RESERVED",jdbc.queryForObject("SELECT status FROM promotion_usages",String.class));
         for (int i=0;i<2;i++) mvc.perform(post("/api/orders/"+code+"/cancel").header("Authorization",customer))

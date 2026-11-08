@@ -234,7 +234,7 @@ class PurchaseApiTests {
     void previewUsesCurrentPricesCapsVoucherAndDoesNotConsumeIt() throws Exception {
         addItem(101, 2);
         jdbc.update("UPDATE product_variants SET price=1000000 WHERE id=101");
-        jdbc.update("INSERT INTO promotions VALUES (10,'SAVE','Voucher','fixed',3000000,1,TRUE,CURRENT_TIMESTAMP - INTERVAL '1' DAY,CURRENT_TIMESTAMP + INTERVAL '1' DAY)");
+        jdbc.update("INSERT INTO promotions (id,code,name,discount_type,discount_value,usage_limit,is_active,start_date,end_date) VALUES (10,'SAVE','Voucher','fixed',3000000,1,TRUE,CURRENT_TIMESTAMP - INTERVAL '1' DAY,CURRENT_TIMESTAMP + INTERVAL '1' DAY)");
         mvc.perform(post("/api/checkout/details/preview").header("Authorization", token)
                 .contentType("application/json").content("""
                         {"pickupName":"Người nhận","pickupPhone":"0900000128","note":"Nhận buổi chiều","promotionCode":"save"}
@@ -251,7 +251,7 @@ class PurchaseApiTests {
     @Test
     void reservedVoucherUsesQuotaAndBlocksReuseBySameCustomer() throws Exception {
         addItem(101, 1);
-        jdbc.update("INSERT INTO promotions VALUES (10,'SAVE','Voucher','percent',10,1,TRUE,CURRENT_TIMESTAMP - INTERVAL '1' DAY,CURRENT_TIMESTAMP + INTERVAL '1' DAY)");
+        jdbc.update("INSERT INTO promotions (id,code,name,discount_type,discount_value,usage_limit,is_active,start_date,end_date) VALUES (10,'SAVE','Voucher','percent',10,1,TRUE,CURRENT_TIMESTAMP - INTERVAL '1' DAY,CURRENT_TIMESTAMP + INTERVAL '1' DAY)");
         jdbc.update("INSERT INTO orders (id,user_id,order_code,total_amount,final_amount,status) VALUES (99,?,'RESERVED-ORDER',1200000,1080000,'pending')", userId);
         jdbc.update("INSERT INTO promotion_usages VALUES (10,10,?,99,'RESERVED',120000)", userId);
         mvc.perform(post("/api/checkout/details/preview").header("Authorization", token)
@@ -264,7 +264,7 @@ class PurchaseApiTests {
     @Test
     void previewRechecksPromotionTermsInsteadOfReusingAnEarlierRead() throws Exception {
         addItem(101, 1);
-        jdbc.update("INSERT INTO promotions VALUES (10,'SAVE','Voucher','fixed_amount',100000,5,TRUE,CURRENT_TIMESTAMP - INTERVAL '1' DAY,CURRENT_TIMESTAMP + INTERVAL '1' DAY)");
+        jdbc.update("INSERT INTO promotions (id,code,name,discount_type,discount_value,usage_limit,is_active,start_date,end_date) VALUES (10,'SAVE','Voucher','fixed_amount',100000,5,TRUE,CURRENT_TIMESTAMP - INTERVAL '1' DAY,CURRENT_TIMESTAMP + INTERVAL '1' DAY)");
         String details = """
                 {"pickupName":"Khách","pickupPhone":"0900000128","promotionCode":"SAVE"}
                 """;
