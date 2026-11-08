@@ -9,6 +9,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 @ConditionalOnProperty(name = "app.product-sales.scheduler-enabled", havingValue = "true", matchIfMissing = true)
 public class ProductSaleScheduler {
     private final ProductSaleService sales;
-    @Scheduled(fixedDelayString = "${app.product-sales.refresh-ms:1000}", initialDelayString = "${app.product-sales.initial-delay-ms:5000}")
+    @Scheduled(fixedDelayString = "${app.product-sales.refresh-ms:300000}", initialDelayString = "${app.product-sales.initial-delay-ms:5000}")
     public void refresh() { sales.refreshAll(); }
 }
