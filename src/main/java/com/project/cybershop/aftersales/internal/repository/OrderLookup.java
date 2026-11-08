@@ -25,9 +25,9 @@ public class OrderLookup {
     private static final String FROM = """
             FROM warranty_cards wc
             JOIN order_items oi ON oi.id = wc.order_item_id
-            JOIN product_variants pv ON pv.id = oi.product_variant_id
+            LEFT JOIN product_variants pv ON pv.id = oi.product_variant_id
             JOIN orders o ON o.id = oi.order_id
-            JOIN users u ON u.id = o.user_id
+            LEFT JOIN users u ON u.id = o.user_id
             """;
 
     private final EntityManager em;

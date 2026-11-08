@@ -34,6 +34,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import java.util.Locale;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import java.util.Locale;
 
 @Service
 @Transactional(readOnly = true)
@@ -43,25 +49,75 @@ public class WarrantyCardService {
     private final ServiceRequestRepository requests;
     private final ServiceRequestEventRepository events;
     private final ServiceIntakeRepository intakes;
-    private final OrderLookup orderLookup;
+        private final OrderLookup orderLookup;
     private final AftersalesMapper mapper;
+    private final JdbcTemplate jdbc;
 
+    @Autowired
     public WarrantyCardService(WarrantyCardRepository cards,
                                ServiceRequestRepository requests,
                                ServiceRequestEventRepository events,
                                ServiceIntakeRepository intakes,
                                OrderLookup orderLookup,
-                               AftersalesMapper mapper) {
+                               AftersalesMapper mapper,
+                               JdbcTemplate jdbc) {
         this.cards = cards;
         this.requests = requests;
         this.events = events;
         this.intakes = intakes;
         this.orderLookup = orderLookup;
         this.mapper = mapper;
+        this.jdbc = jdbc;
+    }
+
+    public WarrantyCardService(WarrantyCardRepository cards, ServiceRequestRepository requests, ServiceRequestEventRepository events, ServiceIntakeRepository intakes, OrderLookup orderLookup, AftersalesMapper mapper) {
+        this(cards, requests, events, intakes, orderLookup, mapper, null);
+    }
+
+    @Transactional
+    public void syncMissingCards() {
+        if (jdbc == null) return;
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList("""
+                    SELECT oi.id, oi.quantity, oi.warranty_period_months, o.order_code, o.updated_at, o.delivery_type
+                    FROM order_items oi
+                    JOIN orders o ON o.id = oi.order_id
+                    WHERE o.status = 'completed'
+                      AND oi.warranty_period_months > 0
+                      AND NOT EXISTS (SELECT 1 FROM warranty_cards wc WHERE wc.order_item_id = oi.id)
+                    """);
+
+            for (Map<String, Object> r : rows) {
+                Integer orderItemId = ((Number) r.get("id")).intValue();
+                int qty = ((Number) r.get("quantity")).intValue();
+                int months = ((Number) r.get("warranty_period_months")).intValue();
+                String orderCode = (String) r.get("order_code");
+                Object updatedObj = r.get("updated_at");
+                LocalDateTime start = updatedObj instanceof java.sql.Timestamp ts ? ts.toLocalDateTime()
+                        : updatedObj instanceof LocalDateTime ldt ? ldt : LocalDateTime.now();
+                String deliveryType = (String) r.get("delivery_type");
+                String prefix = "shipping".equalsIgnoreCase(deliveryType) ? "GHN" : "TZ";
+                String suffix = (orderCode != null && orderCode.length() >= 6)
+                        ? orderCode.substring(orderCode.length() - 6).toUpperCase(Locale.ROOT)
+                        : "DEV";
+
+                for (int i = 0; i < qty; i++) {
+                    String serial = "SN-" + prefix + "-" + suffix + "-" + orderItemId + (qty > 1 ? "-" + (i + 1) : "");
+                    jdbc.update("""
+                            INSERT INTO warranty_cards (order_item_id, serial_number, start_date, end_date, status)
+                            VALUES (?, ?, ?, ?, 'active')
+                            """, orderItemId, serial, start, start.plusMonths(months));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("syncMissingCards error: " + e.getMessage());
+        }
     }
 
     /** Tra cứu rồi trả cả đơn chứa thẻ khớp, để khách mang một linh kiện hay cả bộ máy đều thấy đủ đơn đã mua. */
+    @Transactional
     public List<WarrantyCardDto> search(String query) {
+        syncMissingCards();
         if (query == null || query.isBlank()) {
             throw new BusinessException("Nhập serial, mã đơn, số điện thoại hoặc mã phiếu.");
         }
@@ -150,7 +206,9 @@ public class WarrantyCardService {
     }
 
     /** Thẻ và phiếu của một khách, chỉ gồm nội dung công khai. */
+    @Transactional
     public List<MyWarrantyCardDto> myCards(Integer userId) {
+        syncMissingCards();
         List<WarrantyCard> mine = cards.findAllById(orderLookup.cardIdsOfUser(userId)).stream()
                 .sorted(Comparator.comparing(WarrantyCard::getId).reversed())
                 .toList();

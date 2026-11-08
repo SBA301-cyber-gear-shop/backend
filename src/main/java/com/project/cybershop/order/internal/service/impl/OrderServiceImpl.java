@@ -122,21 +122,46 @@ public class OrderServiceImpl implements OrderService {
         validateExpectedAmounts(request, checkout, voucher);
 
         BigDecimal finalAmount = checkout.totalAmount().subtract(voucher.discount());
+        BigDecimal shippingFee = BigDecimal.ZERO;
+        if (request.deliveryType() != null && "shipping".equalsIgnoreCase(request.deliveryType())) {
+            shippingFee = request.shippingFee() != null ? request.shippingFee() : BigDecimal.ZERO;
+            finalAmount = finalAmount.add(shippingFee);
+        }
+
         Order order = orderMapper.toOrder(
                 checkout, customer.getId(), orderCode, voucher.discount(), finalAmount, LocalDateTime.now(clock)
         );
+        if (request.deliveryType() != null && "shipping".equalsIgnoreCase(request.deliveryType())) {
+            order.setDeliveryType("shipping");
+            order.setShippingFee(shippingFee);
+            order.setShippingAddress(request.shippingAddress());
+            order.setToProvinceId(request.toProvinceId());
+            order.setToDistrictId(request.toDistrictId());
+            order.setToWardCode(request.toWardCode());
+            order.setCarrier("GHN");
+        } else {
+            order.setDeliveryType("store");
+            order.setShippingFee(BigDecimal.ZERO);
+        }
         order = orderRepository.saveAndFlush(order);
 
         createOrderItems(order.getId(), quantities);
         promotionApi.reserve(voucher, customer.getId(), order.getId(), finalAmount.signum() == 0);
-        paymentApi.createCounterPayment(order.getId(), finalAmount);
+
+        String paymentUrl = null;
+        if ("vnpay".equalsIgnoreCase(request.method())) {
+            paymentUrl = paymentApi.createVnPayPayment(order.getId(), order.getOrderCode(), finalAmount, "127.0.0.1");
+        } else {
+            paymentApi.createCounterPayment(order.getId(), finalAmount);
+        }
+
         if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
             cartItemRepository.deleteByCartIdAndProductVariantIdIn(cartId, quantities.keySet());
         } else {
             clearPurchasedCart(cartId);
         }
 
-        return toResponse(order);
+        return toResponse(order, paymentUrl);
     }
 
     // =========================================
@@ -189,6 +214,8 @@ public class OrderServiceImpl implements OrderService {
             case "pending" -> "confirmed";
             case "confirmed" -> "preparing";
             case "preparing" -> "ready_for_pickup";
+            case "ready_for_pickup" -> "shipping".equalsIgnoreCase(order.getDeliveryType()) ? "delivering" : "";
+            case "delivering" -> "completed";
             default -> "";
         };
 
@@ -197,6 +224,21 @@ public class OrderServiceImpl implements OrderService {
         }
 
         updateStatus(order, nextStatus);
+
+        if ("completed".equals(nextStatus)) {
+            try {
+                PaymentApi.Payment payment = paymentApi.get(order.getId());
+                if (payment != null && !"SUCCESS".equalsIgnoreCase(payment.status())) {
+                    paymentApi.collect(order.getId(), order.getFinalAmount(), "COD_GHN");
+                }
+            } catch (Exception ignored) {}
+            try {
+                promotionApi.markUsed(order.getId());
+            } catch (Exception ignored) {}
+            if ("shipping".equalsIgnoreCase(order.getDeliveryType())) {
+                autoIssueShippingWarranty(order);
+            }
+        }
         return toResponse(order);
     }
 
@@ -295,9 +337,9 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private void validatePaymentMethod(Integer userId, PlaceOrderRequest request) {
-        if (!"store".equals(request.method())) {
+        if (!"store".equalsIgnoreCase(request.method()) && !"vnpay".equalsIgnoreCase(request.method()) && !"cod".equalsIgnoreCase(request.method())) {
             throw new BusinessException(
-                    "Hiện hỗ trợ thanh toán tại cửa hàng. Cổng thanh toán online chưa được cấu hình."
+                    "Phương thức thanh toán không hợp lệ. Vui lòng chọn thanh toán tại cửa hàng, COD hoặc VNPAY."
             );
         }
 
@@ -305,7 +347,6 @@ public class OrderServiceImpl implements OrderService {
             if (orderRepository.findOwnedPaymentMethodId(request.paymentMethodId(), userId).isEmpty()) {
                 throw new BusinessException("Phương thức thanh toán không thuộc tài khoản của bạn.");
             }
-            throw new BusinessException("Vui lòng chọn thanh toán tại cửa hàng.");
         }
     }
 
@@ -434,10 +475,14 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private OrderResponse toResponse(Order order) {
+        return toResponse(order, null);
+    }
+
+    private OrderResponse toResponse(Order order, String paymentUrl) {
         PaymentApi.Payment payment = paymentApi.get(order.getId());
         String promotionCode = orderRepository.findPromotionCode(order.getId()).orElse(null);
         List<OrderResponse.Item> items = findOrderItems(order.getId());
-        return orderMapper.toResponse(order, payment, promotionCode, items);
+        return orderMapper.toResponse(order, payment, promotionCode, items, paymentUrl);
     }
 
     private List<OrderResponse.Item> findOrderItems(Integer orderId) {
@@ -454,5 +499,26 @@ public class OrderServiceImpl implements OrderService {
         String normalized = phone == null ? "" : phone.replaceAll("[ .()-]", "");
         return normalized.matches("\\+84[0-9]{9}")
                 ? "0" + normalized.substring(3) : normalized;
+    }
+
+    private void autoIssueShippingWarranty(Order order) {
+        try {
+            List<OrderResponse.Item> items = findOrderItems(order.getId());
+            String suffix = (order.getOrderCode() != null && order.getOrderCode().length() >= 6)
+                    ? order.getOrderCode().substring(order.getOrderCode().length() - 6).toUpperCase(Locale.ROOT)
+                    : "GHN";
+            List<PickupWarrantyApi.Unit> units = new ArrayList<>();
+            for (OrderResponse.Item item : items) {
+                if (item.warrantyPeriodMonths() > 0) {
+                    for (int i = 0; i < item.quantity(); i++) {
+                        String serial = "SN-GHN-" + suffix + "-" + item.id() + (item.quantity() > 1 ? "-" + (i + 1) : "");
+                        units.add(new PickupWarrantyApi.Unit(item.id(), serial, item.warrantyPeriodMonths()));
+                    }
+                }
+            }
+            if (!units.isEmpty()) {
+                pickupWarrantyApi.issue(units, LocalDateTime.now(clock));
+            }
+        } catch (Exception ignored) {}
     }
 }
