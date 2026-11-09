@@ -2,6 +2,7 @@ package com.project.cybershop.catalog.api;
 
 import com.project.cybershop.catalog.api.dto.CategorySpecDto;
 import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
 
 import java.util.List;
 import java.util.Map;
@@ -19,4 +20,6 @@ public interface CatalogPublicApi {
     List<CategorySpecDto> getSpecificationCatalog();
 
     List<String> getAllBrandNames();
+
+    List<CategoryResponse> getAllCategories();
 }

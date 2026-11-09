@@ -58,7 +58,7 @@ app:
     expiration-ms: 86400000
   ai:
     provider: gemini
-    api-key: ${AI_API_KEY:}
+    api-key: ${AI_API_KEY}
     model: gemini-3.5-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
     profile-thinking-level: low     # trích hồ sơ: suy luận nhẹ để đặt số liệu hợp lý
     explain-thinking-level: minimal # giải thích: chỉ viết lại dữ liệu có sẵn, ưu tiên nhanh

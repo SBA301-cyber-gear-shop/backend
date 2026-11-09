@@ -3,6 +3,7 @@ package com.project.cybershop.catalog.internal.service;
 import com.project.cybershop.catalog.api.CatalogPublicApi;
 import com.project.cybershop.catalog.api.dto.CategorySpecDto;
 import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
+import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
 import com.project.cybershop.catalog.internal.entity.Brand;
 import com.project.cybershop.catalog.internal.entity.CategorySpecification;
 import com.project.cybershop.catalog.internal.entity.ProductVariant;
@@ -30,6 +31,7 @@ public class CatalogPublicApiImpl implements CatalogPublicApi {
     private final BrandRepository brandRepository;
     private final CategorySpecificationRepository categorySpecificationRepository;
     private final SpecificationOptionRepository specificationOptionRepository;
+    private final CategoryService categoryService;
 
     @Override
     @Transactional(readOnly = true)
@@ -125,5 +127,11 @@ public class CatalogPublicApiImpl implements CatalogPublicApi {
                 .filter(name -> !name.isEmpty())
                 .distinct()
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CategoryResponse> getAllCategories() {
+        return categoryService.getFlatCategories();
     }
 }
