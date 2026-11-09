@@ -44,6 +44,7 @@ public interface OrderMapper {
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "productVariantId", source = "product.variantId")
+    @Mapping(target = "pcCustomId", ignore = true)
     @Mapping(target = "unitPrice", source = "product.price")
     @Mapping(target = "productName", source = "productName")
     OrderItem toOrderItem(

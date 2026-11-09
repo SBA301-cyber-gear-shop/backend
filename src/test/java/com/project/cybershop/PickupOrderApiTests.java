@@ -33,7 +33,7 @@ class PickupOrderApiTests {
         jdbc.update("INSERT INTO brands VALUES (20,'Kingston')");
         jdbc.update("INSERT INTO categories VALUES (20,'RAM','ram')");
         jdbc.update("INSERT INTO products VALUES (20,20,20,'RAM','active','description',36)");
-        jdbc.update("INSERT INTO product_variants VALUES (201,20,'TEST-RAM','16GB',1000000,1200000,5,NULL)");
+        jdbc.update("INSERT INTO product_variants (id,product_id,serial_code,variant_name,price,original_price,stock_quantity,image_url) VALUES (201,20,'TEST-RAM','16GB',1000000,1200000,5,NULL)");
         jdbc.update("INSERT INTO carts (user_id,updated_at) VALUES (?,CURRENT_TIMESTAMP)", userId);
         int cartId = jdbc.queryForObject("SELECT id FROM carts WHERE user_id=?", Integer.class, userId);
         jdbc.update("INSERT INTO cart_items (cart_id,product_variant_id,quantity) VALUES (?,201,2)", cartId);
@@ -57,6 +57,50 @@ class PickupOrderApiTests {
         mvc.perform(patch("/api/operations/orders/"+code+"/status").header("Authorization",staff)
                 .contentType("application/json").content("{\"status\":\""+next+"\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(next));
+    }
+
+    @Test
+    @org.springframework.test.context.jdbc.Sql("/order-aftersales-test-schema.sql")
+    void pcAndLooseItemsRemainGroupedThroughWarrantyIntake() throws Exception {
+        int cartId = jdbc.queryForObject("SELECT id FROM carts WHERE user_id=?", Integer.class, userId);
+        for (int id = 202; id <= 205; id++) {
+            jdbc.update("INSERT INTO product_variants (id,product_id,serial_code,variant_name,price,original_price,stock_quantity,image_url) VALUES (?,20,?, 'test',1000000,1200000,5,NULL)", id, "TEST-" + id);
+            jdbc.update("INSERT INTO cart_items (cart_id,product_variant_id,quantity) VALUES (?,?,1)", cartId, id);
+        }
+        String key = UUID.randomUUID().toString();
+        String request = """
+                {"pickupName":"Khách nhận","pickupPhone":"0900000128","method":"store",
+                 "expectedTotal":6000000,"expectedDiscount":0,
+                 "pcGroups":[{"parts":[{"variantId":201,"quantity":2,"role":"RAM"},
+                                           {"variantId":202,"quantity":1,"role":"CPU"}]}]}
+                """;
+        mvc.perform(post("/api/orders").header("Authorization", customer).header("Idempotency-Key", key)
+                .contentType("application/json").content(request)).andExpect(status().isCreated());
+        code = "TZ-" + UUID.fromString(key).toString().replace("-", "").toUpperCase();
+        Integer pcId = jdbc.queryForObject("SELECT pc_custom_id FROM order_items WHERE product_variant_id=201", Integer.class);
+        assertNotNull(pcId);
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM order_items WHERE pc_custom_id=?", Integer.class, pcId));
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM order_items WHERE pc_custom_id IS NULL", Integer.class));
+        advance("confirmed"); advance("preparing"); advance("ready_for_pickup");
+        mvc.perform(post("/api/operations/orders/" + code + "/collect").header("Authorization", staff)
+                .contentType("application/json").content("{\"receivedAmount\":6000000}"))
+                .andExpect(status().isOk());
+        var items = jdbc.queryForList("SELECT id,quantity FROM order_items ORDER BY id");
+        var devices = new java.util.ArrayList<String>();
+        for (var item : items) {
+            int id = ((Number) item.get("id")).intValue();
+            int quantity = ((Number) item.get("quantity")).intValue();
+            for (int i = 0; i < quantity; i++) devices.add("{\"orderItemId\":" + id + ",\"serialNumber\":\"PC-" + id + "-" + i + "\"}");
+        }
+        mvc.perform(post("/api/operations/orders/" + code + "/handover").header("Authorization", staff)
+                .contentType("application/json").content("{\"recipientPhone\":\"0900000128\",\"recipientVerified\":true,\"devices\":[" + String.join(",", devices) + "]}"))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/warranty-cards").param("q", code).header("Authorization", staff))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(6))
+                .andExpect(jsonPath("$.data[?(@.pcCustomId == %d)]".formatted(pcId), org.hamcrest.Matchers.hasSize(3)))
+                .andExpect(jsonPath("$.data[?(@.pcCustomId == null)]", org.hamcrest.Matchers.hasSize(3)));
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM warranty_cards wc JOIN order_items oi ON oi.id=wc.order_item_id WHERE oi.pc_custom_id=?", Integer.class, pcId));
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM warranty_cards wc JOIN order_items oi ON oi.id=wc.order_item_id WHERE oi.pc_custom_id IS NULL", Integer.class));
     }
 
     @Test
