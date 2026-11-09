@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -63,14 +64,16 @@ public class CustomerAiSupportController {
     }
 
     @PostMapping("/sync-catalog")
-    @Operation(summary = "Đồng bộ thủ công kho hàng thực tế vào Vector DB CyberBot")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
+    @Operation(summary = "Đồng bộ thủ công kho hàng thực tế vào Vector DB CyberBot (Chỉ dành cho Staff/Admin)")
     public ResponseEntity<ApiResponseDTO<Map<String, Object>>> syncCatalog() {
         Map<String, Object> result = catalogVectorSyncService.syncCatalogVectors();
         return ResponseEntity.ok(ApiResponseDTO.success("Tiến trình đồng bộ kho hàng vào Vector DB hoàn tất", result));
     }
 
     @GetMapping("/catalog-vector-count")
-    @Operation(summary = "Kiểm tra số lượng linh kiện trong Vector DB")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
+    @Operation(summary = "Kiểm tra số lượng linh kiện trong Vector DB (Chỉ dành cho Staff/Admin)")
     public ResponseEntity<ApiResponseDTO<Map<String, Object>>> getVectorCount() {
         int count = catalogVectorSyncService.getCatalogVectorCount();
         return ResponseEntity.ok(ApiResponseDTO.success("Số lượng vector linh kiện", Map.of("catalogVectorCount", count)));

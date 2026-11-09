@@ -50,6 +50,13 @@ server:
 # JWT, AI ENGINE
 # ==========================================
 app:
+  store:
+    name: TechZone
+    hotline: "1900 8888"
+    support-email: support@techzone.vn
+    address: "Hẻm 282 Lê Thị Riêng, P. Thới An, Quận 12, TP.HCM"
+    cod-max-amount: 20000000
+    return-days: 30
   product-sales:
     scheduler-enabled: true
     refresh-ms: 300000
