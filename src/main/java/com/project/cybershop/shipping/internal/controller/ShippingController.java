@@ -46,6 +46,16 @@ public class ShippingController {
         return ResponseEntity.ok(ApiResponseDTO.success("Tính cước thành công", shippingService.calculateFee(request)));
     }
 
+    @PatchMapping("/orders/{code}/address")
+    @Operation(summary = "Staff/Admin: Cập nhật địa chỉ nhận hàng của đơn trước khi tạo vận đơn GHN")
+    public ResponseEntity<ApiResponseDTO<String>> updateAddress(
+            @PathVariable("code") String orderCode,
+            @RequestBody UpdateShippingAddressRequest request
+    ) {
+        shippingService.updateShippingAddress(orderCode, request);
+        return ResponseEntity.ok(ApiResponseDTO.success("Cập nhật địa chỉ đơn hàng thành công", "OK"));
+    }
+
     @PostMapping("/orders/{code}/create-shipment")
     @Operation(summary = "Staff/Admin: Đẩy đơn hàng sang GHN để sinh mã vận đơn")
     public ResponseEntity<ApiResponseDTO<TrackingResponse>> createShipment(

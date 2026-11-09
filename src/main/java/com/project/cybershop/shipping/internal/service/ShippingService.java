@@ -15,4 +15,5 @@ public interface ShippingService {
     TrackingResponse switchStatus(String orderCode, String action, String actorEmail);
     String getPrintToken(String orderCode);
     void handleWebhook(Map<String, Object> payload);
+    void updateShippingAddress(String orderCode, UpdateShippingAddressRequest request);
 }

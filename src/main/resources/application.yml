@@ -51,7 +51,8 @@ server:
 # ==========================================
 app:
   product-sales:
-    refresh-ms: 300000 # Đồng bộ lịch sale mỗi 5 phút.
+    scheduler-enabled: true
+    refresh-ms: 300000
   jwt:
     secret: ${JWT_SECRET:4LU_zjRsuAOUXG7V964B5clG6u26svjh3Nuck26NUz4}
     expiration-ms: 86400000
@@ -79,11 +80,6 @@ app:
     max-budget: 9999999999          # [ĐÃ CHỐT] khớp numeric(12,2)
     rate-limit-per-minute: 6        # /ai-suggest: mỗi user, hoặc mỗi IP khi chưa đăng nhập (11.1)
     rate-limit-check-per-minute: 30 # /validate, /compatible-replacements, /options: mỗi endpoint
-  
-  #Reload after 5 mins
-  product-sales:
-    scheduler-enabled: true
-    refresh-ms: 300000  
   # ==========================================
   # VNPAY SANDBOX & GHN SHIPPING (Mở rộng)
   # ==========================================

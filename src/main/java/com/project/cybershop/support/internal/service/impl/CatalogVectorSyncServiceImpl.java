@@ -87,11 +87,31 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                        c.name as category_name, c.slug as category_slug,
                        COALESCE(b.name, 'Chính hãng') as brand_name,
                        pv.id as variant_id, pv.variant_name, pv.price, pv.original_price,
-                       pv.stock_quantity, pv.image_url
+                       pv.stock_quantity, pv.image_url,
+                       spec.specs_summary,
+                       rev.avg_rating, rev.review_count
                 FROM product_variants pv
                 JOIN products p ON pv.product_id = p.id
                 JOIN categories c ON p.category_id = c.id
                 LEFT JOIN brands b ON p.brand_id = b.id
+                LEFT JOIN (
+                    SELECT sv.product_variant_id,
+                           string_agg(s.name || ': ' || COALESCE(so.display_value, sv.value, ''), ' | ') as specs_summary
+                    FROM specification_values sv
+                    JOIN specifications s ON sv.specification_id = s.id
+                    LEFT JOIN specification_options so ON sv.option_id = so.id
+                    GROUP BY sv.product_variant_id
+                ) spec ON spec.product_variant_id = pv.id
+                LEFT JOIN (
+                    SELECT oi.product_variant_id,
+                           ROUND(AVG(r.rating)::numeric, 1) as avg_rating,
+                           COUNT(r.id) as review_count
+                    FROM reviews r
+                    JOIN order_items oi ON r.order_item_id = oi.id
+                    JOIN orders o ON oi.order_id = o.id
+                    WHERE o.status = 'completed'
+                    GROUP BY oi.product_variant_id
+                ) rev ON rev.product_variant_id = pv.id
                 WHERE UPPER(p.status) = 'ACTIVE'
                 ORDER BY p.id ASC, pv.price ASC
             """;
@@ -134,6 +154,18 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                     content.append("Thương hiệu: ").append(brandName).append("\n");
                     content.append("Giá bán tại CyberShop: ").append(MONEY_FMT.format(price)).append("\n");
                     content.append("Tồn kho hiện có: ").append(stock > 0 ? stock + " sản phẩm sẵn sàng lắp ráp" : "Tạm hết hàng").append("\n");
+                    
+                    String specsSummary = (String) r.get("specs_summary");
+                    if (specsSummary != null && !specsSummary.isBlank()) {
+                        content.append("Thông số kỹ thuật chuẩn: ").append(specsSummary).append("\n");
+                    }
+                    Number avgRatingNum = (Number) r.get("avg_rating");
+                    Number reviewCountNum = (Number) r.get("review_count");
+                    if (avgRatingNum != null && reviewCountNum != null && reviewCountNum.intValue() > 0) {
+                        content.append("Đánh giá khách hàng: ").append(avgRatingNum.doubleValue()).append("/5 sao (")
+                               .append(reviewCountNum.intValue()).append(" đánh giá thực tế)\n");
+                    }
+
                     if (description != null && !description.isBlank()) {
                         content.append("Mô tả kỹ thuật: ").append(description).append("\n");
                     }
@@ -163,6 +195,13 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                     metaMap.put("price", price);
                     metaMap.put("originalPrice", originalPrice);
                     metaMap.put("stock", stock);
+                    if (specsSummary != null && !specsSummary.isBlank()) {
+                        metaMap.put("specs", specsSummary);
+                    }
+                    if (avgRatingNum != null && reviewCountNum != null && reviewCountNum.intValue() > 0) {
+                        metaMap.put("rating", avgRatingNum.doubleValue());
+                        metaMap.put("reviewCount", reviewCountNum.intValue());
+                    }
                     metaMap.put("imageUrl", imageUrl);
                     metaMap.put("route", "/san-pham/" + productId);
 

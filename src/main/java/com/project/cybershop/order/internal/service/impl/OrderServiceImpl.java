@@ -128,6 +128,20 @@ public class OrderServiceImpl implements OrderService {
             finalAmount = finalAmount.add(shippingFee);
         }
 
+        if ("cod".equalsIgnoreCase(request.method())) {
+            if (!"shipping".equalsIgnoreCase(request.deliveryType())) {
+                throw new BusinessException("Phương thức COD chỉ áp dụng cho đơn hàng giao hàng tận nơi.");
+            }
+            BigDecimal maxCodLimit = new BigDecimal("20000000");
+            if (finalAmount.compareTo(maxCodLimit) > 0) {
+                throw new BusinessException(
+                        "Phương thức thanh toán khi nhận hàng (COD) chỉ áp dụng cho đơn hàng tối đa 20.000.000đ. Đơn hàng hiện tại là " +
+                        java.text.NumberFormat.getInstance(new java.util.Locale("vi", "VN")).format(finalAmount) +
+                        "đ, quý khách vui lòng chọn Cổng thanh toán VNPAY hoặc nhận hàng tại cửa hàng."
+                );
+            }
+        }
+
         Order order = orderMapper.toOrder(
                 checkout, customer.getId(), orderCode, voucher.discount(), finalAmount, LocalDateTime.now(clock)
         );

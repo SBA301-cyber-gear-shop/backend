@@ -80,6 +80,11 @@ public class ShippingServiceImpl implements ShippingService {
             JsonNode data = ghnClient.getDistricts(provinceId);
             if (data.isArray()) {
                 for (JsonNode item : data) {
+                    int status = item.path("Status").asInt(1);
+                    int supportType = item.path("SupportType").asInt(1);
+                    if (status != 1 || supportType == 0) {
+                        continue;
+                    }
                     list.add(new DistrictDto(
                             item.path("DistrictID").asInt(),
                             item.path("ProvinceID").asInt(),
@@ -106,6 +111,10 @@ public class ShippingServiceImpl implements ShippingService {
             JsonNode data = ghnClient.getWards(districtId);
             if (data.isArray()) {
                 for (JsonNode item : data) {
+                    int status = item.path("Status").asInt(1);
+                    if (status != 1) {
+                        continue;
+                    }
                     list.add(new WardDto(
                             item.path("WardCode").asText(),
                             item.path("DistrictID").asInt(),
@@ -235,6 +244,12 @@ public class ShippingServiceImpl implements ShippingService {
             throw be;
         } catch (Exception e) {
             log.error("GHN create order call failed: {}", e.getMessage(), e);
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.contains("phường/xã người nhận không còn hoạt động") || msg.contains("RECEIVE_WARD_IS_DISABLED")
+                    || msg.contains("không sử dụng được mã phường/xã cũ")) {
+                throw new BusinessException("Khu vực nhận hàng (" + (order.shippingAddress() != null ? order.shippingAddress() : "")
+                        + ") không còn hoạt động hoặc đã thay đổi mã trên GHN. Vui lòng bấm 'Sửa địa chỉ' để chọn lại Phường/Xã hợp lệ.");
+            }
             throw new BusinessException("Không thể tạo vận đơn trên GHN: " + e.getMessage());
         }
 
@@ -596,6 +611,42 @@ public class ShippingServiceImpl implements ShippingService {
                 new WardDto("20102", districtId, "Phường Bến Thành"),
                 new WardDto("21210", districtId, "Phường Thới An"),
                 new WardDto("21211", districtId, "Phường Hiệp Thành")
+        );
+    }
+
+    @Override
+    @Transactional
+    public void updateShippingAddress(String orderCode, UpdateShippingAddressRequest request) {
+        OrderRecord order = findOrder(orderCode);
+        if (order == null) {
+            throw new ResourceNotFoundException("Không tìm thấy đơn hàng: " + orderCode);
+        }
+        if ("completed".equalsIgnoreCase(order.status()) || "canceled".equalsIgnoreCase(order.status())) {
+            throw new BusinessException("Không thể sửa địa chỉ đơn hàng đã hoàn tất hoặc đã hủy.");
+        }
+        Optional<Shipment> existing = shipmentRepository.findByOrderId(order.id());
+        if (existing.isPresent() && existing.get().getTrackingCode() != null && !existing.get().getTrackingCode().isBlank()) {
+            throw new BusinessException("Đơn hàng đã được tạo vận đơn GHN (" + existing.get().getTrackingCode() + "), không thể sửa địa chỉ.");
+        }
+
+        jdbcTemplate.update("""
+                UPDATE orders
+                SET pickup_name = COALESCE(?, pickup_name),
+                    pickup_phone = COALESCE(?, pickup_phone),
+                    shipping_address = COALESCE(?, shipping_address),
+                    to_province_id = COALESCE(?, to_province_id),
+                    to_district_id = COALESCE(?, to_district_id),
+                    to_ward_code = COALESCE(?, to_ward_code),
+                    updated_at = now()
+                WHERE order_code = ?
+                """,
+                request.pickupName(),
+                request.pickupPhone(),
+                request.shippingAddress(),
+                request.toProvinceId(),
+                request.toDistrictId(),
+                request.toWardCode(),
+                orderCode
         );
     }
 }

@@ -16,6 +16,8 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.sql.Timestamp;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -441,5 +443,137 @@ class CustomerAiSupportServiceTest {
         assertFalse(response.getProducts().isEmpty());
         assertEquals("ASUS Dual GeForce RTX 4060 Ti 8GB", response.getProducts().get(0).getName());
         assertNotEquals("navigate", response.getMessageType());
+    }
+    @Test
+    @DisplayName("Khách hàng hỏi tiến độ sửa chữa bảo hành -> Trả về lộ trình Roadmap kỹ thuật viên")
+    void testCustomerQueryWarrantyServiceProgress() {
+        String email = "customer@techzone.demo";
+
+        when(jdbcTemplate.queryForList(contains("SELECT id, full_name, phone FROM users"), eq(email)))
+                .thenReturn(List.of(Map.of("id", 4, "full_name", "Nguyễn Văn Khách", "phone", "0987654321")));
+
+        when(jdbcTemplate.query(contains("FROM orders o"), any(RowMapper.class), eq(4)))
+                .thenReturn(List.of());
+
+        when(jdbcTemplate.query(contains("FROM warranty_cards wc"), any(RowMapper.class), eq(4)))
+                .thenReturn(List.of());
+
+        when(jdbcTemplate.query(contains("FROM service_requests sr"), any(RowMapper.class), eq(4)))
+                .thenAnswer(invocation -> {
+                    RowMapper<?> mapper = invocation.getArgument(1);
+                    java.sql.ResultSet rs = mock(java.sql.ResultSet.class);
+                    when(rs.getInt("id")).thenReturn(901);
+                    when(rs.getString("request_code")).thenReturn("SR-VGA-2026");
+                    when(rs.getString("serial_number")).thenReturn("SN-RTX4070-998877");
+                    when(rs.getString("product_name")).thenReturn("VGA ASUS RTX 4070 Super");
+                    when(rs.getString("status")).thenReturn("waiting_for_parts");
+                    when(rs.getString("issue_description")).thenReturn("Lỗi quạt tản nhiệt quay kêu to");
+                    when(rs.getDate("expected_return_date")).thenReturn(java.sql.Date.valueOf(LocalDate.now().plusDays(3)));
+                    return List.of(mapper.mapRow(rs, 0));
+                });
+
+        AiChatRequest req = new AiChatRequest();
+        req.setMessage("Card màn hình mình gửi bảo hành sửa xong chưa shop?");
+
+        AiChatResponse response = supportService.generateResponse(email, req);
+
+        assertNotNull(response);
+        assertEquals("proposal", response.getMessageType());
+        assertEquals("/bao-hanh", response.getMessageRoute());
+        assertTrue(response.getMessage().contains("SR-VGA-2026"));
+        assertTrue(response.getMessage().contains("Đang chờ linh kiện thay thế từ hãng"));
+        assertTrue(response.getMessage().contains("Lỗi quạt tản nhiệt quay kêu to"));
+    }
+
+    @Test
+    @DisplayName("Khách hàng hỏi mã giảm giá & khuyến mãi -> Trả về danh sách voucher và flash sale")
+    void testCustomerQueryActivePromotions() {
+        when(jdbcTemplate.query(contains("FROM promotions"), any(RowMapper.class)))
+                .thenAnswer(invocation -> {
+                    RowMapper<?> mapper = invocation.getArgument(1);
+                    java.sql.ResultSet rs = mock(java.sql.ResultSet.class);
+                    when(rs.getString("code")).thenReturn("TECHZONE500K");
+                    when(rs.getString("name")).thenReturn("Giảm 500k cho dàn PC");
+                    when(rs.getString("discount_type")).thenReturn("fixed");
+                    when(rs.getBigDecimal("discount_value")).thenReturn(new BigDecimal("500000"));
+                    when(rs.getTimestamp("end_date")).thenReturn(Timestamp.valueOf(LocalDateTime.now().plusDays(7)));
+                    return List.of(mapper.mapRow(rs, 0));
+                });
+
+        when(jdbcTemplate.query(contains("FROM product_sales ps"), any(RowMapper.class)))
+                .thenReturn(List.of());
+
+        AiChatRequest req = new AiChatRequest();
+        req.setMessage("Shop đang có voucher hoặc mã giảm giá nào không?");
+
+        AiChatResponse response = supportService.generateResponse(null, req);
+
+        assertNotNull(response);
+        assertEquals("info", response.getMessageType());
+        assertTrue(response.getMessage().contains("TECHZONE500K"));
+        assertTrue(response.getMessage().contains("500") && response.getMessage().contains("đ"));
+    }
+
+    @Test
+    @DisplayName("Khách nói 'thêm tất cả vào giỏ hàng' sau khi tư vấn PC -> Trả về cart_action với trọn bộ 8 linh kiện")
+    void testAddToCartAllComponents() {
+        AiChatRequest req = new AiChatRequest();
+        req.setMessage("thêm tất cả vào giỏ hàng");
+        req.setHistory(List.of(
+                new AiChatRequest.HistoryItem("user", "Tư vấn cấu hình PC 25 triệu chơi game AAA và render Blender"),
+                new AiChatRequest.HistoryItem("bot", """
+                        ### 🎯 Cấu hình đề xuất: **PC Gaming AAA & Đồ Họa 3D Blender 25Tr**
+                        🔹 **CPU (Bộ vi xử lý)**: **Intel Core i5-13400F (LGA1700)** — **5,490,000₫**
+                        🔹 **Mainboard (Bo mạch chủ)**: **ASUS TUF GAMING B760M-PLUS WIFI (DDR5)** — **4,290,000₫**
+                        🔹 **RAM (Bộ nhớ trong)**: **Kingston Fury Beast 32GB (2x16GB) DDR5 5600MHz** — **2,890,000₫**
+                        🔹 **VGA (Card đồ họa rời)**: **MSI GeForce RTX 4060 VENTUS 2X BLACK 8G OC** — **8,290,000₫**
+                        🔹 **Ổ cứng (SSD NVMe)**: **Kingston NV2 1TB NVMe PCIe 4.0** — **1,890,000₫**
+                        🔹 **Nguồn máy tính (PSU)**: **MSI MAG A650BN 650W 80 Plus Bronze** — **1,390,000₫**
+                        🔹 **Vỏ thùng Case máy tính**: **Deepcool CC560 Black** — **990,000₫**
+                        🔹 **Tản nhiệt CPU**: **Thermalassassin X120 SE** — **498,000₫**
+                        """)
+        ));
+
+        AiChatResponse response = supportService.generateResponse(null, req);
+
+        assertNotNull(response);
+        assertEquals("cart_action", response.getMessageType());
+        assertNotNull(response.getProducts());
+        assertEquals(8, response.getProducts().size());
+        assertTrue(response.getMessage().contains("thêm trọn bộ"));
+        assertTrue(response.getQuickActions().stream().anyMatch(qa -> qa.getLabel().contains("Xem giỏ hàng")));
+    }
+
+    @Test
+    @DisplayName("Khách nói 'thêm ram, main với card vào giỏ hàng đi' -> Lọc chính xác 3 linh kiện tương ứng vào giỏ hàng")
+    void testAddToCartSpecificComponents() {
+        AiChatRequest req = new AiChatRequest();
+        req.setMessage("thêm ram, main với card vào giỏ hàng đi");
+        req.setHistory(List.of(
+                new AiChatRequest.HistoryItem("user", "Tư vấn cấu hình PC 25 triệu"),
+                new AiChatRequest.HistoryItem("bot", """
+                        ### 🎯 Cấu hình đề xuất: **PC Gaming AAA & Đồ Họa 3D Blender 25Tr**
+                        🔹 **CPU (Bộ vi xử lý)**: **Intel Core i5-13400F (LGA1700)** — **5,490,000₫**
+                        🔹 **Mainboard (Bo mạch chủ)**: **ASUS TUF GAMING B760M-PLUS WIFI (DDR5)** — **4,290,000₫**
+                        🔹 **RAM (Bộ nhớ trong)**: **Kingston Fury Beast 32GB (2x16GB) DDR5 5600MHz** — **2,890,000₫**
+                        🔹 **VGA (Card đồ họa rời)**: **MSI GeForce RTX 4060 VENTUS 2X BLACK 8G OC** — **8,290,000₫**
+                        🔹 **Ổ cứng (SSD NVMe)**: **Kingston NV2 1TB NVMe PCIe 4.0** — **1,890,000₫**
+                        🔹 **Nguồn máy tính (PSU)**: **MSI MAG A650BN 650W 80 Plus Bronze** — **1,390,000₫**
+                        🔹 **Vỏ thùng Case máy tính**: **Deepcool CC560 Black** — **990,000₫**
+                        🔹 **Tản nhiệt CPU**: **Thermalassassin X120 SE** — **498,000₫**
+                        """)
+        ));
+
+        AiChatResponse response = supportService.generateResponse(null, req);
+
+        assertNotNull(response);
+        assertEquals("cart_action", response.getMessageType());
+        assertNotNull(response.getProducts());
+        assertEquals(3, response.getProducts().size());
+        assertTrue(response.getProducts().stream().anyMatch(p -> "RAM".equalsIgnoreCase(p.getCategory())));
+        assertTrue(response.getProducts().stream().anyMatch(p -> "MAINBOARD".equalsIgnoreCase(p.getCategory())));
+        assertTrue(response.getProducts().stream().anyMatch(p -> "VGA".equalsIgnoreCase(p.getCategory())));
+        assertTrue(response.getMessage().contains("3 linh kiện"));
+        assertTrue(response.getQuickActions().stream().anyMatch(qa -> qa.getLabel().contains("Xem giỏ hàng")));
     }
 }
