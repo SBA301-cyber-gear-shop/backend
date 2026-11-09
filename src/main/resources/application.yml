@@ -3,10 +3,10 @@ spring:
     name: cybershop
 
   # ==========================================
-  # DATABASE (Neon PostgreSQL Cloud)
+  # DATABASE (Local PostgreSQL - pgAdmin)
   # ==========================================
   datasource:
-    # url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SBA301_WebPC}
+    # url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/cybershop}
     # username: ${SPRING_DATASOURCE_USERNAME:postgres}
     # password: ${SPRING_DATASOURCE_PASSWORD:12345}
     # Cloud Neon (Uncomment if needed):
