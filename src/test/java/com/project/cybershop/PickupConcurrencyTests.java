@@ -208,8 +208,10 @@ class PickupConcurrencyTests {
                         new CollectPaymentRequest(new BigDecimal("1000000"), "RECEIPT-B"))));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments", Integer.class));
         assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments", String.class));
-        assertTrue(java.util.Set.of("RECEIPT-A", "RECEIPT-B").contains(
-                jdbc.queryForObject("SELECT transaction_reference FROM payments", String.class)));
+        String reference = jdbc.queryForObject("SELECT transaction_reference FROM payments", String.class);
+        assertTrue(java.util.Set.of("RECEIPT-A", "RECEIPT-B").contains(reference));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_cash_collections", Integer.class));
+        assertEquals(reference, orders.cashCollection("staff@techzone.demo", order.orderCode()).orElseThrow().reference());
     }
 
     @Test
