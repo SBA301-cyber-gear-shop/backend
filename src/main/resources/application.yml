@@ -1,6 +1,8 @@
 spring:
   application:
     name: cybershop
+  config:
+    import: optional:file:.env[.properties]
 
   # ==========================================
   # DATABASE (Local PostgreSQL - pgAdmin)
@@ -24,11 +26,23 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: update
+    defer-datasource-initialization: true
     show-sql: true
     properties:
       hibernate:
         format_sql: true
         default_batch_fetch_size: 100
+
+  # ==========================================
+  # SQL INITIALIZATION (Khởi tạo dữ liệu người dùng)
+  # ==========================================
+  sql:
+    init:
+      # mode: always
+      mode: never # <-- Đổi từ always thành never để tắt hoàn toàn
+      data-locations: classpath:init-users.sql
+      encoding: UTF-8
+      continue-on-error: true
 
 # ==========================================
 # SWAGGER / OPENAPI
@@ -48,15 +62,14 @@ server:
 
 # ==========================================
 # JWT, AI ENGINE
-# ==========================================
 app:
   jwt:
     secret: ${JWT_SECRET:4LU_zjRsuAOUXG7V964B5clG6u26svjh3Nuck26NUz4}
     expiration-ms: 86400000
   ai:
     provider: gemini
-    api-key: ${AI_API_KEY}
-    model: gemini-3.5-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
+    api-key: ${AI_API_KEY:}
+    model: gemini-3.1-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
     profile-thinking-level: low     # trích hồ sơ: suy luận nhẹ để đặt số liệu hợp lý
     explain-thinking-level: minimal # giải thích: chỉ viết lại dữ liệu có sẵn, ưu tiên nhanh
     profile-timeout-ms: 6000        # trích hồ sơ, tối đa cho MỘT lần gọi
