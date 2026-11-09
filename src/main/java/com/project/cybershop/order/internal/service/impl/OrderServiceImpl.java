@@ -9,6 +9,7 @@ import com.project.cybershop.order.api.dto.request.CheckoutDetailsRequest;
 import com.project.cybershop.order.api.dto.request.CollectPaymentRequest;
 import com.project.cybershop.order.api.dto.request.HandoverRequest;
 import com.project.cybershop.order.api.dto.request.PlaceOrderRequest;
+import com.project.cybershop.order.api.dto.response.CashCollectionResponse;
 import com.project.cybershop.order.api.dto.response.CheckoutDetailsResponse;
 import com.project.cybershop.order.api.dto.response.OrderResponse;
 import com.project.cybershop.order.internal.entity.Cart;
@@ -251,20 +252,55 @@ public class OrderServiceImpl implements OrderService {
     // =========================================
     @Override
     public OrderResponse collect(String email, String orderCode, CollectPaymentRequest request) {
-        requireActor(email, true);
+        UserDto collector = requireActor(email, true);
         Order order = findOrderForUpdate(orderCode, null);
 
+        if (!"store".equalsIgnoreCase(order.getDeliveryType())) {
+            throw new BusinessException("Đơn giao tận nơi không thu tiền tại quầy.");
+        }
         if (Set.of("canceled", "completed").contains(order.getStatus())) {
             throw new BusinessException("Đơn không còn được thu tiền.");
         }
 
-        validatePaymentAmount(order);
-        paymentApi.collect(order.getId(), request.receivedAmount(), request.reference());
+        PaymentApi.Payment payment = validatePaymentAmount(order);
+        if (!"cash".equals(payment.methodType())) {
+            throw new BusinessException("Chỉ xác nhận thu tiền mặt tại quầy.");
+        }
+        if ("SUCCESS".equals(payment.status())) {
+            return toResponse(order);
+        }
+
+        String reference = request.reference() == null || request.reference().isBlank()
+                ? null : request.reference().trim();
+        paymentApi.collect(order.getId(), request.receivedAmount(), reference);
+        LocalDateTime paidAt = paymentApi.get(order.getId()).paidAt();
+        jdbc.update("""
+                INSERT INTO order_cash_collections
+                    (order_id, collector_user_id, collector_name, collected_at, amount_due, received_amount, reference)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, order.getId(), collector.getId(), collector.getFullName(), paidAt,
+                payment.amount(), request.receivedAmount(), reference);
         promotionApi.markUsed(order.getId());
 
         order.setUpdatedAt(LocalDateTime.now(clock));
         orderRepository.saveAndFlush(order);
         return toResponse(order);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<CashCollectionResponse> cashCollection(String email, String orderCode) {
+        requireActor(email, true);
+        Order order = orderRepository.findByOrderCode(orderCode).orElseThrow(this::orderNotFound);
+        return jdbc.query("""
+                SELECT collector_user_id, collector_name, collected_at, received_amount,
+                       received_amount - amount_due AS change_amount, reference
+                FROM order_cash_collections WHERE order_id = ?
+                """, (rs, rowNum) -> new CashCollectionResponse(
+                rs.getInt("collector_user_id"), rs.getString("collector_name"),
+                rs.getObject("collected_at", LocalDateTime.class), rs.getBigDecimal("received_amount"),
+                rs.getBigDecimal("change_amount"), rs.getString("reference")), order.getId())
+                .stream().findFirst();
     }
 
     // =========================================
@@ -454,11 +490,12 @@ public class OrderServiceImpl implements OrderService {
         cartRepository.saveAndFlush(cart);
     }
 
-    private void validatePaymentAmount(Order order) {
+    private PaymentApi.Payment validatePaymentAmount(Order order) {
         PaymentApi.Payment payment = paymentApi.get(order.getId());
         if (payment.amount().compareTo(order.getFinalAmount()) != 0) {
             throw new BusinessException("Khoản thanh toán không khớp giá trị đơn hàng.");
         }
+        return payment;
     }
 
     private List<PickupWarrantyApi.Unit> validateWarrantyDevices(

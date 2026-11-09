@@ -219,6 +219,48 @@ class PickupOrderApiTests {
     }
 
     @Test
+    void counterCollectionRecordsTheAuthenticatedStaffAndChange() throws Exception {
+        code = place(UUID.randomUUID().toString(), 0, "");
+        String base = "/api/operations/orders/" + code;
+        mvc.perform(get(base + "/cash-collection").header("Authorization", staff))
+                .andExpect(status().isNoContent());
+        mvc.perform(post(base + "/collect").header("Authorization", staff).contentType("application/json")
+                .content("{\"receivedAmount\":2100000,\"reference\":\"CT-01\"}"))
+                .andExpect(status().isOk());
+        int staffId = jdbc.queryForObject("SELECT id FROM users WHERE email='staff@techzone.demo'", Integer.class);
+        mvc.perform(get(base + "/cash-collection").header("Authorization", staff))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectorUserId").value(staffId))
+                .andExpect(jsonPath("$.collectedAt").isNotEmpty())
+                .andExpect(jsonPath("$.receivedAmount").value(2100000))
+                .andExpect(jsonPath("$.changeAmount").value(100000))
+                .andExpect(jsonPath("$.reference").value("CT-01"));
+        mvc.perform(get(base + "/cash-collection").header("Authorization", customer))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void shippingCodCannotBeCollectedAtTheCounter() throws Exception {
+        String key = UUID.randomUUID().toString();
+        String body = """
+                {"pickupName":"Khách nhận","pickupPhone":"0900000128","method":"cod",
+                 "deliveryType":"shipping","shippingFee":30000,"shippingAddress":"Địa chỉ test",
+                 "expectedTotal":2000000,"expectedDiscount":0}
+                """;
+        mvc.perform(post("/api/orders").header("Authorization", customer).header("Idempotency-Key", key)
+                .contentType("application/json").content(body))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.paymentStatus").value("PENDING"));
+        code = "TZ-" + key.replace("-", "").toUpperCase();
+        String base = "/api/operations/orders/" + code;
+        mvc.perform(post(base + "/collect").header("Authorization", staff).contentType("application/json")
+                .content("{\"receivedAmount\":2030000}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get(base + "/cash-collection").header("Authorization", staff))
+                .andExpect(status().isNoContent());
+        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM payments", String.class));
+    }
+
+    @Test
     void customerCannotOperateOrReviewBeforeHandoverAndCannotReadOthersOrders() throws Exception {
         code=place(UUID.randomUUID().toString(),0,"");
         int itemId=jdbc.queryForObject("SELECT id FROM order_items",Integer.class);
