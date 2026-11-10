@@ -671,13 +671,15 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
     private AiChatResponse.ProductSummary mapRowToProductSummary(Map<String, Object> r) {
         Integer pid = ((Number) r.get("product_id")).intValue();
         Integer vid = r.get("variant_id") != null ? ((Number) r.get("variant_id")).intValue() : pid;
+        String rawSpecs = (String) r.get("specs_summary");
+        String cleanSpecs = sanitizeSpecsForUser(rawSpecs);
         return AiChatResponse.ProductSummary.builder()
                 .id(pid)
                 .variantId(vid)
                 .name((String) r.get("product_name"))
                 .brand(r.get("brand_name") != null ? (String) r.get("brand_name") : "Chính hãng")
                 .description((String) r.get("product_desc"))
-                .specs((String) r.get("specs_summary"))
+                .specs(cleanSpecs)
                 .warrantyMonths(r.get("warranty_months") != null ? ((Number) r.get("warranty_months")).intValue() : 36)
                 .variantName((String) r.get("variant_name"))
                 .category((String) r.get("category_name"))
@@ -2483,15 +2485,70 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                msgLower.contains("lắp máy") ||
                msgLower.contains("thùng pc") ||
                msgLower.matches(".*(tư vấn|gợi ý|mua|build|ráp|lắp|chọn|cần).*?(pc|máy tính|case).*") ||
-               msgLower.matches(".*(pc|máy tính|dàn|cấu hình).*?\\d+\\s*(?:triệu|trieu|tr\\b|củ|m\\b).*") ||
+               msgLower.matches(".*(pc|máy tính|dàn|cấu hình).*?\\d+\\s*(?:triệu|trieu|tr|t|củ|cu|m).*") ||
                msgLower.matches(".*(pc gaming|pc đồ họa|pc văn phòng|pc đồ hoạ|pc dựng phim).*");
+    }
+
+    /**
+     * Lọc bỏ các thuộc tính crawler/metadata nội bộ, chỉ giữ lại thông số kỹ thuật cốt lõi cho người dùng
+     */
+    private String sanitizeSpecsForUser(String rawSpecs) {
+        if (rawSpecs == null || rawSpecs.isBlank()) return "";
+
+        String[] parts = rawSpecs.split("\\| ");
+        List<String> cleanParts = new ArrayList<>();
+
+        for (String part : parts) {
+            String p = part.trim();
+            String lower = p.toLowerCase(Locale.ROOT);
+
+            // Loại bỏ các trường cào dữ liệu và ghi chú nội bộ
+            if (lower.startsWith("price_source:") || 
+                lower.startsWith("price_seen_date:") || 
+                lower.startsWith("price_status:") || 
+                lower.startsWith("compat_note:") ||
+                lower.startsWith("lifecycle:") ||
+                lower.startsWith("compute_stack:") ||
+                lower.contains("chưa rõ") || 
+                lower.contains("chưa xác minh")) {
+                continue;
+            }
+            cleanParts.add(p);
+        }
+
+        // Giữ lại tối đa 4 thông số phần cứng quan trọng nhất (như Socket, RAM, TDP, Cores...)
+        if (cleanParts.size() > 4) {
+            cleanParts = cleanParts.subList(0, 4);
+        }
+        return String.join(" | ", cleanParts);
     }
 
     private BigDecimal extractBudgetFromMessage(String msg) {
         if (msg == null) return new BigDecimal("25000000");
         String text = msg.toLowerCase().replace(",", ".").replaceAll("\\s+", " ");
-        
-        java.util.regex.Matcher m1 = java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(?:triệu|trieu|tr\\b|củ|cu\\b|m\\b)").matcher(text);
+
+        // 1. Bắt kiểu viết tắt tiếng Việt: "28tr5", "28t5", "28củ5", "28m5" -> 28,500,000đ
+        java.util.regex.Matcher mAbbr = java.util.regex.Pattern
+                .compile("(\\d+)\\s*(?:triệu|trieu|tr|t|củ|cu|m)\\s*(\\d+)\\b")
+                .matcher(text);
+        if (mAbbr.find()) {
+            try {
+                double mainVal = Double.parseDouble(mAbbr.group(1));
+                double subVal = Double.parseDouble(mAbbr.group(2));
+                if (subVal < 10) subVal = subVal / 10.0;
+                else if (subVal < 100) subVal = subVal / 100.0;
+                else if (subVal < 1000) subVal = subVal / 1000.0;
+                double totalVal = mainVal + subVal;
+                if (totalVal > 0 && totalVal < 1000) {
+                    return BigDecimal.valueOf((long)(totalVal * 1_000_000L));
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 2. Bắt kiểu chuẩn: "28.5 triệu", "28.5tr", "28.5 củ"
+        java.util.regex.Matcher m1 = java.util.regex.Pattern
+                .compile("(\\d+(?:\\.\\d+)?)\\s*(?:triệu|trieu|tr\\b|củ|cu\\b|m\\b)")
+                .matcher(text);
         if (m1.find()) {
             try {
                 double val = Double.parseDouble(m1.group(1));
@@ -2500,8 +2557,11 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 }
             } catch (Exception ignored) {}
         }
-        
-        java.util.regex.Matcher m2 = java.util.regex.Pattern.compile("(\\d{1,3}(?:\\.\\d{3}){2,3}|\\d{7,9})").matcher(text.replace(".", ""));
+
+        // 3. Bắt số nguyên đầy đủ: "28500000" hoặc "28.500.000"
+        java.util.regex.Matcher m2 = java.util.regex.Pattern
+                .compile("(\\d{1,3}(?:\\.\\d{3}){2,3}|\\d{7,9})")
+                .matcher(text.replace(".", ""));
         if (m2.find()) {
             try {
                 long val = Long.parseLong(m2.group(1));
@@ -2510,7 +2570,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 }
             } catch (Exception ignored) {}
         }
-        
+
         return new BigDecimal("25000000");
     }
 
@@ -2552,10 +2612,9 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                     ? " (" + p.getVariantName() + ")" : "";
             reply.append("🔹 **").append(catName).append("**: **").append(p.getName()).append(vName).append("** — **")
                     .append(MONEY_FMT.format(p.getPrice() != null ? p.getPrice() : 0.0)).append("**\n");
-            if (p.getSpecs() != null && !p.getSpecs().isBlank()) {
-                reply.append("  ↳ _Thông số_: ").append(p.getSpecs()).append("\n");
-            } else if (p.getDescription() != null && !p.getDescription().isBlank()) {
-                reply.append("  ↳ _Thông số_: ").append(p.getDescription()).append("\n");
+            String cleanSpecs = sanitizeSpecsForUser(p.getSpecs() != null ? p.getSpecs() : p.getDescription());
+            if (!cleanSpecs.isBlank()) {
+                reply.append("  ↳ _Thông số_: ").append(cleanSpecs).append("\n");
             }
         }
         reply.append("\n💡 **Đánh giá tương thích từ Kỹ sư phần cứng TechZone:**\n");
