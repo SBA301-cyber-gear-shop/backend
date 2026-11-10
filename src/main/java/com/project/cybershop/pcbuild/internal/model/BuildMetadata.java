@@ -6,6 +6,7 @@ import lombok.Value;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /** Dữ liệu cấu hình nạp từ bảng build_template_slots và budget_profiles, đã qua kiểm tra tính hợp lệ. */
@@ -19,6 +20,14 @@ public class BuildMetadata {
     public Long minBudget(String purpose) {
         PurposeMeta meta = purposes.get(purpose);
         return meta != null ? meta.getMinBudget() : null;
+    }
+
+    public Long lowestMinBudget() {
+        return purposes.values().stream()
+                .map(PurposeMeta::getMinBudget)
+                .filter(Objects::nonNull)
+                .min(Long::compareTo)
+                .orElse(0L);
     }
 
     public Set<String> purposeCodes() {

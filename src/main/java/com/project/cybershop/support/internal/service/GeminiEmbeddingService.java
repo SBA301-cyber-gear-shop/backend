@@ -2,6 +2,8 @@ package com.project.cybershop.support.internal.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.project.cybershop.aiconfig.api.AiConfigPublicApi;
+import com.project.cybershop.aiconfig.api.dto.AiConfigDto;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -21,16 +23,35 @@ public class GeminiEmbeddingService {
 
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
+    private final AiConfigPublicApi aiConfigApi;
 
     @Value("${app.ai.api-key:}")
     private String apiKey;
 
-    public GeminiEmbeddingService(ObjectMapper objectMapper) {
+    public GeminiEmbeddingService(ObjectMapper objectMapper, AiConfigPublicApi aiConfigApi) {
         this.objectMapper = objectMapper;
+        this.aiConfigApi = aiConfigApi;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(10));
         factory.setReadTimeout(Duration.ofSeconds(30));
         this.restClient = RestClient.builder().requestFactory(factory).build();
+    }
+
+    private String resolveEffectiveApiKey() {
+        AiConfigDto config = aiConfigApi != null ? aiConfigApi.getActiveConfig("EMBEDDING_CONFIG") : null;
+        if (config != null && config.getApiKey() != null && !config.getApiKey().isBlank()
+                && !config.getApiKey().startsWith("AI_API_KEY_PLACEHOLDER")) {
+            return config.getApiKey().trim();
+        }
+        return this.apiKey;
+    }
+
+    private String resolveEffectiveModel() {
+        AiConfigDto config = aiConfigApi != null ? aiConfigApi.getActiveConfig("EMBEDDING_CONFIG") : null;
+        if (config != null && config.getModelName() != null && !config.getModelName().isBlank()) {
+            return config.getModelName().trim();
+        }
+        return "text-embedding-004";
     }
 
     /**
@@ -42,15 +63,20 @@ public class GeminiEmbeddingService {
             return generateZeroVector(768);
         }
 
-        if (apiKey != null && !apiKey.isBlank()) {
+        String effectiveApiKey = resolveEffectiveApiKey();
+        if (effectiveApiKey != null && !effectiveApiKey.isBlank()) {
             try {
-                String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=" + apiKey;
+                String model = resolveEffectiveModel();
+                String cleanModel = model.startsWith("models/") ? model.substring(7) : model;
+                String fullModelPath = model.startsWith("models/") ? model : "models/" + model;
+
+                String url = "https://generativelanguage.googleapis.com/v1beta/models/" + cleanModel
+                        + ":embedContent?key=" + effectiveApiKey;
                 Map<String, Object> body = Map.of(
-                        "model", "models/gemini-embedding-001",
+                        "model", fullModelPath,
                         "content", Map.of("parts", List.of(Map.of("text", text))),
                         "taskType", "RETRIEVAL_QUERY",
-                        "outputDimensionality", 768
-                );
+                        "outputDimensionality", 768);
 
                 String response = restClient.post()
                         .uri(url)
@@ -73,7 +99,8 @@ public class GeminiEmbeddingService {
     }
 
     /**
-     * Sinh vector 768 chiều cho một tài liệu lưu trữ vào cơ sở dữ liệu (Document Vector)
+     * Sinh vector 768 chiều cho một tài liệu lưu trữ vào cơ sở dữ liệu (Document
+     * Vector)
      * Sử dụng taskType: RETRIEVAL_DOCUMENT.
      */
     public String embedDocument(String title, String content) {
@@ -82,11 +109,17 @@ public class GeminiEmbeddingService {
             return generateZeroVector(768);
         }
 
-        if (apiKey != null && !apiKey.isBlank()) {
+        String effectiveApiKey = resolveEffectiveApiKey();
+        if (effectiveApiKey != null && !effectiveApiKey.isBlank()) {
             try {
-                String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=" + apiKey;
+                String model = resolveEffectiveModel();
+                String cleanModel = model.startsWith("models/") ? model.substring(7) : model;
+                String fullModelPath = model.startsWith("models/") ? model : "models/" + model;
+
+                String url = "https://generativelanguage.googleapis.com/v1beta/models/" + cleanModel
+                        + ":embedContent?key=" + effectiveApiKey;
                 Map<String, Object> body = new LinkedHashMap<>();
-                body.put("model", "models/gemini-embedding-001");
+                body.put("model", fullModelPath);
                 body.put("content", Map.of("parts", List.of(Map.of("text", fullText))));
                 body.put("taskType", "RETRIEVAL_DOCUMENT");
                 if (title != null && !title.isBlank()) {
@@ -116,7 +149,8 @@ public class GeminiEmbeddingService {
 
     /**
      * Nhúng hàng loạt tài liệu sản phẩm theo lô (Batch Embedding)
-     * Mỗi request xử lý tới 80 tài liệu, cho phép nhúng 255 sản phẩm chỉ trong ~4 HTTP requests
+     * Mỗi request xử lý tới 80 tài liệu, cho phép nhúng 255 sản phẩm chỉ trong ~4
+     * HTTP requests
      * Tránh hoàn toàn lỗi 429 Too Many Requests của Google API.
      */
     public List<String> batchEmbedDocuments(List<String> texts) {
@@ -133,15 +167,15 @@ public class GeminiEmbeddingService {
 
             boolean success = false;
             if (apiKey != null && !apiKey.isBlank()) {
-                String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key=" + apiKey;
+                String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key="
+                        + apiKey;
                 List<Map<String, Object>> requestsList = new ArrayList<>();
                 for (String t : chunk) {
                     requestsList.add(Map.of(
                             "model", "models/gemini-embedding-001",
                             "content", Map.of("parts", List.of(Map.of("text", t != null ? t : ""))),
                             "taskType", "RETRIEVAL_DOCUMENT",
-                            "outputDimensionality", 768
-                    ));
+                            "outputDimensionality", 768));
                 }
                 Map<String, Object> body = Map.of("requests", requestsList);
 
@@ -164,7 +198,8 @@ public class GeminiEmbeddingService {
                     }
                 } catch (Exception e) {
                     if (e.getMessage() != null && e.getMessage().contains("429")) {
-                        log.warn("Gemini Embedding gặp 429 Rate Limit. Đang chờ 10s để thử lại chunk {} - {}...", i, end - 1);
+                        log.warn("Gemini Embedding gặp 429 Rate Limit. Đang chờ 10s để thử lại chunk {} - {}...", i,
+                                end - 1);
                         try {
                             Thread.sleep(10000);
                             String retryResponse = restClient.post()
@@ -184,10 +219,12 @@ public class GeminiEmbeddingService {
                                 success = true;
                             }
                         } catch (Exception retryEx) {
-                            log.warn("Thử lại thất bại sau 429: {}. Dùng hash fallback cho lô này.", retryEx.getMessage());
+                            log.warn("Thử lại thất bại sau 429: {}. Dùng hash fallback cho lô này.",
+                                    retryEx.getMessage());
                         }
                     } else {
-                        log.warn("Lỗi khi gọi batchEmbedContents (chunk {} - {}): {}. Dùng hash fallback cho lô này.", i, end - 1, e.getMessage());
+                        log.warn("Lỗi khi gọi batchEmbedContents (chunk {} - {}): {}. Dùng hash fallback cho lô này.",
+                                i, end - 1, e.getMessage());
                     }
                 }
             }
@@ -215,7 +252,8 @@ public class GeminiEmbeddingService {
     private String formatValuesToVector(JsonNode valuesNode) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < valuesNode.size(); i++) {
-            if (i > 0) sb.append(",");
+            if (i > 0)
+                sb.append(",");
             sb.append(valuesNode.get(i).asDouble());
         }
         sb.append("]");
@@ -225,7 +263,8 @@ public class GeminiEmbeddingService {
     private String generateZeroVector(int dims) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < dims; i++) {
-            if (i > 0) sb.append(",");
+            if (i > 0)
+                sb.append(",");
             sb.append("0.0");
         }
         sb.append("]");
@@ -249,13 +288,16 @@ public class GeminiEmbeddingService {
 
         // L2 Normalize
         float norm = 0f;
-        for (float v : vec) norm += v * v;
+        for (float v : vec)
+            norm += v * v;
         norm = (float) Math.sqrt(norm);
-        if (norm < 1e-6) norm = 1f;
+        if (norm < 1e-6)
+            norm = 1f;
 
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < dims; i++) {
-            if (i > 0) sb.append(",");
+            if (i > 0)
+                sb.append(",");
             sb.append(String.format(java.util.Locale.US, "%.5f", vec[i] / norm));
         }
         sb.append("]");

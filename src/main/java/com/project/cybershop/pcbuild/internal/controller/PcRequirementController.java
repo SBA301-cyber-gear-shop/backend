@@ -1,6 +1,7 @@
 package com.project.cybershop.pcbuild.internal.controller;
 
 import com.project.cybershop.pcbuild.api.dto.request.RequirementAnalyzeRequest;
+import com.project.cybershop.pcbuild.api.dto.response.PcBuildConfigResponse;
 import com.project.cybershop.pcbuild.api.dto.response.RequirementAnalyzeResponse;
 import com.project.cybershop.pcbuild.internal.service.RequirementService;
 import com.project.cybershop.pcbuild.internal.support.ClientKeys;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,6 +29,12 @@ import java.security.Principal;
 public class PcRequirementController {
 
     private final RequirementService requirementService;
+
+    @Operation(summary = "Lấy cấu hình giới hạn ngân sách ban đầu từ Database")
+    @GetMapping("/api/pc-build/config")
+    public ApiResponseDTO<PcBuildConfigResponse> getConfig() {
+        return ApiResponseDTO.success(requirementService.getConfig());
+    }
 
     @Operation(summary = "Phân tích nhu cầu tự nhiên và kiểm tra ngân sách cấu hình PC")
     @PostMapping("/api/pc-build/requirements/analyze")
