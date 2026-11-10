@@ -8,6 +8,7 @@ import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.BuildResultResponse;
 import com.project.cybershop.pcbuild.api.dto.response.ReplacementOptionResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SaveBuildResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SavedBuildResponse;
 import com.project.cybershop.pcbuild.internal.service.PcBuildService;
 import com.project.cybershop.pcbuild.internal.support.ClientKeys;
 import com.project.cybershop.shared.dto.ApiResponseDTO;
@@ -17,6 +18,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -76,11 +78,25 @@ public class PcBuildController {
                     của bước 7; khách bấm "Tiếp tục" thì gửi lại kèm `confirmOverBudget = true`.""")
     @PostMapping("/save")
     public ApiResponseDTO<SaveBuildResponse> save(@Valid @RequestBody SaveBuildRequest request, Principal principal) {
-        // SecurityConfig đã chặn khi chưa đăng nhập; kiểm thêm ở đây để sửa nhầm matcher thì vẫn ra 401, không ra 500
-        if (principal == null) {
-            throw new InsufficientAuthenticationException("Bạn cần đăng nhập để lưu bộ PC.");
-        }
-        Integer userId = identityApi.requireActiveUser(principal.getName()).getId();
+        Integer userId = requireUserId(principal, "Bạn cần đăng nhập để lưu bộ PC.");
         return ApiResponseDTO.success(pcBuildService.save(request, userId));
+    }
+
+    @Operation(summary = "Danh sách bộ PC đã lưu của tài khoản đang đăng nhập",
+            description = """
+                    Trả các bộ khách tự lưu (pc_customs có order_id rỗng), mới nhất trước, kèm món và giá lúc lưu.
+                    Bộ sinh ra khi đặt hàng không nằm ở đây. Chưa có bộ nào thì trả mảng rỗng. Chưa đăng nhập → 401.""")
+    @GetMapping("/saved")
+    public ApiResponseDTO<List<SavedBuildResponse>> saved(Principal principal) {
+        Integer userId = requireUserId(principal, "Bạn cần đăng nhập để xem cấu hình đã lưu.");
+        return ApiResponseDTO.success(pcBuildService.listSaved(userId));
+    }
+
+    /** SecurityConfig không có matcher cho /api/pc-build/builds/** nên chỗ này là lớp chặn duy nhất: thiếu token → 401. */
+    private Integer requireUserId(Principal principal, String message) {
+        if (principal == null) {
+            throw new InsufficientAuthenticationException(message);
+        }
+        return identityApi.requireActiveUser(principal.getName()).getId();
     }
 }
