@@ -39,8 +39,26 @@ public record CartResponse(
 
             Integer stockQuantity,
 
-            boolean available
+            boolean available,
+
+            Integer pcCustomId,
+
+            String pcCustomName
 
     ) {
+        public CartItemResponse(
+                Integer cartItemId,
+                Integer productVariantId,
+                String productName,
+                String variantName,
+                String imageUrl,
+                BigDecimal unitPrice,
+                Integer quantity,
+                BigDecimal subtotal,
+                Integer stockQuantity,
+                boolean available
+        ) {
+            this(cartItemId, productVariantId, productName, variantName, imageUrl, unitPrice, quantity, subtotal, stockQuantity, available, null, null);
+        }
     }
 }

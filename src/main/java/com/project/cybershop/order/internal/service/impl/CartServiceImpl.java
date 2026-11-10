@@ -20,7 +20,14 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +38,7 @@ public class CartServiceImpl implements CartService {
     private final CatalogInternalApi catalogApi;
     private final IdentityApi identityApi;
     private final com.project.cybershop.promotion.api.PromotionApi promotions;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Override
     @Transactional
@@ -50,7 +58,7 @@ public class CartServiceImpl implements CartService {
 
         Cart cart = cartRepository.findByUserId(userId).orElseGet(() -> createCart(userId));
         CartItem cartItem = cartItemRepository
-                .findByCartIdAndProductVariantId(cart.getId(), request.productVariantId())
+                .findByCartIdAndProductVariantIdAndPcCustomId(cart.getId(), request.productVariantId(), request.pcCustomId())
                 .orElse(null);
 
         long newQuantity = request.quantity();
@@ -64,6 +72,7 @@ public class CartServiceImpl implements CartService {
             cartItem = new CartItem();
             cartItem.setCartId(cart.getId());
             cartItem.setProductVariantId(request.productVariantId());
+            cartItem.setPcCustomId(request.pcCustomId());
             cartItem.setCreatedAt(LocalDateTime.now());
         }
         cartItem.setQuantity((int) newQuantity);
@@ -74,6 +83,12 @@ public class CartServiceImpl implements CartService {
     @Override
     @Transactional
     public void addBatchToCart(Integer userId, List<AddToCartRequest> items) {
+        addBatchToCart(userId, items, null);
+    }
+
+    @Override
+    @Transactional
+    public void addBatchToCart(Integer userId, List<AddToCartRequest> items, Integer pcCustomId) {
         validateUserId(userId);
         if (items == null || items.isEmpty()) {
             throw new BusinessException("Danh sách linh kiện thêm vào giỏ không được để trống");
@@ -94,8 +109,9 @@ public class CartServiceImpl implements CartService {
                 throw new BusinessException("Linh kiện '" + product.productName() + "' đã hết hàng");
             }
 
+            Integer effectivePcCustomId = item.pcCustomId() != null ? item.pcCustomId() : pcCustomId;
             CartItem cartItem = cartItemRepository
-                    .findByCartIdAndProductVariantId(cart.getId(), item.productVariantId())
+                    .findByCartIdAndProductVariantIdAndPcCustomId(cart.getId(), item.productVariantId(), effectivePcCustomId)
                     .orElse(null);
 
             long newQuantity = item.quantity();
@@ -109,6 +125,7 @@ public class CartServiceImpl implements CartService {
                 cartItem = new CartItem();
                 cartItem.setCartId(cart.getId());
                 cartItem.setProductVariantId(item.productVariantId());
+                cartItem.setPcCustomId(effectivePcCustomId);
                 cartItem.setCreatedAt(LocalDateTime.now());
             }
             cartItem.setQuantity((int) newQuantity);
@@ -127,22 +144,84 @@ public class CartServiceImpl implements CartService {
             return new CartResponse(null, userId, List.of(), 0, BigDecimal.ZERO);
         }
 
-        List<CartResponse.CartItemResponse> items = new ArrayList<>();
-        promotions.syncProductPrices(cartItemRepository.findByCartIdOrderByIdAsc(cart.getId()).stream()
+        List<CartItem> cartItems = cartItemRepository.findByCartIdOrderByIdAsc(cart.getId());
+        promotions.syncProductPrices(cartItems.stream()
                 .map(CartItem::getProductVariantId).toList());
+
+        Set<Integer> pcCustomIds = cartItems.stream()
+                .map(CartItem::getPcCustomId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Map<Integer, String> pcCustomNames = new HashMap<>();
+        if (!pcCustomIds.isEmpty()) {
+            String inSql = String.join(",", Collections.nCopies(pcCustomIds.size(), "?"));
+            jdbc.query("SELECT id, name FROM pc_customs WHERE id IN (" + inSql + ")",
+                    rs -> {
+                        pcCustomNames.put(rs.getInt("id"), rs.getString("name"));
+                    },
+                    pcCustomIds.toArray());
+        }
+
+        List<CartResponse.CartItemResponse> items = new ArrayList<>();
         int totalQuantity = 0;
         BigDecimal totalAmount = BigDecimal.ZERO;
-        for (CartItem cartItem : cartItemRepository.findByCartIdOrderByIdAsc(cart.getId())) {
+        for (CartItem cartItem : cartItems) {
             validateQuantity(cartItem.getQuantity());
             PurchaseVariantResponse product = catalogApi.findActiveVariant(cartItem.getProductVariantId())
                     .orElse(null);
-            CartResponse.CartItemResponse itemResponse = toItemResponse(cartItem, product);
+            String pcName = cartItem.getPcCustomId() != null ? pcCustomNames.get(cartItem.getPcCustomId()) : null;
+            CartResponse.CartItemResponse itemResponse = toItemResponse(cartItem, product, pcName);
             items.add(itemResponse);
             totalQuantity = Math.addExact(totalQuantity, cartItem.getQuantity());
             totalAmount = totalAmount.add(itemResponse.subtotal());
         }
 
         return new CartResponse(cart.getId(), userId, items, totalQuantity, totalAmount);
+    }
+
+    @Override
+    @Transactional
+    public void removePcSet(Integer userId, Integer pcCustomId) {
+        validateUserId(userId);
+        if (pcCustomId == null || pcCustomId <= 0) {
+            throw new BusinessException("ID bộ PC không hợp lệ");
+        }
+        identityApi.lockActiveUser(userId);
+        Cart cart = cartRepository.findByUserId(userId)
+                .orElseThrow(() -> new BusinessException("Không tìm thấy giỏ hàng"));
+        cartItemRepository.deleteByCartIdAndPcCustomId(cart.getId(), pcCustomId);
+        touchCart(cart);
+    }
+
+    @Override
+    @Transactional
+    public void detachPcSet(Integer userId, Integer pcCustomId) {
+        validateUserId(userId);
+        if (pcCustomId == null || pcCustomId <= 0) {
+            throw new BusinessException("ID bộ PC không hợp lệ");
+        }
+        identityApi.lockActiveUser(userId);
+        Cart cart = cartRepository.findByUserId(userId)
+                .orElseThrow(() -> new BusinessException("Không tìm thấy giỏ hàng"));
+        List<CartItem> setItems = cartItemRepository.findByCartIdAndPcCustomId(cart.getId(), pcCustomId);
+        if (setItems.isEmpty()) {
+            return;
+        }
+        for (CartItem setItem : setItems) {
+            Optional<CartItem> existingLoose = cartItemRepository
+                    .findByCartIdAndProductVariantIdAndPcCustomId(cart.getId(), setItem.getProductVariantId(), null);
+            if (existingLoose.isPresent()) {
+                CartItem looseItem = existingLoose.get();
+                looseItem.setQuantity(looseItem.getQuantity() + setItem.getQuantity());
+                cartItemRepository.save(looseItem);
+                cartItemRepository.delete(setItem);
+            } else {
+                setItem.setPcCustomId(null);
+                cartItemRepository.save(setItem);
+            }
+        }
+        touchCart(cart);
     }
 
     @Override
@@ -203,18 +282,20 @@ public class CartServiceImpl implements CartService {
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm trong giỏ hàng"));
     }
 
-    private CartResponse.CartItemResponse toItemResponse(CartItem cartItem, PurchaseVariantResponse product) {
+    private CartResponse.CartItemResponse toItemResponse(CartItem cartItem, PurchaseVariantResponse product, String pcCustomName) {
         if (product == null) {
             return new CartResponse.CartItemResponse(
                     cartItem.getId(), cartItem.getProductVariantId(), "Sản phẩm không còn kinh doanh",
-                    "", null, BigDecimal.ZERO, cartItem.getQuantity(), BigDecimal.ZERO, 0, false);
+                    "", null, BigDecimal.ZERO, cartItem.getQuantity(), BigDecimal.ZERO, 0, false,
+                    cartItem.getPcCustomId(), pcCustomName);
         }
 
         validatePrice(product);
         BigDecimal subtotal = product.price().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
         return new CartResponse.CartItemResponse(
                 cartItem.getId(), cartItem.getProductVariantId(), product.productName(), product.variantName(),
-                product.imageUrl(), product.price(), cartItem.getQuantity(), subtotal, product.stockQuantity(), true);
+                product.imageUrl(), product.price(), cartItem.getQuantity(), subtotal, product.stockQuantity(), true,
+                cartItem.getPcCustomId(), pcCustomName);
     }
 
     private void validateStock(PurchaseVariantResponse product, long quantity) {

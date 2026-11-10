@@ -12,7 +12,12 @@ public record AddToCartRequest(
 
         @NotNull(message = "Vui lòng nhập số lượng")
         @Min(value = 1, message = "Số lượng phải lớn hơn 0")
-        Integer quantity
+        Integer quantity,
+
+        Integer pcCustomId
 
 ) {
+    public AddToCartRequest(Integer productVariantId, Integer quantity) {
+        this(productVariantId, quantity, null);
+    }
 }

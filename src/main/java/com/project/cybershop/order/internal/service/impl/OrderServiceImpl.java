@@ -161,7 +161,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
-            cartItemRepository.deleteByCartIdAndProductVariantIdIn(cartId, quantities.keySet());
+            clearPurchasedItems(cartId, quantities, request.pcGroups());
         } else {
             clearPurchasedCart(cartId);
         }
@@ -414,38 +414,87 @@ public class OrderServiceImpl implements OrderService {
     }
 
     static void validatePcGroups(List<PlaceOrderRequest.PcGroup> groups, Map<Integer, Integer> quantities) {
-        if (groups == null) return;
-        Set<Integer> used = new HashSet<>();
+        if (groups == null || groups.isEmpty()) return;
+        Map<Integer, Integer> remaining = new HashMap<>(quantities);
         for (var group : groups) {
             if (group == null || group.parts() == null || group.parts().size() < 2)
                 throw new BusinessException("Bộ PC không đầy đủ. Vui lòng kiểm tra giỏ hàng.");
+            Set<Integer> groupParts = new HashSet<>();
             for (var part : group.parts()) {
                 if (part == null || part.variantId() == null || part.quantity() == null || part.quantity() <= 0
-                        || part.role() == null || part.role().isBlank() || part.role().length() > 50
-                        || !used.add(part.variantId()) || !part.quantity().equals(quantities.get(part.variantId())))
-                    throw new BusinessException("Linh kiện bộ PC không khớp giỏ hàng hoặc trùng hàng mua lẻ. Vui lòng kiểm tra giỏ hàng.");
+                        || part.role() == null || part.role().isBlank() || part.role().length() > 50) {
+                    throw new BusinessException("Thông tin linh kiện bộ PC không hợp lệ.");
+                }
+                if (!groupParts.add(part.variantId())) {
+                    throw new BusinessException("Linh kiện bị trùng trong cùng một bộ PC.");
+                }
+                Integer available = remaining.get(part.variantId());
+                if (available == null || available < part.quantity()) {
+                    throw new BusinessException("Linh kiện bộ PC không đủ số lượng trong giỏ hàng. Vui lòng kiểm tra lại.");
+                }
+                remaining.put(part.variantId(), available - part.quantity());
             }
         }
     }
 
     private void createOrderItems(Integer orderId, Integer userId, Map<Integer, Integer> quantities, List<PlaceOrderRequest.PcGroup> groups) {
         List<OrderItem> items = new ArrayList<>();
-        Map<Integer, Integer> groupIds = new HashMap<>();
-        if (groups != null) for (var group : groups) {
-            var keys = new GeneratedKeyHolder();
-            jdbc.update(connection -> {
-                var statement = connection.prepareStatement("INSERT INTO pc_customs (order_id, user_id, total_price) VALUES (?, ?, 0)", new String[]{"id"});
-                statement.setInt(1, orderId);
-                statement.setInt(2, userId);
-                return statement;
-            }, keys);
-            Integer pcId = java.util.Objects.requireNonNull(keys.getKey()).intValue();
-            for (var part : group.parts()) groupIds.put(part.variantId(), pcId);
-        }
-        for (Map.Entry<Integer, Integer> entry : quantities.entrySet()) {
-            PurchaseVariantResponse product = catalogApi.getPurchaseVariant(entry.getKey());
-            Integer quantity = entry.getValue();
+        Map<Integer, Integer> remainingQuantities = new HashMap<>(quantities);
 
+        // 1. Tạo các OrderItem cho từng bộ PC
+        if (groups != null) {
+            for (var group : groups) {
+                var keys = new GeneratedKeyHolder();
+                jdbc.update(connection -> {
+                    var statement = connection.prepareStatement("INSERT INTO pc_customs (order_id, user_id, total_price) VALUES (?, ?, 0)", new String[]{"id"});
+                    statement.setInt(1, orderId);
+                    statement.setInt(2, userId);
+                    return statement;
+                }, keys);
+                Integer pcId = java.util.Objects.requireNonNull(keys.getKey()).intValue();
+
+                BigDecimal groupTotal = BigDecimal.ZERO;
+                for (var part : group.parts()) {
+                    PurchaseVariantResponse product = catalogApi.getPurchaseVariant(part.variantId());
+                    Integer qty = part.quantity();
+
+                    if (!"active".equalsIgnoreCase(product.status())
+                            || product.stockQuantity() < qty
+                            || product.warrantyPeriodMonths() < 0) {
+                        throw new BusinessException(
+                                "Sản phẩm không còn đủ điều kiện đặt mua: " + product.productName()
+                        );
+                    }
+
+                    catalogApi.deductStock(product.variantId(), qty);
+
+                    String productName = product.productName();
+                    if (product.variantName() != null && !product.variantName().isBlank()) {
+                        productName += " · " + product.variantName();
+                    }
+
+                    BigDecimal partSubtotal = product.price().multiply(BigDecimal.valueOf(qty));
+                    OrderItem item = orderMapper.toOrderItem(product, orderId, qty, productName, partSubtotal);
+                    item.setPcCustomId(pcId);
+                    items.add(item);
+
+                    jdbc.update("INSERT INTO pc_custom_items (pc_custom_id, product_variant_id, quantity, unit_price, component_role) VALUES (?, ?, ?, ?, ?)",
+                            pcId, part.variantId(), qty, product.price(), part.role());
+                    groupTotal = groupTotal.add(partSubtotal);
+
+                    remainingQuantities.put(part.variantId(), remainingQuantities.get(part.variantId()) - qty);
+                }
+
+                jdbc.update("UPDATE pc_customs SET total_price = ? WHERE id = ?", groupTotal, pcId);
+            }
+        }
+
+        // 2. Tạo các OrderItem cho các linh kiện mua lẻ còn lại
+        for (Map.Entry<Integer, Integer> entry : remainingQuantities.entrySet()) {
+            Integer quantity = entry.getValue();
+            if (quantity == null || quantity <= 0) continue;
+
+            PurchaseVariantResponse product = catalogApi.getPurchaseVariant(entry.getKey());
             if (!"active".equalsIgnoreCase(product.status())
                     || product.stockQuantity() < quantity
                     || product.warrantyPeriodMonths() < 0) {
@@ -463,20 +512,67 @@ public class OrderServiceImpl implements OrderService {
 
             BigDecimal subtotal = product.price().multiply(BigDecimal.valueOf(quantity));
             OrderItem item = orderMapper.toOrderItem(product, orderId, quantity, productName, subtotal);
-            item.setPcCustomId(groupIds.get(product.variantId()));
+            item.setPcCustomId(null);
             items.add(item);
-        }
-
-        if (groups != null) for (var group : groups) {
-            for (var part : group.parts()) {
-                OrderItem item = items.stream().filter(i -> i.getProductVariantId().equals(part.variantId())).findFirst().orElseThrow();
-                jdbc.update("INSERT INTO pc_custom_items (pc_custom_id, product_variant_id, quantity, unit_price, component_role) VALUES (?, ?, ?, ?, ?)", item.getPcCustomId(), part.variantId(), part.quantity(), item.getUnitPrice(), part.role());
-                jdbc.update("UPDATE pc_customs SET total_price = total_price + ? WHERE id = ?", item.getSubtotal(), item.getPcCustomId());
-            }
         }
 
         // Ghi xong dòng hàng trước khi payment/bảo hành đọc qua API module khác.
         orderItemRepository.saveAllAndFlush(items);
+    }
+
+    private void clearPurchasedItems(Integer cartId, Map<Integer, Integer> purchasedQuantities, List<PlaceOrderRequest.PcGroup> groups) {
+        List<CartItem> cartItems = cartItemRepository.findByCartIdOrderByIdAsc(cartId);
+        if (cartItems.isEmpty()) return;
+
+        Map<Integer, Integer> remainingToDeduct = new HashMap<>(purchasedQuantities);
+
+        // 1. Nếu có nhóm PC, ưu tiên trừ/xóa các dòng cartItem thuộc bộ PC trước
+        if (groups != null && !groups.isEmpty()) {
+            Set<Integer> groupVariantIds = groups.stream()
+                    .filter(Objects::nonNull)
+                    .filter(g -> g.parts() != null)
+                    .flatMap(g -> g.parts().stream())
+                    .filter(Objects::nonNull)
+                    .map(PlaceOrderRequest.PcGroupPart::variantId)
+                    .collect(Collectors.toSet());
+
+            for (CartItem ci : cartItems) {
+                if (ci.getPcCustomId() != null && groupVariantIds.contains(ci.getProductVariantId())) {
+                    Integer needed = remainingToDeduct.get(ci.getProductVariantId());
+                    if (needed != null && needed > 0) {
+                        int deduct = Math.min(ci.getQuantity(), needed);
+                        ci.setQuantity(ci.getQuantity() - deduct);
+                        remainingToDeduct.put(ci.getProductVariantId(), needed - deduct);
+                        if (ci.getQuantity() <= 0) {
+                            cartItemRepository.delete(ci);
+                        } else {
+                            cartItemRepository.save(ci);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Trừ các món hàng mua lẻ còn lại
+        for (CartItem ci : cartItems) {
+            Integer needed = remainingToDeduct.get(ci.getProductVariantId());
+            if (needed != null && needed > 0 && ci.getQuantity() > 0) {
+                int deduct = Math.min(ci.getQuantity(), needed);
+                ci.setQuantity(ci.getQuantity() - deduct);
+                remainingToDeduct.put(ci.getProductVariantId(), needed - deduct);
+                if (ci.getQuantity() <= 0) {
+                    cartItemRepository.delete(ci);
+                } else {
+                    cartItemRepository.save(ci);
+                }
+            }
+        }
+
+        Cart cart = cartRepository.findById(cartId).orElse(null);
+        if (cart != null) {
+            cart.setUpdatedAt(LocalDateTime.now(clock));
+            cartRepository.saveAndFlush(cart);
+        }
     }
 
     private void clearPurchasedCart(Integer cartId) {
