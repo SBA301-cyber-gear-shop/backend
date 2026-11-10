@@ -114,7 +114,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                         request.getHistory()
                 );
             }
-            return buildStaffConnectedResponse(conversationId);
+            return buildStaffWaitingResponse(conversationId);
         }
         if ("end_staff_session".equalsIgnoreCase(message)) {
             if (liveSupportService != null) {
@@ -417,11 +417,10 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                                 .append(MONEY_FMT.format(p.getPrice())).append("**\n");
                     }
                     reply.append("\n**Tổng giá trị trọn bộ**: **").append(MONEY_FMT.format(totalEst)).append("**\n");
-                    if (totalEst >= 5_000_000) {
-                    reply.append("_(Mẹo: Bạn có thể nhập mã giảm giá **NEWBIE** tại bước thanh toán để được giảm ngay 500,000₫, chỉ còn **")
-                            .append(MONEY_FMT.format(Math.max(0, totalEst - 500_000)))
-                            .append("**!)\n\n");
-                }
+                    String promoAdvisory = buildDynamicPromotionAdvisory(totalEst);
+                    if (!promoAdvisory.isBlank()) {
+                        reply.append(promoAdvisory).append("\n");
+                    }
                     reply.append("🎁 **Cam kết từ TechZone**:\n");
                     reply.append("• Miễn phí 100% công lắp ráp, đi dây chuyên nghiệp và stress-test kiểm tra độ ổn định.\n");
                     reply.append("• Kích hoạt bảo hành điện tử chính hãng theo Serial linh kiện khi nhận máy.\n\n");
@@ -444,7 +443,11 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                             .append(MONEY_FMT.format(p.getPrice())).append("**\n");
                 }
                 if (totalEst > 0) {
-                    reply.append("\n**Tổng giá trị dự tính**: **").append(MONEY_FMT.format(totalEst)).append("**\n\n");
+                    reply.append("\n**Tổng giá trị dự tính**: **").append(MONEY_FMT.format(totalEst)).append("**\n");
+                    String promoAdvisory = buildDynamicPromotionAdvisory(totalEst);
+                    if (!promoAdvisory.isBlank()) {
+                        reply.append(promoAdvisory).append("\n");
+                    }
                 }
                 reply.append("Bạn có thể bấm vào từng thẻ sản phẩm bên dưới để xem chi tiết hoặc bấm nút **Thêm tất cả vào giỏ hàng** để mua ngay nhé!");
             }
@@ -1494,6 +1497,61 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         return msgLower.matches(".*(hóa đơn đỏ|hóa đơn vat|hóa đơn công ty|mua sỉ|chiết khấu b2b|đại lý|hợp đồng mua bán|khiếu nại nhân viên|thái độ phục vụ|bồi thường thiệt hại|chuyển khoản nhầm).*");
     }
 
+    /**
+     * Tự động tìm kiếm mã voucher ưu đãi tốt nhất trong DB khớp với tổng giá trị tư vấn để gợi ý cho khách
+     */
+    private String buildDynamicPromotionAdvisory(double totalAmount) {
+        if (totalAmount <= 0) return "";
+        try {
+            StorePromotionContext promoCtx = fetchActivePromotionsAndFlashSales();
+            if (promoCtx.activeVouchers().isEmpty()) {
+                return "";
+            }
+
+            PromotionSummary bestVoucher = null;
+            double maxSavings = 0;
+
+            for (PromotionSummary p : promoCtx.activeVouchers()) {
+                double savings = 0;
+                if ("percentage".equalsIgnoreCase(p.discountType()) && p.discountValue() != null) {
+                    savings = totalAmount * (p.discountValue().doubleValue() / 100.0);
+                } else if (p.discountValue() != null) {
+                    savings = p.discountValue().doubleValue();
+                }
+                if (savings > maxSavings && savings < totalAmount) {
+                    maxSavings = savings;
+                    bestVoucher = p;
+                }
+            }
+
+            if (bestVoucher != null && maxSavings > 0) {
+                double finalPay = Math.max(0, totalAmount - maxSavings);
+                StringBuilder sb = new StringBuilder();
+                sb.append("\n🎁 **Mẹo tiết kiệm từ TechZone**:\n");
+                sb.append("• Đơn hàng của bạn đạt điều kiện áp dụng mã giảm giá **").append(bestVoucher.code()).append("** (").append(bestVoucher.name()).append(")!\n");
+                sb.append("• Nhập mã `").append(bestVoucher.code()).append("` tại bước thanh toán để được **giảm ngay ").append(MONEY_FMT.format(maxSavings)).append("** (tổng thanh toán trọn bộ chỉ còn **").append(MONEY_FMT.format(finalPay)).append("**).\n");
+                return sb.toString();
+            }
+        } catch (Exception e) {
+            log.warn("Lỗi khi tính toán khuyến mãi động: {}", e.getMessage());
+        }
+        return "";
+    }
+
+    private AiChatResponse buildStaffWaitingResponse(String conversationId) {
+        return AiChatResponse.builder()
+                .conversationId(conversationId)
+                .message("🔔 **Yêu cầu kết nối Chuyên viên CSKH đã được ghi nhận!**\n\n"
+                        + "* **Trạng thái**: Đang trong hàng chờ tiếp nhận (`WAITING`).\n"
+                        + "* **Dự kiến**: Chuyên viên tư vấn TechZone trực tuyến sẽ tiếp nhận phiên và phản hồi bạn trong giây lát.\n\n"
+                        + "Vui lòng giữ nguyên cửa sổ chat này nhé!")
+                .messageType("staff_waiting")
+                .quickActions(List.of(
+                        new AiChatResponse.QuickAction("❌ Hủy & Quay lại CyberBot", "end_staff_session", null)
+                ))
+                .build();
+    }
+
     private AiChatResponse buildStaffConnectedResponse(String conversationId) {
         AiChatResponse.StaffInfo staff = getAvailableOnlineStaff();
         return AiChatResponse.builder()
@@ -1603,7 +1661,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
 
         // 0. Lệnh kết nối hoặc kết thúc nhân viên hỗ trợ
         if (msgLower.equals("connect_staff")) {
-            return buildStaffConnectedResponse(conversationId);
+            return buildStaffWaitingResponse(conversationId);
         }
 
         if (msgLower.equals("end_staff_session")) {
@@ -1680,7 +1738,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                         history
                 );
             }
-            return buildStaffConnectedResponse(conversationId);
+            return buildStaffWaitingResponse(conversationId);
         }
 
         if (lastBotText.contains("bảo hành")) {
@@ -1871,6 +1929,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                - Khách hỏi tư vấn build PC / cấu hình máy tính / lên dàn máy theo ngân sách hoặc nhu cầu (ví dụ: 'build PC 25 triệu', 'tư vấn cấu hình đồ họa 3D', 'lên dàn máy gaming'...):
                  BẠN PHẢI TƯ VẤN CỤ THỂ ĐẦY ĐỦ TRỌN BỘ 8 LINH KIỆN MÁY TÍNH (CPU, Mainboard, RAM, Card đồ họa VGA, Ổ cứng SSD, Nguồn PSU, Vỏ Case, Tản nhiệt) kèm tên sản phẩm thực tế từ KHO LINH KIỆN THỰC TẾ của TechZone, giá bán, thông số nổi bật và tổng ngân sách.
                  Phân tích ngắn gọn lý do chọn cấu hình và nêu rõ cam kết TechZone: Miễn phí 100% công lắp ráp, stress-test kiểm tra nhiệt độ và kích hoạt bảo hành điện tử chính hãng theo Serial.
+                 - KHI TƯ VẤN CẤU HÌNH PC HOẶC LINH KIỆN CÓ TỔNG GIÁ TRỊ, BẠN BẮT BUỘC PHẢI ĐỐI CHIẾU DANH SÁCH MÃ VOUCHER TRONG MỤC 'CHƯƠNG TRÌNH KHUYẾN MÃI' VÀ TÍNH TOÁN SỐ TIỀN KHÁCH ĐƯỢC GIẢM (VÍ DỤ: 'Nhập mã NEWBIE tại bước thanh toán để giảm ngay 500,000₫, tổng tiền chỉ còn X...'). KHÔNG ĐƯỢC BỎ QUÊN TƯ VẤN MÃ GIẢM GIÁ CHO KHÁCH.
                  TUYỆT ĐỐI KHÔNG chỉ nói chung chung hoặc chỉ bảo khách sang trang /build-pc mà không liệt kê danh sách linh kiện trong khung chat!
                - Khách hỏi so sánh hoặc tính tương thích -> Phân tích rõ ràng sự khác biệt về socket (LGA1700 vs AM5), chuẩn RAM (DDR4 vs DDR5), công suất nguồn (PSU) và khuyến nghị mẫu phù hợp.
                - Khách hỏi về chính sách bảo hành, GHN, thanh toán -> Dựa vào TRI THỨC TỪ VECTOR DATABASE để giải đáp.
@@ -2027,6 +2086,12 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             reply.append("* **Chế độ bảo hành**: 36 tháng chính hãng, 1 đổi 1 trong 30 ngày đầu nếu phát sinh lỗi phần cứng NSX.\n");
             if (primary.getDescription() != null && !primary.getDescription().isBlank()) {
                 reply.append("* **Thông số nổi bật**: ").append(primary.getDescription().trim()).append("\n");
+            }
+            if (primary.getPrice() != null && primary.getPrice() > 0) {
+                String promoAdvisory = buildDynamicPromotionAdvisory(primary.getPrice());
+                if (!promoAdvisory.isBlank()) {
+                    reply.append(promoAdvisory);
+                }
             }
 
             if (products.size() > 1) {
@@ -2622,8 +2687,12 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         reply.append("🎁 **Đặc quyền khi lắp máy trọn bộ tại TechZone**:\n");
         reply.append("• Miễn phí 100% công lắp ráp và đi dây thẩm mỹ chuẩn show-case.\n");
         reply.append("• Kiểm tra Stress-Test (FurMark + Prime95) nhiệt độ ổn định trước khi giao.\n");
-        reply.append("• Kích hoạt bảo hành điện tử chính hãng từng Serial linh kiện ngay khi nhận máy.\n\n");
-        reply.append("👉 **Bạn có thể nhấn nút 'Thêm tất cả vào giỏ hàng' bên dưới hoặc nhắn CyberBot để cho từng món vào giỏ nhé!**");
+        reply.append("• Kích hoạt bảo hành điện tử chính hãng từng Serial linh kiện ngay khi nhận máy.\n");
+        String promoAdvisory = buildDynamicPromotionAdvisory(totalVal);
+        if (!promoAdvisory.isBlank()) {
+            reply.append(promoAdvisory);
+        }
+        reply.append("\n👉 **Bạn có thể nhấn nút 'Thêm tất cả vào giỏ hàng' bên dưới hoặc nhắn CyberBot để cho từng món vào giỏ nhé!**");
 
         List<AiChatResponse.QuickAction> actions = new ArrayList<>();
         actions.add(new AiChatResponse.QuickAction("🛒 Thêm tất cả vào giỏ hàng", "add_all_to_cart", "add_all_to_cart"));
