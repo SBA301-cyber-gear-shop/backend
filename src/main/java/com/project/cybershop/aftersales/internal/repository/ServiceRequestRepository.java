@@ -2,6 +2,7 @@ package com.project.cybershop.aftersales.internal.repository;
 
 import com.project.cybershop.aftersales.internal.entity.ServiceRequest;
 import com.project.cybershop.aftersales.internal.entity.ServiceRequestStatus;
+import com.project.cybershop.aftersales.internal.entity.Resolution;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -17,6 +18,8 @@ public interface ServiceRequestRepository extends JpaRepository<ServiceRequest, 
     List<ServiceRequest> findByWarrantyCardIdInOrderByCreatedAtDescIdDesc(Collection<Integer> cardIds);
 
     boolean existsByWarrantyCardIdAndStatusNotIn(Integer cardId, Collection<ServiceRequestStatus> statuses);
+
+    boolean existsByWarrantyCardIdAndResolutionAndStatusNot(Integer cardId, Resolution resolution, ServiceRequestStatus status);
 
     List<ServiceRequest> findByIntakeIdOrderByIdAsc(Integer intakeId);
 

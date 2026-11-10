@@ -27,5 +27,7 @@ public interface OrderService {
     OrderResponse collect(String email, String orderCode, CollectPaymentRequest request);
     Optional<CashCollectionResponse> cashCollection(String email, String orderCode);
 
+    OrderResponse registerShippingSerials(String email, String orderCode, List<HandoverRequest.Device> devices);
+
     OrderResponse handover(String email, String orderCode, HandoverRequest request);
 }

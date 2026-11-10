@@ -96,10 +96,6 @@ public class ServiceIntakeService {
             }
         }
         String accessories = req.getAccessoriesNote().trim();
-        if (!extraIds.isEmpty()) {
-            accessories += " Nhận kèm, ngoài bảo hành: " + extraIds.stream().map(requestService::card)
-                    .map(WarrantyCard::getSerialNumber).collect(Collectors.joining(", ")) + ".";
-        }
 
         OrderInfo order = orders.get(allIds.get(0));
         ServiceIntake intake = new ServiceIntake();
