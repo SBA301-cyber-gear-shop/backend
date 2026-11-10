@@ -104,6 +104,23 @@ class PickupOrderApiTests {
     }
 
     @Test
+    void registersRealSerialsForCompletedShippingOrder() throws Exception {
+        code = place(UUID.randomUUID().toString(), 0, "");
+        jdbc.update("UPDATE orders SET delivery_type='shipping', status='completed' WHERE order_code=?", code);
+        int item = jdbc.queryForObject("SELECT id FROM order_items", Integer.class);
+        String devices = "{\"devices\":[{\"orderItemId\":" + item + ",\"serialNumber\":\"REAL-A\"},{\"orderItemId\":" + item + ",\"serialNumber\":\"REAL-B\"}]}";
+        mvc.perform(post("/api/operations/orders/" + code + "/shipping-serials").header("Authorization", staff)
+                .contentType("application/json").content(devices.replace("REAL-B", "real-a")))
+                .andExpect(status().isBadRequest());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM warranty_cards", Integer.class));
+        mvc.perform(post("/api/operations/orders/" + code + "/shipping-serials").header("Authorization", staff)
+                .contentType("application/json").content(devices)).andExpect(status().isOk());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM warranty_cards WHERE serial_number IN ('REAL-A','REAL-B')", Integer.class));
+        mvc.perform(post("/api/operations/orders/" + code + "/shipping-serials").header("Authorization", staff)
+                .contentType("application/json").content(devices)).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void creationSnapshotsReservesOnceAndRetriesReturnTheSameOrder() throws Exception {
         var key=UUID.randomUUID().toString();
         code=place(key,0,"");

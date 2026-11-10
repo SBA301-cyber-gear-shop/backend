@@ -240,9 +240,6 @@ public class OrderServiceImpl implements OrderService {
             try {
                 promotionApi.markUsed(order.getId());
             } catch (Exception ignored) {}
-            if ("shipping".equalsIgnoreCase(order.getDeliveryType())) {
-                autoIssueShippingWarranty(order);
-            }
         }
         return toResponse(order);
     }
@@ -359,7 +356,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         List<OrderResponse.Item> items = findOrderItems(order.getId());
-        List<PickupWarrantyApi.Unit> units = validateWarrantyDevices(items, request);
+        List<PickupWarrantyApi.Unit> units = validateWarrantyDevices(items, request.devices());
 
         pickupWarrantyApi.issue(units, LocalDateTime.now(clock));
         updateStatus(order, "completed");
@@ -500,13 +497,13 @@ public class OrderServiceImpl implements OrderService {
 
     private List<PickupWarrantyApi.Unit> validateWarrantyDevices(
             List<OrderResponse.Item> items,
-            HandoverRequest request
+            List<HandoverRequest.Device> devices
     ) {
         Map<Integer, Long> suppliedQuantities = new HashMap<>();
         Set<String> serialNumbers = new HashSet<>();
         List<PickupWarrantyApi.Unit> units = new ArrayList<>();
 
-        for (HandoverRequest.Device device : request.devices()) {
+        for (HandoverRequest.Device device : devices) {
             OrderResponse.Item item = items.stream()
                     .filter(line -> line.id().equals(device.orderItemId()) && line.warrantyPeriodMonths() > 0)
                     .findFirst()
@@ -579,24 +576,19 @@ public class OrderServiceImpl implements OrderService {
                 ? "0" + normalized.substring(3) : normalized;
     }
 
-    private void autoIssueShippingWarranty(Order order) {
-        try {
-            List<OrderResponse.Item> items = findOrderItems(order.getId());
-            String suffix = (order.getOrderCode() != null && order.getOrderCode().length() >= 6)
-                    ? order.getOrderCode().substring(order.getOrderCode().length() - 6).toUpperCase(Locale.ROOT)
-                    : "GHN";
-            List<PickupWarrantyApi.Unit> units = new ArrayList<>();
-            for (OrderResponse.Item item : items) {
-                if (item.warrantyPeriodMonths() > 0) {
-                    for (int i = 0; i < item.quantity(); i++) {
-                        String serial = "SN-GHN-" + suffix + "-" + item.id() + (item.quantity() > 1 ? "-" + (i + 1) : "");
-                        units.add(new PickupWarrantyApi.Unit(item.id(), serial, item.warrantyPeriodMonths()));
-                    }
-                }
-            }
-            if (!units.isEmpty()) {
-                pickupWarrantyApi.issue(units, LocalDateTime.now(clock));
-            }
-        } catch (Exception ignored) {}
+    @Override
+    public OrderResponse registerShippingSerials(String email, String orderCode, List<HandoverRequest.Device> devices) {
+        requireActor(email, true);
+        Order order = findOrderForUpdate(orderCode, null);
+        if (!"shipping".equalsIgnoreCase(order.getDeliveryType()) || !"completed".equals(order.getStatus())) {
+            throw new BusinessException("Chỉ ghi nhận serial cho đơn giao hàng đã hoàn tất.");
+        }
+        Integer existing = jdbc.queryForObject("SELECT count(*) FROM warranty_cards wc JOIN order_items oi ON oi.id=wc.order_item_id WHERE oi.order_id=?", Integer.class, order.getId());
+        if (existing != null && existing > 0) {
+            throw new BusinessException("Đơn đã có thẻ bảo hành; cần đối chiếu dữ liệu cũ trước khi cập nhật serial.");
+        }
+        var units = validateWarrantyDevices(findOrderItems(order.getId()), devices);
+        pickupWarrantyApi.issue(units, order.getUpdatedAt() == null ? LocalDateTime.now(clock) : order.getUpdatedAt());
+        return toResponse(order);
     }
 }

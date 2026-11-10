@@ -167,6 +167,7 @@ public class ServiceRequestService {
 
     /** Lưu phiếu con mới và ghi dòng lịch sử đầu tiên; chặn khi thẻ đã có phiếu đang mở. */
     void open(ServiceRequest request, Principal actor, String internalNote, LocalDateTime now) {
+        checkReplacementReturned(card(request.getWarrantyCardId()));
         if (requests.existsByWarrantyCardIdAndStatusNotIn(request.getWarrantyCardId(), CLOSED)) {
             throw new BusinessException(OPEN_EXISTS);
         }
@@ -197,6 +198,7 @@ public class ServiceRequestService {
         }
         WarrantyCard current = card(request.getWarrantyCardId());
         WarrantyCard target = card(req.getWarrantyCardId());
+        checkReplacementReturned(target);
         if (target.getId().equals(current.getId())) {
             throw new BusinessException("Phiếu đang gắn đúng thẻ này.");
         }
@@ -285,6 +287,13 @@ public class ServiceRequestService {
     WarrantyCard card(Integer id) {
         return cards.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thẻ bảo hành: " + id));
+    }
+
+    private void checkReplacementReturned(WarrantyCard card) {
+        if (card.getReplacesCardId() != null && requests.existsByWarrantyCardIdAndResolutionAndStatusNot(
+                card.getReplacesCardId(), Resolution.REPLACED, RETURNED)) {
+            throw new BusinessException("Thiết bị thay thế chưa được trả cho khách, không thể tạo hoặc chuyển phiếu bảo hành.");
+        }
     }
 
     OrderInfo orderInfo(WarrantyCard card) {
