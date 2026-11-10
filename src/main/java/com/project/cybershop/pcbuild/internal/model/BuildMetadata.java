@@ -30,13 +30,6 @@ public class BuildMetadata {
         return meta != null ? meta.getLabel() : purpose;
     }
 
-    public Long getLowestMinBudget() {
-        return purposes.values().stream()
-                .map(PurposeMeta::getMinBudget)
-                .min(Long::compareTo)
-                .orElse(0L);
-    }
-
     @Value
     @Builder
     public static class SlotMeta {

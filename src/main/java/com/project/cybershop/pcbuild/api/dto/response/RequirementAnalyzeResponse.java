@@ -20,8 +20,6 @@ public class RequirementAnalyzeResponse {
     private Long maxBuildPrice;
     @Builder.Default
     private List<PurposeOptionResponse> suggestedPurposes = new ArrayList<>();
-    private String explanation;
-    private Long suggestedBudget;
     @Builder.Default
     private List<String> notes = new ArrayList<>();
 }

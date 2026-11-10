@@ -40,7 +40,7 @@ public class PcBuildController {
     @Operation(summary = "Tự build bộ PC theo ngân sách và mục đích, kèm lời giải thích",
             description = """
                     Lấy `budget` và `purpose` từ `data.requirement` của /api/pc-build/requirements/analyze
-                    (trạng thái READY hoặc BUDGET_WARNING), hoặc purpose khách chọn trong `suggestedPurposes`.
+                    (trạng thái READY), hoặc purpose khách chọn trong `suggestedPurposes`.
                     Trả bộ PC VALID theo step_order và `message` (bước 8: AI viết, sai số hoặc AI lỗi thì là câu mẫu).
                     Lỗi: 400 PURPOSE_INVALID / BUDGET_TOO_LOW / BUDGET_TOO_HIGH, 422 BUILD_NOT_FOUND, 503 METADATA_INVALID.""")
     @PostMapping("/auto")

@@ -19,7 +19,5 @@ public class NeedAnalysis {
     private String purpose;
     @Builder.Default
     private List<String> secondaryPurposes = new ArrayList<>();
-    private String performanceExpectation;
-    private String reason;
 }
 
