@@ -4,6 +4,7 @@ import com.project.cybershop.identity.api.IdentityApi;
 import com.project.cybershop.pcbuild.api.dto.request.AutoBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ReplacementRequest;
 import com.project.cybershop.pcbuild.api.dto.request.SaveBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.UpdateSavedBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.BuildResultResponse;
 import com.project.cybershop.pcbuild.api.dto.response.ReplacementOptionResponse;
@@ -19,7 +20,9 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -90,6 +93,20 @@ public class PcBuildController {
     public ApiResponseDTO<List<SavedBuildResponse>> saved(Principal principal) {
         Integer userId = requireUserId(principal, "Bạn cần đăng nhập để xem cấu hình đã lưu.");
         return ApiResponseDTO.success(pcBuildService.listSaved(userId));
+    }
+
+    @Operation(summary = "Đổi linh kiện của một bộ PC đã lưu (cần đăng nhập)",
+            description = """
+                    Ghi đè toàn bộ món của bộ `buildId` bằng danh sách {variantId, qty} mới, giá đọc lại từ DB.
+                    Bộ đã lưu không có ngân sách nên không có bước xác nhận vượt ngân sách.
+                    Lỗi: 404 SAVED_BUILD_NOT_FOUND (không phải bộ của khách hoặc đã gắn đơn), 422 BUILD_INCOMPATIBLE,
+                    400 VARIANT_NOT_FOUND. Chưa đăng nhập → 401.""")
+    @PutMapping("/saved/{buildId}")
+    public ApiResponseDTO<SaveBuildResponse> updateSaved(@PathVariable Integer buildId,
+                                                         @Valid @RequestBody UpdateSavedBuildRequest request,
+                                                         Principal principal) {
+        Integer userId = requireUserId(principal, "Bạn cần đăng nhập để sửa cấu hình đã lưu.");
+        return ApiResponseDTO.success(pcBuildService.updateSaved(buildId, request, userId));
     }
 
     /** SecurityConfig không có matcher cho /api/pc-build/builds/** nên chỗ này là lớp chặn duy nhất: thiếu token → 401. */

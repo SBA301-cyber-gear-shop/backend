@@ -3,6 +3,7 @@ package com.project.cybershop.pcbuild.internal.service;
 import com.project.cybershop.pcbuild.api.dto.request.AutoBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ReplacementRequest;
 import com.project.cybershop.pcbuild.api.dto.request.SaveBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.UpdateSavedBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.BuildResultResponse;
 import com.project.cybershop.pcbuild.api.dto.response.ReplacementOptionResponse;
@@ -28,4 +29,7 @@ public interface PcBuildService {
 
     /** Các bộ PC khách đã tự lưu (không gồm bộ sinh ra khi đặt hàng), mới nhất trước; giá là giá lúc lưu. */
     List<SavedBuildResponse> listSaved(Integer userId);
+
+    /** Ghi đè linh kiện của một bộ đã lưu (của chính khách, chưa gắn đơn); giá cập nhật theo giá hiện tại. */
+    SaveBuildResponse updateSaved(Integer buildId, UpdateSavedBuildRequest request, Integer userId);
 }
