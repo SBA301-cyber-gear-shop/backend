@@ -102,7 +102,15 @@ public class OrderServiceImpl implements OrderService {
                 .orElseThrow(() -> new BusinessException("Giỏ hàng đang trống."));
 
         List<CartLineProjection> cartItems = cartItemRepository.findForCheckout(cartId);
-        if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
+        if (request.cartItemIds() != null && !request.cartItemIds().isEmpty()) {
+            Set<Integer> selectedCartIds = new HashSet<>(request.cartItemIds());
+            cartItems = cartItems.stream()
+                    .filter(i -> selectedCartIds.contains(i.getCartItemId()))
+                    .toList();
+            if (cartItems.isEmpty()) {
+                throw new BusinessException("Không có sản phẩm nào được chọn trong giỏ hàng.");
+            }
+        } else if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
             Set<Integer> selectedSet = new HashSet<>(request.itemVariantIds());
             cartItems = cartItems.stream()
                     .filter(i -> selectedSet.contains(i.getProductVariantId()))
@@ -120,7 +128,7 @@ public class OrderServiceImpl implements OrderService {
                 email,
                 new CheckoutDetailsRequest(
                         request.pickupName(), request.pickupPhone(), request.note(), request.promotionCode(),
-                        request.itemVariantIds()
+                        request.cartItemIds(), request.itemVariantIds()
                 )
         );
 
@@ -163,8 +171,9 @@ public class OrderServiceImpl implements OrderService {
             paymentApi.createCounterPayment(order.getId(), finalAmount);
         }
 
-        if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
-            clearPurchasedItems(cartId, quantities, request.pcGroups());
+        if ((request.cartItemIds() != null && !request.cartItemIds().isEmpty())
+                || (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty())) {
+            clearPurchasedItems(cartId, quantities, request.cartItemIds(), request.pcGroups());
         } else {
             clearPurchasedCart(cartId);
         }
@@ -523,9 +532,24 @@ public class OrderServiceImpl implements OrderService {
         orderItemRepository.saveAllAndFlush(items);
     }
 
-    private void clearPurchasedItems(Integer cartId, Map<Integer, Integer> purchasedQuantities, List<PlaceOrderRequest.PcGroup> groups) {
+    private void clearPurchasedItems(Integer cartId, Map<Integer, Integer> purchasedQuantities, List<Integer> selectedCartItemIds, List<PlaceOrderRequest.PcGroup> groups) {
         List<CartItem> cartItems = cartItemRepository.findByCartIdOrderByIdAsc(cartId);
         if (cartItems.isEmpty()) return;
+
+        if (selectedCartItemIds != null && !selectedCartItemIds.isEmpty()) {
+            Set<Integer> selectedCartSet = new HashSet<>(selectedCartItemIds);
+            for (CartItem ci : cartItems) {
+                if (selectedCartSet.contains(ci.getId())) {
+                    cartItemRepository.delete(ci);
+                }
+            }
+            Cart cart = cartRepository.findById(cartId).orElse(null);
+            if (cart != null) {
+                cart.setUpdatedAt(LocalDateTime.now(clock));
+                cartRepository.saveAndFlush(cart);
+            }
+            return;
+        }
 
         Map<Integer, Integer> remainingToDeduct = new HashMap<>(purchasedQuantities);
 

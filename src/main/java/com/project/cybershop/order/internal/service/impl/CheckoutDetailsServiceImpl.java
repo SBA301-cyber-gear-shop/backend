@@ -44,7 +44,7 @@ public class CheckoutDetailsServiceImpl implements CheckoutDetailsService {
         if (note.length() > 2000) throw new BusinessException("Ghi chú không được vượt quá 2000 ký tự.");
 
         var user = identity.requireActiveUser(email);
-        var cart = checkout.validate(email, request.itemVariantIds());
+        var cart = checkout.validate(email, request.cartItemIds(), request.itemVariantIds());
         var quote = promotions.quote(user.getId(), code, cart.totalAmount(), false);
 
         return new CheckoutDetailsResponse(cart.cartId(), name, phone, note, quote.code(), cart.items(),

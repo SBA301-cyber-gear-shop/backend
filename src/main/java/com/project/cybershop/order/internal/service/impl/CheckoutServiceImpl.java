@@ -38,6 +38,12 @@ public class CheckoutServiceImpl implements CheckoutService {
     @Override
     @Transactional
     public CheckoutPreviewResponse validate(String loginEmail, List<Integer> itemVariantIds) {
+        return validate(loginEmail, null, itemVariantIds);
+    }
+
+    @Override
+    @Transactional
+    public CheckoutPreviewResponse validate(String loginEmail, List<Integer> cartItemIds, List<Integer> itemVariantIds) {
         Integer userId = checkoutRepository.findActiveUserId(loginEmail)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy tài khoản đang hoạt động."));
 
@@ -49,7 +55,21 @@ public class CheckoutServiceImpl implements CheckoutService {
             throw new BusinessException("Giỏ hàng đang trống.");
         }
 
-        if (itemVariantIds != null) {
+        if (cartItemIds != null && !cartItemIds.isEmpty()) {
+            if (cartItemIds.stream().anyMatch(id -> id == null || id <= 0)) {
+                throw new BusinessException("Danh sách sản phẩm được chọn không hợp lệ.");
+            }
+            Set<Integer> allowedCartIds = new HashSet<>(cartItemIds);
+            cartItems = cartItems.stream()
+                    .filter(item -> allowedCartIds.contains(item.getCartItemId()))
+                    .toList();
+            Set<Integer> foundCartItemIds = cartItems.stream()
+                    .map(CheckoutItemProjection::getCartItemId)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!foundCartItemIds.equals(allowedCartIds)) {
+                throw new BusinessException("Sản phẩm được chọn đã thay đổi. Vui lòng kiểm tra lại giỏ hàng.");
+            }
+        } else if (itemVariantIds != null) {
             if (itemVariantIds.isEmpty()
                     || itemVariantIds.stream().anyMatch(id -> id == null || id <= 0)) {
                 throw new BusinessException("Danh sách sản phẩm được chọn không hợp lệ.");
@@ -66,10 +86,11 @@ public class CheckoutServiceImpl implements CheckoutService {
             }
         }
 
-        var selectedIds = cartItems.stream().map(CheckoutItemProjection::getProductVariantId).collect(java.util.stream.Collectors.toSet());
-        promotions.syncProductPrices(selectedIds.stream().toList());
+        var selectedVariantIds = cartItems.stream().map(CheckoutItemProjection::getProductVariantId).collect(java.util.stream.Collectors.toSet());
+        promotions.syncProductPrices(selectedVariantIds.stream().toList());
+        var selectedCartIds = cartItems.stream().map(CheckoutItemProjection::getCartItemId).collect(java.util.stream.Collectors.toSet());
         cartItems = checkoutRepository.findItemsForPreview(cart.getId()).stream()
-                .filter(item -> selectedIds.contains(item.getProductVariantId())).toList();
+                .filter(item -> selectedCartIds.contains(item.getCartItemId())).toList();
         List<CheckoutItemResponse> items = cartItems.stream()
                 .map(this::validateAndMapItem)
                 .toList();

@@ -32,7 +32,8 @@ public class CheckoutController {
                 || "anonymousUser".equals(authentication.getPrincipal())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bạn cần đăng nhập.");
         }
+        List<Integer> cartItemIds = request != null ? request.cartItemIds() : null;
         List<Integer> itemVariantIds = request != null ? request.itemVariantIds() : null;
-        return checkoutService.validate(authentication.getName(), itemVariantIds);
+        return checkoutService.validate(authentication.getName(), cartItemIds, itemVariantIds);
     }
 }

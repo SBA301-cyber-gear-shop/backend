@@ -8,9 +8,13 @@ public record CheckoutDetailsRequest(
         String pickupPhone,
         String note,
         String promotionCode,
+        List<Integer> cartItemIds,
         List<Integer> itemVariantIds
 ) {
+    public CheckoutDetailsRequest(String pickupName, String pickupPhone, String note, String promotionCode, List<Integer> itemVariantIds) {
+        this(pickupName, pickupPhone, note, promotionCode, null, itemVariantIds);
+    }
     public CheckoutDetailsRequest(String pickupName, String pickupPhone, String note, String promotionCode) {
-        this(pickupName, pickupPhone, note, promotionCode, null);
+        this(pickupName, pickupPhone, note, promotionCode, null, null);
     }
 }

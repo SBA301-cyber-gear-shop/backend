@@ -6,4 +6,5 @@ import java.util.List;
 public interface CheckoutService {
     CheckoutPreviewResponse validate(String loginEmail);
     CheckoutPreviewResponse validate(String loginEmail, List<Integer> itemVariantIds);
+    CheckoutPreviewResponse validate(String loginEmail, List<Integer> cartItemIds, List<Integer> itemVariantIds);
 }

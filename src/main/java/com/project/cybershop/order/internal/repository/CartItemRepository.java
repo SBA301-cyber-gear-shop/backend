@@ -18,10 +18,13 @@ public interface CartItemRepository extends JpaRepository<CartItem, Integer> {
     List<CartItem> findByCartIdOrderByIdAsc(Integer cartId);
 
     @Query(value = """
-            SELECT product_variant_id AS "productVariantId", quantity AS "quantity"
+            SELECT id AS "cartItemId",
+                   product_variant_id AS "productVariantId",
+                   quantity AS "quantity",
+                   pc_custom_id AS "pcCustomId"
             FROM cart_items
             WHERE cart_id = :cartId
-            ORDER BY product_variant_id, id
+            ORDER BY id
             FOR UPDATE
             """, nativeQuery = true)
     List<CartLineProjection> findForCheckout(@Param("cartId") Integer cartId);
