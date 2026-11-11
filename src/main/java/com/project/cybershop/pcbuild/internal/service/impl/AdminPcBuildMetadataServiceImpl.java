@@ -2,6 +2,7 @@ package com.project.cybershop.pcbuild.internal.service.impl;
 
 import com.project.cybershop.catalog.api.CatalogPublicApi;
 import com.project.cybershop.catalog.api.dto.CategorySpecDto;
+import com.project.cybershop.catalog.api.dto.ComponentCandidateDTO;
 import com.project.cybershop.catalog.api.dto.response.CategoryResponse;
 import com.project.cybershop.pcbuild.internal.dto.admin.*;
 import com.project.cybershop.pcbuild.internal.entity.BudgetProfile;
@@ -318,6 +319,11 @@ public class AdminPcBuildMetadataServiceImpl implements AdminPcBuildMetadataServ
         validateShares(slots, shares);
 
         BigDecimal minBudget = request.getMinBudget();
+        long maxPrice = calculateMaxBuildPrice(slots);
+        if (maxPrice > 0 && maxPrice < Long.MAX_VALUE && minBudget.compareTo(BigDecimal.valueOf(maxPrice)) > 0) {
+            throw badRequest("Ngân sách sàn đề xuất (" + vnd(minBudget.longValue()) + ") không được vượt quá giá trị bộ PC đắt nhất hiện tại trong hệ thống (" + vnd(maxPrice) + ").");
+        }
+
         for (BuildTemplateSlot slot : slots) {
             BudgetProfile bp = new BudgetProfile();
             bp.setPurpose(purpose);
@@ -343,6 +349,10 @@ public class AdminPcBuildMetadataServiceImpl implements AdminPcBuildMetadataServ
         validateShares(slots, shares);
 
         BigDecimal minBudget = request.getMinBudget();
+        long maxPrice = calculateMaxBuildPrice(slots);
+        if (maxPrice > 0 && maxPrice < Long.MAX_VALUE && minBudget.compareTo(BigDecimal.valueOf(maxPrice)) > 0) {
+            throw badRequest("Ngân sách sàn đề xuất (" + vnd(minBudget.longValue()) + ") không được vượt quá giá trị bộ PC đắt nhất hiện tại trong hệ thống (" + vnd(maxPrice) + ").");
+        }
 
         // Cập nhật hoặc lưu lại các dòng
         List<BudgetProfile> existing = budgetProfileRepository.findByPurposeOrderByIdAsc(purpose);
@@ -434,20 +444,13 @@ public class AdminPcBuildMetadataServiceImpl implements AdminPcBuildMetadataServ
         if (shares == null) {
             throw badRequest("Danh sách tỷ lệ ngân sách không được rỗng.");
         }
-        BigDecimal total = BigDecimal.ZERO;
         for (BuildTemplateSlot slot : slots) {
             BigDecimal share = shares.get(slot.getId());
             if (share == null) {
-                throw badRequest("Thiếu tỷ lệ phần trăm phân bổ cho slot ID: " + slot.getId());
-            }
-            if (share.compareTo(BigDecimal.ZERO) < 0 || share.compareTo(ONE_HUNDRED) > 0) {
+                shares.put(slot.getId(), BigDecimal.ZERO);
+            } else if (share.compareTo(BigDecimal.ZERO) < 0 || share.compareTo(ONE_HUNDRED) > 0) {
                 throw badRequest("Tỷ lệ phân bổ từng slot phải từ 0% đến 100%.");
             }
-            total = total.add(share);
-        }
-
-        if (total.compareTo(new BigDecimal("100")) != 0 && total.compareTo(ONE_HUNDRED) != 0) {
-            throw badRequest("Tổng tỷ lệ phần trăm phân bổ của tất cả các slot phải đúng bằng 100.00%. Hiện tại: " + total + "%.");
         }
     }
 
@@ -545,6 +548,29 @@ public class AdminPcBuildMetadataServiceImpl implements AdminPcBuildMetadataServ
             case "GENERAL" -> "Dùng cho nhiều việc hoặc nhu cầu chưa rõ; có card đồ họa";
             default -> "Cấu hình tối ưu cho nhu cầu " + purpose.replace('_', ' ').toLowerCase(Locale.ROOT);
         };
+    }
+
+    private long calculateMaxBuildPrice(List<BuildTemplateSlot> slots) {
+        List<ComponentCandidateDTO> candidates = catalogPublicApi.getActiveCandidatesForBuild();
+        if (candidates == null || candidates.isEmpty()) {
+            return Long.MAX_VALUE;
+        }
+        long total = 0L;
+        for (BuildTemplateSlot slot : slots) {
+            int quantity = slot.getMaxQty() != null && slot.getMaxQty() > 0 ? Math.min(slot.getMaxQty(), 2) : 1;
+            long highestPrice = candidates.stream()
+                    .filter(candidate -> Objects.equals(candidate.getCategoryId(), slot.getCategoryId())
+                            && candidate.getPrice() != null)
+                    .mapToLong(candidate -> candidate.getPrice().longValue())
+                    .max()
+                    .orElse(0L);
+            total += highestPrice * quantity;
+        }
+        return total > 0 ? total : Long.MAX_VALUE;
+    }
+
+    private static String vnd(long amount) {
+        return String.format(Locale.GERMANY, "%,dđ", amount);
     }
 
     private static PcBuildException badRequest(String message) {

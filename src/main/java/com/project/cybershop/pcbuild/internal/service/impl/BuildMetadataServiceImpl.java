@@ -130,7 +130,7 @@ public class BuildMetadataServiceImpl implements BuildMetadataService {
                 throw metadataInvalid("Mục đích " + purpose + " không có đủ cấu hình cho toàn bộ các slot.");
             }
             if (totalShare.compareTo(ONE_HUNDRED) != 0) {
-                throw metadataInvalid("Tổng share_pct của purpose " + purpose + " là " + totalShare + "%, không bằng 100%.");
+                log.warn("Tổng share_pct của purpose {} là {}%, khác 100%.", purpose, totalShare);
             }
             if (minBudgets.size() > 1) {
                 log.warn("Purpose {} có nhiều mức min_budget {}, sẽ sử dụng mức cao nhất.", purpose, minBudgets);
