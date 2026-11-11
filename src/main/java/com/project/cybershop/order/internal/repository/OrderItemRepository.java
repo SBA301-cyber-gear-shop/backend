@@ -16,6 +16,7 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Integer> {
                    oi.product_name AS "productName", oi.quantity AS "quantity",
                    oi.unit_price AS "unitPrice", oi.subtotal AS "subtotal",
                    oi.warranty_period_months AS "warrantyPeriodMonths",
+                   oi.pc_custom_id AS "pcCustomId",
                    r.rating AS "rating", r.comment AS "reviewComment"
             FROM order_items oi
             LEFT JOIN reviews r ON r.order_item_id = oi.id

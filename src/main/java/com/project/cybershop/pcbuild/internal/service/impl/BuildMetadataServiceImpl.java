@@ -130,7 +130,7 @@ public class BuildMetadataServiceImpl implements BuildMetadataService {
                 throw metadataInvalid("Mục đích " + purpose + " không có đủ cấu hình cho toàn bộ các slot.");
             }
             if (totalShare.compareTo(ONE_HUNDRED) != 0) {
-                throw metadataInvalid("Tổng share_pct của purpose " + purpose + " là " + totalShare + "%, không bằng 100%.");
+                log.warn("Tổng share_pct của purpose {} là {}%, khác 100%.", purpose, totalShare);
             }
             if (minBudgets.size() > 1) {
                 log.warn("Purpose {} có nhiều mức min_budget {}, sẽ sử dụng mức cao nhất.", purpose, minBudgets);
@@ -155,6 +155,13 @@ public class BuildMetadataServiceImpl implements BuildMetadataService {
             case "OFFICE" -> "PC văn phòng";
             case "DEV" -> "PC lập trình";
             case "GENERAL" -> "PC đa dụng";
+            case "GAMING_HIGH" -> "PC chơi game cao cấp";
+            case "GAMING_ULTRA" -> "PC chơi game đỉnh cao";
+            case "CREATIVE_HIGH" -> "PC đồ họa, dựng phim cao cấp";
+            case "CREATIVE_ULTRA" -> "PC đồ họa, dựng phim đỉnh cao";
+            case "AI_DATA_HIGH" -> "PC AI, dữ liệu cao cấp";
+            case "AI_DATA_ULTRA" -> "PC AI, dữ liệu đỉnh cao";
+            case "DEV_HIGH" -> "PC lập trình cao cấp";
             default -> "PC " + purpose.replace('_', ' ').toLowerCase(Locale.ROOT);
         };
     }
@@ -162,11 +169,19 @@ public class BuildMetadataServiceImpl implements BuildMetadataService {
     /** Mô tả giúp AI chọn đúng purpose từ nhu cầu tự nhiên của khách. */
     private static String purposeDescription(String purpose) {
         return switch (purpose.trim().toUpperCase(Locale.ROOT)) {
-            case "GAMING" -> "Chơi game, livestream; ưu tiên card đồ họa mạnh";
-            case "CREATIVE" -> "Thiết kế đồ họa, dựng phim, render 3D; cần CPU nhiều nhân, RAM lớn và card đồ họa";
-            case "AI_DATA" -> "Chạy hoặc huấn luyện model AI, xử lý dữ liệu lớn; cần card đồ họa nhiều VRAM";
+            // Tiêu chí lấy theo bảng đo min_budget ở seed mục 13.2; AI dựa vào đây để chọn tier
+            case "GAMING" -> "Chơi game phổ thông, eSports (LOL, Valorant, CS2, FO4), game AAA ở 1080p thiết lập thấp/trung bình, livestream nhẹ";
+            case "GAMING_HIGH" -> "Chơi game AAA nặng ở 1080p Ultra hoặc 2K High, chiến game căng/max setting mà không nói rõ 4K; card đồ họa lớp RTX 5060 trở lên";
+            case "GAMING_ULTRA" -> "Chơi game AAA ở 4K, hoặc 2K/1440p FPS rất cao (144–240fps), màn hình tần số quét cao; card đồ họa từ RTX 5070 Ti 16GB trở lên";
+            case "CREATIVE" -> "Thiết kế đồ họa 2D, Photoshop, dựng phim 1080p cơ bản; cần CPU nhiều nhân, RAM lớn và card đồ họa";
+            case "CREATIVE_HIGH" -> "Dựng phim 4K, render 3D, motion graphics chuyên nghiệp; CPU từ Ryzen 9 9900X và card đồ họa tầm trung cao";
+            case "CREATIVE_ULTRA" -> "Dựng phim 6K–8K, render 3D nặng/cảnh lớn, làm studio chuyên nghiệp; CPU từ Ryzen 9 9950X và card đồ họa từ RTX 5070 Ti";
+            case "AI_DATA" -> "Học AI/Data cơ bản, chạy model nhỏ, xử lý dữ liệu, Jupyter, học máy truyền thống; cần card đồ họa rời";
+            case "AI_DATA_HIGH" -> "Huấn luyện/fine-tune model vừa, chạy LLM local cỡ vừa, deep learning căng; cần card đồ họa 16GB VRAM";
+            case "AI_DATA_ULTRA" -> "Huấn luyện model lớn, LLM lớn, nghiên cứu deep learning chuyên sâu; cần card đồ họa 24GB VRAM chuyên dụng";
             case "OFFICE" -> "Văn phòng, học tập, Excel, họp online, xem phim; không cần card đồ họa rời";
-            case "DEV" -> "Lập trình, chạy Docker, máy ảo, biên dịch code; cần CPU nhiều nhân và RAM lớn";
+            case "DEV" -> "Lập trình, chạy Docker, máy ảo, biên dịch code mức thông thường; cần CPU nhiều nhân và RAM lớn";
+            case "DEV_HIGH" -> "Chạy nhiều máy ảo, Docker/Kubernetes, microservices nặng, build dự án lớn; CPU cao cấp và RAM DDR5 dung lượng lớn";
             case "GENERAL" -> "Dùng cho nhiều việc hoặc nhu cầu chưa rõ; có card đồ họa";
             default -> "Cấu hình tối ưu cho nhu cầu " + purpose.replace('_', ' ').toLowerCase(Locale.ROOT);
         };

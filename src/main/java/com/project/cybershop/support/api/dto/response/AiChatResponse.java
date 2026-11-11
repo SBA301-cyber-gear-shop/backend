@@ -15,7 +15,7 @@ import java.util.List;
 public class AiChatResponse {
     private String conversationId;
     private String message;
-    private String messageType; // "info", "proposal", "navigate"
+    private String messageType; // "info", "proposal", "navigate", "cart_action"
     private String messageRoute; // ví dụ: "/don-hang/TZ-8219" hoặc "/bao-hanh"
     @Builder.Default
     private List<QuickAction> quickActions = new ArrayList<>();
@@ -29,7 +29,7 @@ public class AiChatResponse {
     @AllArgsConstructor
     public static class QuickAction {
         private String label;
-        private String action; // "navigate", "ask", "connect_staff", "end_staff_session"
+        private String action; // "navigate", "ask", "connect_staff", "end_staff_session", "add_all_to_cart"
         private String route;
     }
 
@@ -43,6 +43,10 @@ public class AiChatResponse {
         private String name;
         private String brand;
         private String description;
+        private String specs;          // Chuỗi thông số chuẩn từ specification_values (VD: "Socket: LGA1700 | Chuẩn RAM: DDR5")
+        private Integer warrantyMonths; // Thời hạn bảo hành chính hãng (tháng) từ bảng products
+        private Double rating;         // Điểm đánh giá trung bình (1.0 - 5.0)
+        private Integer reviewCount;   // Số lượt đánh giá thực tế
         private String variantName;
         private String category;
         private Double price;

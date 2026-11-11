@@ -29,6 +29,12 @@ public class PromotionController {
         return promotionService.list(authentication.getName());
     }
 
+    @GetMapping("/api/operations/promotions")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
+    public List<com.project.cybershop.promotion.api.dto.response.StaffVoucherResponse> staffList(Authentication authentication) {
+        return promotionService.listForStaff(authentication.getName());
+    }
+
     @PostMapping("/api/admin/promotions")
     @PreAuthorize("hasRole('ADMIN')")
     public PromotionResponse create(

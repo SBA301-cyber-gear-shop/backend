@@ -21,6 +21,7 @@ public interface PromotionMapper {
     @Mapping(target = "startDate", source = "start")
     @Mapping(target = "endDate", source = "end")
     @Mapping(target = "isActive", source = "active")
+    @Mapping(target = "audience", expression = "java(request.audience() == null ? promotion.getAudience() : request.audience())")
     void updatePromotion(PromotionRequest request, @MappingTarget Promotion promotion);
 
     @Mapping(target = "id", ignore = true)
@@ -42,7 +43,7 @@ public interface PromotionMapper {
                 banner == null ? "" : banner.getImageUrl(),
                 banner == null ? "/san-pham" : banner.getLinkUrl(),
                 banner == null || banner.getDisplayOrder() == null ? 0 : banner.getDisplayOrder(),
-                banner != null && Boolean.TRUE.equals(banner.getIsActive())
+                banner != null && Boolean.TRUE.equals(banner.getIsActive()), promotion.getAudience()
         );
     }
 }

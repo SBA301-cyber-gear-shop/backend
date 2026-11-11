@@ -60,7 +60,7 @@ public class CartController {
 
         Integer userId = getCurrentUserId();
 
-        cartService.addBatchToCart(userId, request.items());
+        cartService.addBatchToCart(userId, request.items(), request.pcCustomId());
 
         return ResponseEntity.ok(
                 ApiResponseDTO.success(
@@ -183,5 +183,38 @@ public class CartController {
         );
     }
 
+    // =========================================
+    // XÓA NGUYÊN BỘ PC KHỎI GIỎ HÀNG
+    // =========================================
+    @DeleteMapping("/items/pc-build/{pcCustomId}")
+    public ResponseEntity<ApiResponseDTO<Void>> removePcSet(
+            @PathVariable Integer pcCustomId
+    ) {
+        Integer userId = getCurrentUserId();
+        cartService.removePcSet(userId, pcCustomId);
+        return ResponseEntity.ok(
+                ApiResponseDTO.success(
+                        "Xóa bộ PC khỏi giỏ hàng thành công",
+                        null
+                )
+        );
+    }
+
+    // =========================================
+    // TÁCH BỘ PC RA MUA LẺ
+    // =========================================
+    @PostMapping("/items/pc-build/{pcCustomId}/detach")
+    public ResponseEntity<ApiResponseDTO<Void>> detachPcSet(
+            @PathVariable Integer pcCustomId
+    ) {
+        Integer userId = getCurrentUserId();
+        cartService.detachPcSet(userId, pcCustomId);
+        return ResponseEntity.ok(
+                ApiResponseDTO.success(
+                        "Đã tách bộ PC thành các linh kiện mua lẻ",
+                        null
+                )
+        );
+    }
 
 }

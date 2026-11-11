@@ -6,6 +6,7 @@ import com.project.cybershop.pcbuild.api.dto.request.AutoBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.BuildItemRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ReplacementRequest;
 import com.project.cybershop.pcbuild.api.dto.request.SaveBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.UpdateSavedBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.BuildItemResponse;
 import com.project.cybershop.pcbuild.api.dto.response.BuildResultResponse;
@@ -13,6 +14,7 @@ import com.project.cybershop.pcbuild.api.dto.response.BuildStatus;
 import com.project.cybershop.pcbuild.api.dto.response.BuildViolationResponse;
 import com.project.cybershop.pcbuild.api.dto.response.ReplacementOptionResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SaveBuildResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SavedBuildResponse;
 import com.project.cybershop.pcbuild.internal.entity.CompatibilityRule;
 import com.project.cybershop.pcbuild.internal.entity.PcCustom;
 import com.project.cybershop.pcbuild.internal.entity.PcCustomItem;
@@ -209,24 +211,9 @@ public class PcBuildServiceImpl implements PcBuildService {
     public SaveBuildResponse save(SaveBuildRequest request, Integer userId) {
         String requestId = UUID.randomUUID().toString();
         long budget = request.budget();
-        List<Integer> variantIds = variantIds(request.items());
-        // Giá đọc mới từ DB lúc lưu, không nhận giá từ frontend (docx 3.5: unit_price là giá tại thời điểm lưu)
-        Map<Integer, ComponentCandidateDTO> parts = catalogPublicApi.getCandidatesByIds(variantIds).stream()
-                .collect(Collectors.toMap(ComponentCandidateDTO::getVariantId, Function.identity(), (first, second) -> first));
-        requireAll(variantIds, parts);
-
-        BuildMetadata metadata = buildMetadataService.loadMetadata(List.of());
-        List<BuildLine> lines = toLines(request.items(), parts, metadata);
-        BuildCheck check = compatibilityEngine.checkBuild(budget, lines,
-                new BuildContext(metadata, List.copyOf(parts.values()), loadRules()));             // bước 6 lần cuối
+        CheckedBuild checked = checkForSave(requestId, userId, budget, request.items());
+        BuildCheck check = checked.check();
         boolean confirmed = Boolean.TRUE.equals(request.confirmOverBudget());
-        if (check.status() == BuildStatus.INCOMPATIBLE) {
-            log.info("[PC_BUILD_SAVE] reqId={} user={} từ chối INCOMPATIBLE violations={}", requestId, userId,
-                    check.violations());
-            throw new PcBuildException("BUILD_INCOMPATIBLE", HttpStatus.UNPROCESSABLE_CONTENT,
-                    "Bộ PC có linh kiện không tương thích, chưa thể lưu.",
-                    Map.of("violations", toViolationResponses(check.violations())), null);
-        }
         if (check.status() == BuildStatus.OVER_BUDGET && !confirmed) {
             log.info("[PC_BUILD_SAVE] reqId={} user={} chờ khách xác nhận vượt ngân sách difference={}", requestId,
                     userId, check.difference());
@@ -241,15 +228,7 @@ public class PcBuildServiceImpl implements PcBuildService {
 
         PcCustom custom = new PcCustom();
         custom.setUserId(userId);
-        custom.setTotalPrice(BigDecimal.valueOf(check.total()));
-        for (BuildLine line : lines) {
-            PcCustomItem item = new PcCustomItem();
-            item.setProductVariantId(line.part().getVariantId());
-            item.setComponentRole(line.slot().getComponentCode());
-            item.setQuantity(line.quantity());
-            item.setUnitPrice(line.part().getPrice());
-            custom.addItem(item);
-        }
+        fillItems(custom, checked);
         PcCustom saved = pcCustomRepository.save(custom);
         // docx mục 7: log lựa chọn của khách ở popup (lưu được nghĩa là "Tiếp tục"; "Không" thì frontend không gọi API)
         log.info("[PC_BUILD_SAVE] reqId={} user={} buildId={} status={} confirmOverBudget={} total={} budget={}",
@@ -262,9 +241,106 @@ public class PcBuildServiceImpl implements PcBuildService {
                 .build();
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<SavedBuildResponse> listSaved(Integer userId) {
+        List<PcCustom> customs = pcCustomRepository.findByUserIdAndOrderIdIsNullOrderByIdDesc(userId);
+        List<Integer> variantIds = customs.stream()
+                .flatMap(custom -> custom.getItems().stream())
+                .map(PcCustomItem::getProductVariantId)
+                .distinct()
+                .toList();
+        // Không lọc tồn kho: món đã hết hàng vẫn hiện tên trong bộ đã lưu
+        Map<Integer, ComponentCandidateDTO> parts = catalogPublicApi.getCandidateMapByIds(variantIds);
+
+        List<SavedBuildResponse> builds = new ArrayList<>();
+        for (PcCustom custom : customs) {
+            List<BuildItemResponse> items = custom.getItems().stream()
+                    .sorted(Comparator.comparing(PcCustomItem::getId))   // id tăng dần = thứ tự step_order lúc lưu
+                    .map(item -> {
+                        ComponentCandidateDTO part = parts.get(item.getProductVariantId());
+                        return BuildItemResponse.builder()
+                                .category(item.getComponentRole())
+                                .id(item.getProductVariantId())
+                                .name(part != null ? part.getProductName() : "Linh kiện #" + item.getProductVariantId())
+                                .qty(item.getQuantity())
+                                .price(item.getUnitPrice().longValue())
+                                .build();
+                    })
+                    .toList();
+            builds.add(SavedBuildResponse.builder()
+                    .buildId(custom.getId())
+                    .total(custom.getTotalPrice() != null ? custom.getTotalPrice().longValue() : 0L)
+                    .items(items)
+                    .build());
+        }
+        return builds;
+    }
+
+    @Override
+    @Transactional
+    public SaveBuildResponse updateSaved(Integer buildId, UpdateSavedBuildRequest request, Integer userId) {
+        String requestId = UUID.randomUUID().toString();
+        // Bộ của tài khoản khác hoặc đã gắn đơn hàng trả 404 như không tồn tại, không lộ là có bộ đó
+        PcCustom custom = pcCustomRepository.findById(buildId)
+                .filter(found -> Objects.equals(found.getUserId(), userId) && found.getOrderId() == null)
+                .orElseThrow(() -> new PcBuildException("SAVED_BUILD_NOT_FOUND", HttpStatus.NOT_FOUND,
+                        "Không tìm thấy cấu hình đã lưu #" + buildId + "."));
+        // pc_customs không lưu ngân sách: lấy trần Long nên kết quả chỉ còn VALID hoặc INCOMPATIBLE
+        CheckedBuild checked = checkForSave(requestId, userId, Long.MAX_VALUE, request.items());
+        custom.getItems().clear();                      // orphanRemoval xóa các dòng cũ
+        fillItems(custom, checked);
+        pcCustomRepository.save(custom);
+        log.info("[PC_BUILD_UPDATE_SAVED] reqId={} user={} buildId={} total={} items={}", requestId, userId, buildId,
+                checked.check().total(), checked.lines().size());
+        return SaveBuildResponse.builder()
+                .buildId(buildId)
+                .status(checked.check().status())
+                .total(checked.check().total())
+                .difference(0L)                         // không có ngân sách để so
+                .build();
+    }
+
     // =========================================================================
     // DÙNG CHUNG CHO validate / replacements / save
     // =========================================================================
+
+    private record CheckedBuild(List<BuildLine> lines, BuildCheck check) {
+    }
+
+    /** Bước 6 lần cuối trước khi ghi pc_customs: giá đọc mới từ DB, bộ có xung đột phần cứng thì 422. */
+    private CheckedBuild checkForSave(String requestId, Integer userId, long budget, List<BuildItemRequest> items) {
+        List<Integer> variantIds = variantIds(items);
+        // Không nhận giá từ frontend (docx 3.5: unit_price là giá tại thời điểm lưu)
+        Map<Integer, ComponentCandidateDTO> parts = catalogPublicApi.getCandidatesByIds(variantIds).stream()
+                .collect(Collectors.toMap(ComponentCandidateDTO::getVariantId, Function.identity(), (first, second) -> first));
+        requireAll(variantIds, parts);
+
+        BuildMetadata metadata = buildMetadataService.loadMetadata(List.of());
+        List<BuildLine> lines = toLines(items, parts, metadata);
+        BuildCheck check = compatibilityEngine.checkBuild(budget, lines,
+                new BuildContext(metadata, List.copyOf(parts.values()), loadRules()));
+        if (check.status() == BuildStatus.INCOMPATIBLE) {
+            log.info("[PC_BUILD_SAVE] reqId={} user={} từ chối INCOMPATIBLE violations={}", requestId, userId,
+                    check.violations());
+            throw new PcBuildException("BUILD_INCOMPATIBLE", HttpStatus.UNPROCESSABLE_CONTENT,
+                    "Bộ PC có linh kiện không tương thích, chưa thể lưu.",
+                    Map.of("violations", toViolationResponses(check.violations())), null);
+        }
+        return new CheckedBuild(lines, check);
+    }
+
+    private static void fillItems(PcCustom custom, CheckedBuild checked) {
+        custom.setTotalPrice(BigDecimal.valueOf(checked.check().total()));
+        for (BuildLine line : checked.lines()) {
+            PcCustomItem item = new PcCustomItem();
+            item.setProductVariantId(line.part().getVariantId());
+            item.setComponentRole(line.slot().getComponentCode());
+            item.setQuantity(line.quantity());
+            item.setUnitPrice(line.part().getPrice());
+            custom.addItem(item);
+        }
+    }
 
     private List<CompatibilityRule> loadRules() {
         return compatibilityRuleRepository.findAll();

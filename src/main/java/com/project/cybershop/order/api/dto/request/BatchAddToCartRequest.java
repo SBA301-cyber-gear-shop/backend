@@ -6,6 +6,11 @@ import java.util.List;
 
 public record BatchAddToCartRequest(
         @NotEmpty(message = "Danh sách linh kiện không được để trống")
-        List<@Valid AddToCartRequest> items
+        List<@Valid AddToCartRequest> items,
+
+        Integer pcCustomId
 ) {
+    public BatchAddToCartRequest(List<AddToCartRequest> items) {
+        this(items, null);
+    }
 }

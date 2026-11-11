@@ -39,6 +39,7 @@ public class WarrantyCardDto {
     private String pickupPhone;
     /** Thẻ cũ mà thẻ này thay thế, nếu có. */
     private Integer replacesCardId;
+    private boolean replacementPendingReturn;
     /** Thẻ mới đã thay thế thẻ này, nếu thiết bị đã được đổi. */
     private Integer replacedByCardId;
     private String replacedBySerialNumber;

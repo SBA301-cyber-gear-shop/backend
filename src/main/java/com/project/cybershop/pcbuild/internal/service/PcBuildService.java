@@ -3,10 +3,12 @@ package com.project.cybershop.pcbuild.internal.service;
 import com.project.cybershop.pcbuild.api.dto.request.AutoBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ReplacementRequest;
 import com.project.cybershop.pcbuild.api.dto.request.SaveBuildRequest;
+import com.project.cybershop.pcbuild.api.dto.request.UpdateSavedBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.request.ValidateBuildRequest;
 import com.project.cybershop.pcbuild.api.dto.response.BuildResultResponse;
 import com.project.cybershop.pcbuild.api.dto.response.ReplacementOptionResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SaveBuildResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SavedBuildResponse;
 
 import java.util.List;
 
@@ -24,4 +26,10 @@ public interface PcBuildService {
 
     /** Bước 9: lưu pc_customs + pc_custom_items; OVER_BUDGET phải có xác nhận của khách (popup bước 7). */
     SaveBuildResponse save(SaveBuildRequest request, Integer userId);
+
+    /** Các bộ PC khách đã tự lưu (không gồm bộ sinh ra khi đặt hàng), mới nhất trước; giá là giá lúc lưu. */
+    List<SavedBuildResponse> listSaved(Integer userId);
+
+    /** Ghi đè linh kiện của một bộ đã lưu (của chính khách, chưa gắn đơn); giá cập nhật theo giá hiện tại. */
+    SaveBuildResponse updateSaved(Integer buildId, UpdateSavedBuildRequest request, Integer userId);
 }

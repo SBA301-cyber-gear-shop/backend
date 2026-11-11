@@ -20,6 +20,7 @@ public class MyWarrantyCardDto {
     private String status;
     private boolean valid;
     private String productName;
+    private Integer pcCustomId;
     private String variantName;
     private String orderCode;
     private String replacedBySerialNumber;

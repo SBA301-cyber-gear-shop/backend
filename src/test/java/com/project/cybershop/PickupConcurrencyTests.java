@@ -152,26 +152,12 @@ class PickupConcurrencyTests {
                 new HandoverRequest("0900000128", true,
                         java.util.List.of(new HandoverRequest.Device(itemId, "REVIEW-RACE"))));
 
-        var barrier = new CyclicBarrier(2);
-        var pool = Executors.newFixedThreadPool(2);
-        try {
-            var firstSave = pool.submit(() -> {
-                barrier.await(10, TimeUnit.SECONDS);
-                reviews.save("customer@techzone.demo", itemId,
-                        new com.project.cybershop.review.api.dto.request.ReviewRequest(3, "Nhận xét đầu"));
-                return null;
-            });
-            var secondSave = pool.submit(() -> {
-                barrier.await(10, TimeUnit.SECONDS);
-                reviews.save("customer@techzone.demo", itemId,
-                        new com.project.cybershop.review.api.dto.request.ReviewRequest(5, "Nhận xét sau"));
-                return null;
-            });
-            firstSave.get(20, TimeUnit.SECONDS);
-            secondSave.get(20, TimeUnit.SECONDS);
-        } finally {
-            pool.shutdownNow();
-        }
+        int accepted = runConcurrent(
+                () -> reviews.save("customer@techzone.demo", itemId,
+                        new com.project.cybershop.review.api.dto.request.ReviewRequest(3, "Nhận xét đầu")),
+                () -> reviews.save("customer@techzone.demo", itemId,
+                        new com.project.cybershop.review.api.dto.request.ReviewRequest(5, "Nhận xét sau")));
+        assertEquals(1, accepted);
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM reviews WHERE order_item_id=?", Integer.class, itemId));
         assertEquals(1, reviews.forVariant(301).size());
     }
@@ -222,8 +208,10 @@ class PickupConcurrencyTests {
                         new CollectPaymentRequest(new BigDecimal("1000000"), "RECEIPT-B"))));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments", Integer.class));
         assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments", String.class));
-        assertTrue(java.util.Set.of("RECEIPT-A", "RECEIPT-B").contains(
-                jdbc.queryForObject("SELECT transaction_reference FROM payments", String.class)));
+        String reference = jdbc.queryForObject("SELECT transaction_reference FROM payments", String.class);
+        assertTrue(java.util.Set.of("RECEIPT-A", "RECEIPT-B").contains(reference));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_cash_collections", Integer.class));
+        assertEquals(reference, orders.cashCollection("staff@techzone.demo", order.orderCode()).orElseThrow().reference());
     }
 
     @Test

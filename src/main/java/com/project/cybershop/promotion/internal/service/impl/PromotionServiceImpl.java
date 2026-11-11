@@ -41,6 +41,7 @@ public class PromotionServiceImpl implements PromotionService {
     private final IdentityApi identityApi;
     private final Clock clock;
     private final ProductSalePriceService productSalePrices;
+    private final com.project.cybershop.promotion.internal.repository.PromotionAssignmentRepository assignments;
 
     @Override
     @Transactional(readOnly = true)
@@ -86,6 +87,10 @@ public class PromotionServiceImpl implements PromotionService {
         }
 
         PromotionTerms promotion = matches.get(0);
+        if (!"PUBLIC".equals(promotion.audience())
+                && !("ASSIGNED".equals(promotion.audience()) && assignments.exists(promotion.id(), userId))) {
+            throw new BusinessException("Voucher này chưa được cấp cho tài khoản của bạn.");
+        }
         LocalDateTime now = LocalDateTime.now(clock);
         if (!Boolean.TRUE.equals(promotion.active())
                 || now.isBefore(promotion.startDate())
@@ -140,9 +145,22 @@ public class PromotionServiceImpl implements PromotionService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<com.project.cybershop.promotion.api.dto.response.StaffVoucherResponse> listForStaff(String email) {
+        var user = identityApi.requireActiveUser(email);
+        if (!"Staff".equalsIgnoreCase(user.getRole()) && !"Admin".equalsIgnoreCase(user.getRole())) {
+            throw new AccessDeniedException("Chỉ nhân viên hoặc Admin được tra cứu voucher.");
+        }
+        return readAll().stream().map(p -> new com.project.cybershop.promotion.api.dto.response.StaffVoucherResponse(
+                p.id(), p.code(), p.name(), p.type(), p.value(), p.limit(), p.start(), p.end(), p.active(),
+                p.used(), p.reserved(), p.audience())).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<PromotionResponse> publicList() {
         LocalDateTime now = LocalDateTime.now(clock);
         return readAll().stream()
+                .filter(promotion -> "PUBLIC".equals(promotion.audience()))
                 .filter(promotion -> promotion.active() && promotion.bannerActive())
                 .filter(promotion -> !now.isBefore(promotion.start()) && !now.isAfter(promotion.end()))
                 .filter(promotion -> promotion.used() + promotion.reserved() < promotion.limit())

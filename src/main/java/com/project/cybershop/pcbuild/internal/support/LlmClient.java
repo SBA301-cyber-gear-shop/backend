@@ -36,11 +36,11 @@ public class LlmClient {
     private final String thinkingLevel;
 
     public LlmClient(ObjectMapper objectMapper,
-                     @Value("${app.ai.api-key:}") String apiKey,
-                     @Value("${app.ai.model}") String modelName,
-                     @Value("${app.ai.profile-timeout-ms:6000}") long timeoutMs,
-                     @Value("${app.ai.max-retries:1}") int maxRetries,
-                     @Value("${app.ai.profile-thinking-level:low}") String thinkingLevel) {
+            @Value("${app.ai.api-key:}") String apiKey,
+            @Value("${app.ai.model}") String modelName,
+            @Value("${app.ai.profile-timeout-ms:6000}") long timeoutMs,
+            @Value("${app.ai.max-retries:1}") int maxRetries,
+            @Value("${app.ai.profile-thinking-level:low}") String thinkingLevel) {
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.modelName = modelName;
@@ -52,26 +52,36 @@ public class LlmClient {
         this.restClient = RestClient.builder().requestFactory(factory).build();
     }
 
-    public <T> T generateJson(String step, String systemPrompt, String userJson, Map<String, Object> responseSchema, Class<T> type) {
-        if (apiKey == null || apiKey.isBlank()) {
-            log.error("Chưa cấu hình app.ai.api-key (biến môi trường AI_API_KEY), không gọi được AI bước {}", step);
+    public <T> T generateJson(String step, String systemPrompt, String userJson, Map<String, Object> responseSchema,
+            Class<T> type) {
+        return generateJson(step, this.modelName, this.apiKey, systemPrompt, userJson, responseSchema, type);
+    }
+
+    public <T> T generateJson(String step, String model, String key, String systemPrompt, String userJson,
+            Map<String, Object> responseSchema, Class<T> type) {
+        String effectiveKey = (key != null && !key.isBlank() && !key.startsWith("AI_API_KEY_PLACEHOLDER")) ? key
+                : this.apiKey;
+        String effectiveModel = (model != null && !model.isBlank()) ? model : this.modelName;
+
+        if (effectiveKey == null || effectiveKey.isBlank()) {
+            log.error("Chưa cấu hình API Key cho AI bước {}", step);
             throw new AiUnavailableException("chưa cấu hình API key");
         }
         String lastError = "lỗi nhà cung cấp";
         for (int attempt = 1; attempt <= maxRetries + 1; attempt++) {
             String text;
             try {
-                text = postGemini(systemPrompt, userJson, responseSchema);
+                text = postGemini(effectiveModel, effectiveKey, systemPrompt, userJson, responseSchema);
             } catch (ResourceAccessException e) {
                 lastError = "hết giờ hoặc lỗi kết nối";
-                log.warn("AI bước {} lần {}: {} (model {})", step, attempt, lastError, modelName);
+                log.warn("AI bước {} lần {}: {} (model {})", step, attempt, lastError, effectiveModel);
                 continue;
             } catch (HttpServerErrorException | HttpClientErrorException.TooManyRequests e) {
                 lastError = "HTTP " + e.getStatusCode().value();
-                log.warn("AI bước {} lần {}: {} (model {})", step, attempt, lastError, modelName);
+                log.warn("AI bước {} lần {}: {} (model {})", step, attempt, lastError, effectiveModel);
                 continue;
             } catch (HttpClientErrorException e) {
-                log.warn("AI bước {} bị từ chối: HTTP {} (model {})", step, e.getStatusCode().value(), modelName);
+                log.warn("AI bước {} bị từ chối: HTTP {} (model {})", step, e.getStatusCode().value(), effectiveModel);
                 throw new AiUnavailableException("yêu cầu bị từ chối (HTTP " + e.getStatusCode().value() + ")");
             }
             try {
@@ -84,7 +94,8 @@ public class LlmClient {
         throw new AiUnavailableException(lastError);
     }
 
-    private String postGemini(String systemPrompt, String userJson, Map<String, Object> responseSchema) {
+    private String postGemini(String model, String key, String systemPrompt, String userJson,
+            Map<String, Object> responseSchema) {
         Map<String, Object> generationConfig = new LinkedHashMap<>();
         generationConfig.put("responseMimeType", "application/json");
         generationConfig.put("responseSchema", responseSchema);
@@ -94,8 +105,8 @@ public class LlmClient {
                 "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", userJson)))),
                 "generationConfig", generationConfig);
         String response = restClient.post()
-                .uri(GEMINI_BASE_URL + modelName + ":generateContent")
-                .header("x-goog-api-key", apiKey)
+                .uri(GEMINI_BASE_URL + model + ":generateContent")
+                .header("x-goog-api-key", key)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
@@ -105,7 +116,8 @@ public class LlmClient {
 
     private String firstText(String response) {
         try {
-            for (JsonNode part : objectMapper.readTree(response).path("candidates").path(0).path("content").path("parts")) {
+            for (JsonNode part : objectMapper.readTree(response).path("candidates").path(0).path("content")
+                    .path("parts")) {
                 if (part.hasNonNull("text") && !part.path("thought").asBoolean(false)) {
                     return part.path("text").asText();
                 }
@@ -124,4 +136,3 @@ public class LlmClient {
         return trimmed;
     }
 }
-

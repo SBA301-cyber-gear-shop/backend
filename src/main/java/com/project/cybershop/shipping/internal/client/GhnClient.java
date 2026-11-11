@@ -40,15 +40,23 @@ public class GhnClient {
     }
 
     public JsonNode calculateFee(int toDistrictId, String toWardCode, int weightGram) {
+        int safeWeight = Math.min(Math.max(weightGram, 300), 30000);
+        int length = 25, width = 18, height = 12;
+        if (safeWeight > 5000) {
+            length = 52; width = 28; height = 48;
+        } else if (safeWeight > 1500) {
+            length = 38; width = 28; height = 20;
+        }
+
         Map<String, Object> body = Map.of(
                 "service_type_id", 2,
                 "from_district_id", ghnConfig.getFromDistrictId(),
                 "to_district_id", toDistrictId,
                 "to_ward_code", toWardCode,
-                "height", 10,
-                "length", 20,
-                "width", 20,
-                "weight", Math.max(weightGram, 200)
+                "height", height,
+                "length", length,
+                "width", width,
+                "weight", safeWeight
         );
         try {
             String jsonBody = objectMapper.writeValueAsString(body);

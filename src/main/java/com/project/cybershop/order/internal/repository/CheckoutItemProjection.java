@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 
 public interface CheckoutItemProjection {
 
+    Integer getCartItemId();
     Integer getProductVariantId();
     Integer getExistingVariantId();
     Integer getExistingProductId();
@@ -14,4 +15,6 @@ public interface CheckoutItemProjection {
     String getImageUrl();
     BigDecimal getUnitPrice();
     Integer getStockQuantity();
+    Integer getPcCustomId();
+    String getPcCustomName();
 }

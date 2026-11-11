@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.cybershop.support.api.dto.request.AiChatRequest;
 import com.project.cybershop.support.api.dto.response.AiChatResponse;
+import com.project.cybershop.support.api.dto.response.SupportSessionDto;
 import com.project.cybershop.support.internal.service.CatalogVectorSyncService;
 import com.project.cybershop.support.internal.service.CustomerAiSupportService;
 import com.project.cybershop.support.internal.service.GeminiEmbeddingService;
@@ -75,9 +76,27 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
 
         CustomerContext customerCtx = fetchCustomerContext(userEmailOrNull);
 
-        // 0. Nếu đang trong phiên Live Chat với nhân viên hỗ trợ (Staff Mode)
-        if ("staff".equalsIgnoreCase(request.getMode())) {
-            if (liveSupportService != null) {
+        // 0.1. Chặn tấn công Prompt Injection, Jailbreak & Dò hỏi cấu trúc hệ thống (SEC-02)
+        if (isSecurityViolationOrPromptInjection(message)) {
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message("Dạ, vì lý do bảo mật thông tin và an toàn hệ thống của TechZone, CyberBot không thể thực thi các câu lệnh can thiệp cấu hình, trích xuất mã nguồn hay dữ liệu nội bộ. Bạn có cần hỗ trợ tư vấn linh kiện PC hoặc tra cứu đơn hàng không ạ?")
+                    .messageType("info")
+                    .quickActions(List.of(
+                            new AiChatResponse.QuickAction("Tư vấn cấu hình PC", "navigate", "/build-pc"),
+                            new AiChatResponse.QuickAction("Xem linh kiện tại Shop", "navigate", "/san-pham"),
+                            new AiChatResponse.QuickAction("Nhờ chuyên viên hỗ trợ", "connect_staff", null)
+                    ))
+                    .build();
+        }
+
+        // 0. Nếu đang trong phiên Live Chat với nhân viên hỗ trợ (Staff Mode hoặc phiên đã được Staff tiếp nhận ACTIVE trên DB)
+        SupportSessionDto currentSession = (liveSupportService != null) ? liveSupportService.getSession(conversationId) : null;
+        boolean isDbActiveSession = currentSession != null && "ACTIVE".equalsIgnoreCase(currentSession.getStatus());
+        boolean isDbWaitingSession = currentSession != null && "WAITING".equalsIgnoreCase(currentSession.getStatus());
+
+        if (("staff".equalsIgnoreCase(request.getMode()) || isDbActiveSession) && !"connect_staff".equalsIgnoreCase(message)) {
+            if (liveSupportService != null && !"end_staff_session".equalsIgnoreCase(message)) {
                 liveSupportService.recordCustomerMessage(
                         conversationId,
                         userEmailOrNull,
@@ -100,7 +119,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                         request.getHistory()
                 );
             }
-            return buildStaffConnectedResponse(conversationId);
+            return buildStaffWaitingResponse(conversationId);
         }
         if ("end_staff_session".equalsIgnoreCase(message)) {
             if (liveSupportService != null) {
@@ -109,8 +128,18 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             return buildStaffEndedResponse(conversationId);
         }
 
-        // 2. Kiểm tra yêu cầu gặp nhân viên hoặc câu hỏi ngoài phạm vi nghiệp vụ tự động -> ĐỀ XUẤT kết nối
-        if (isStaffRequest(message) || isOutOfScope(message)) {
+        // 1.5. Nếu khách đang trong hàng chờ (WAITING) và nhắn thêm nội dung bổ sung -> Ghi nhận ngay vào phiên hỗ trợ để Staff thấy
+        if (isDbWaitingSession && liveSupportService != null) {
+            liveSupportService.recordCustomerMessage(
+                    conversationId,
+                    userEmailOrNull,
+                    customerCtx.isMember() ? customerCtx.fullName() : "Khách hàng",
+                    message
+            );
+        }
+
+        // 2. Kiểm tra yêu cầu gặp nhân viên trực tiếp -> Mở phiên WAITING và chuyển sang trạng thái chờ nhân viên tiếp nhận ngay
+        if (isStaffRequest(message)) {
             if (liveSupportService != null) {
                 liveSupportService.createOrOpenSession(
                         conversationId,
@@ -121,6 +150,11 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                         request.getHistory()
                 );
             }
+            return buildStaffWaitingResponse(conversationId);
+        }
+
+        // 2.1. Câu hỏi ngoài phạm vi nghiệp vụ tự động (VAT, mua sỉ B2B, khiếu nại...) -> ĐỀ XUẤT kết nối chuyên viên
+        if (isOutOfScope(message)) {
             return AiChatResponse.builder()
                     .conversationId(conversationId)
                     .message("Dạ, yêu cầu này của bạn cần sự hỗ trợ và thẩm định trực tiếp từ chuyên viên TechZone. **Bạn có muốn mình kết nối bạn với Nhân viên tư vấn (Staff) đang trực tuyến không ạ?**")
@@ -128,6 +162,20 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                     .quickActions(List.of(
                             new AiChatResponse.QuickAction("Kết nối nhân viên ngay", "connect_staff", null),
                             new AiChatResponse.QuickAction("Tiếp tục hỏi CyberBot", "ask", "Tiếp tục hỗ trợ")
+                    ))
+                    .build();
+        }
+
+        // 2.5. Chặn sớm câu hỏi ngoài ngữ cảnh cửa hàng máy tính (Off-Topic Guardrail) -> Tiết kiệm Quota Vector/Gemini
+        if (isOffTopicDomainQuery(message, request.getHistory())) {
+            return AiChatResponse.builder()
+                    .conversationId(conversationId)
+                    .message("Dạ, mình là **CyberBot** — Trợ lý chuyên trách về **Linh kiện Máy tính, Build PC, Đơn hàng & Bảo hành** tại **TechZone**. Câu hỏi này nằm ngoài phạm vi chuyên môn của mình rồi ạ!\n\nBạn có cần mình tư vấn cấu hình PC, tra cứu linh kiện trong kho hay kiểm tra đơn hàng / bảo hành gì không nhé?")
+                    .messageType("info")
+                    .quickActions(List.of(
+                            new AiChatResponse.QuickAction("Tư vấn cấu hình PC", "navigate", "/build-pc"),
+                            new AiChatResponse.QuickAction("Xem linh kiện tại Shop", "navigate", "/san-pham"),
+                            new AiChatResponse.QuickAction("Kiểm tra bảo hành", "navigate", "/bao-hanh")
                     ))
                     .build();
         }
@@ -188,9 +236,12 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             Set<String> seenCategories = new HashSet<>();
             List<AiChatResponse.ProductSummary> candidates = new ArrayList<>();
 
-            if (catalogVectorSyncService != null) {
-                for (String line : componentLines) {
-                    List<AiChatResponse.ProductSummary> found = catalogVectorSyncService.searchProductsByVector(line, 3);
+            for (String line : componentLines) {
+                AiChatResponse.ProductSummary exactProd = findExactAdvisedProduct(line);
+                if (exactProd != null) {
+                    candidates.add(exactProd);
+                } else if (catalogVectorSyncService != null) {
+                    List<AiChatResponse.ProductSummary> found = catalogVectorSyncService.searchProductsByVector(line, 2);
                     if (found == null || found.isEmpty()) {
                         CatalogSearchResult catRes = searchCatalogProducts(line);
                         if (!catRes.products().isEmpty()) {
@@ -213,7 +264,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
 
             // Fallback cuối cùng nếu vẫn trống: nạp cấu hình đề xuất tiêu chuẩn
             if (candidates.isEmpty()) {
-                candidates.addAll(getDefault25mBuildComponents());
+                candidates.addAll(buildRealPcComponentsForBudget(25_000_000L));
             }
 
             // Kiểm tra chuẩn Mainboard trong cấu hình là DDR4 hay DDR5 để đồng bộ RAM (Tránh lỗi cắm lệch chuẩn)
@@ -309,7 +360,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         // 6. Trả lời danh sách linh kiện vừa tư vấn hoặc thực hiện thêm vào giỏ hàng (Toàn bộ hoặc từng món chọn lọc):
         if (isReferral) {
             if (products.isEmpty()) {
-                products.addAll(getDefault25mBuildComponents());
+                products.addAll(buildRealPcComponentsForBudget(25_000_000L));
             }
 
             Set<String> targetCats = extractTargetCategories(message);
@@ -332,7 +383,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                         .collect(Collectors.toSet());
                 for (String reqCat : targetCats) {
                     if (!existingCats.contains(reqCat)) {
-                        for (AiChatResponse.ProductSummary def : getDefault25mBuildComponents()) {
+                        for (AiChatResponse.ProductSummary def : buildRealPcComponentsForBudget(25_000_000L)) {
                             if (reqCat.equals(normalizeCategoryGroup(def.getCategory()))) {
                                 products.add(def);
                                 existingCats.add(reqCat);
@@ -349,7 +400,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 String[] allCoreCats = {"CPU", "MAINBOARD", "RAM", "VGA", "SSD", "NGUỒN", "CASE", "TẢN NHIỆT"};
                 for (String coreCat : allCoreCats) {
                     if (!existingCats.contains(coreCat)) {
-                        for (AiChatResponse.ProductSummary def : getDefault25mBuildComponents()) {
+                        for (AiChatResponse.ProductSummary def : buildRealPcComponentsForBudget(25_000_000L)) {
                             if (coreCat.equals(normalizeCategoryGroup(def.getCategory()))) {
                                 products.add(def);
                                 existingCats.add(coreCat);
@@ -360,7 +411,14 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 }
             }
             if (products.isEmpty()) {
-                products.addAll(getDefault25mBuildComponents());
+                products.addAll(buildRealPcComponentsForBudget(25_000_000L));
+            }
+
+            // ROOT-03 & TASK 3: Bắt buộc lọc stock > 0 khi thực hiện isCartIntent
+            if (isCartIntent) {
+                products = products.stream()
+                        .filter(p -> p.getStock() != null && p.getStock() > 0)
+                        .collect(Collectors.toList());
             }
 
             StringBuilder reply = new StringBuilder();
@@ -379,7 +437,10 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                                 .append(MONEY_FMT.format(p.getPrice())).append("**\n");
                     }
                     reply.append("\n**Tổng giá trị trọn bộ**: **").append(MONEY_FMT.format(totalEst)).append("**\n");
-                    reply.append("_(Mẹo: Bạn có thể nhập mã giảm giá **NEWBIE** tại bước thanh toán để được giảm ngay 500,000₫, đưa tổng giá trị về đúng **25,228,000₫**!)\n\n");
+                    String promoAdvisory = buildDynamicPromotionAdvisory(totalEst);
+                    if (!promoAdvisory.isBlank()) {
+                        reply.append(promoAdvisory).append("\n");
+                    }
                     reply.append("🎁 **Cam kết từ TechZone**:\n");
                     reply.append("• Miễn phí 100% công lắp ráp, đi dây chuyên nghiệp và stress-test kiểm tra độ ổn định.\n");
                     reply.append("• Kích hoạt bảo hành điện tử chính hãng theo Serial linh kiện khi nhận máy.\n\n");
@@ -402,7 +463,11 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                             .append(MONEY_FMT.format(p.getPrice())).append("**\n");
                 }
                 if (totalEst > 0) {
-                    reply.append("\n**Tổng giá trị dự tính**: **").append(MONEY_FMT.format(totalEst)).append("**\n\n");
+                    reply.append("\n**Tổng giá trị dự tính**: **").append(MONEY_FMT.format(totalEst)).append("**\n");
+                    String promoAdvisory = buildDynamicPromotionAdvisory(totalEst);
+                    if (!promoAdvisory.isBlank()) {
+                        reply.append(promoAdvisory).append("\n");
+                    }
                 }
                 reply.append("Bạn có thể bấm vào từng thẻ sản phẩm bên dưới để xem chi tiết hoặc bấm nút **Thêm tất cả vào giỏ hàng** để mua ngay nhé!");
             }
@@ -461,6 +526,9 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             finalResponse.setProducts(products);
         }
 
+        if (finalResponse != null && finalResponse.getMessage() != null) {
+            finalResponse.setMessage(sanitizeBotOutput(finalResponse.getMessage()));
+        }
         return finalResponse;
     }
 
@@ -513,29 +581,215 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         };
     }
 
-    private List<AiChatResponse.ProductSummary> getDefault25mBuildComponents() {
-        List<AiChatResponse.ProductSummary> list = new ArrayList<>();
-        list.add(AiChatResponse.ProductSummary.builder().id(18).variantId(18).name("Intel Core i5-13400F (LGA1700)").price(5490000.0).originalPrice(5490000.0).stock(25).category("CPU").imageUrl("https://images.unsplash.com/photo-1591799264318-7e6ef8ddb7ea?w=300").route("/san-pham/18").build());
-        list.add(AiChatResponse.ProductSummary.builder().id(42).variantId(42).name("ASUS TUF GAMING B760M-PLUS WIFI (DDR5)").price(4290000.0).originalPrice(4290000.0).stock(25).category("MAINBOARD").imageUrl("https://images.unsplash.com/photo-1518770660439-4636190af475?w=300").route("/san-pham/42").build());
-        list.add(AiChatResponse.ProductSummary.builder().id(54).variantId(54).name("Kingston Fury Beast 32GB (2x16GB) DDR5 5600MHz").price(2890000.0).originalPrice(2890000.0).stock(50).category("RAM").imageUrl("https://images.unsplash.com/photo-1562976540-1502c2145186?w=300").route("/san-pham/54").build());
-        list.add(AiChatResponse.ProductSummary.builder().id(68).variantId(68).name("MSI GeForce RTX 4060 VENTUS 2X BLACK 8G OC").price(8290000.0).originalPrice(8290000.0).stock(25).category("VGA").imageUrl("https://images.unsplash.com/photo-1587202372775-e229f172b9d7?w=300").route("/san-pham/68").build());
-        list.add(AiChatResponse.ProductSummary.builder().id(82).variantId(82).name("Kingston NV2 1TB NVMe PCIe 4.0").price(1890000.0).originalPrice(1890000.0).stock(25).category("SSD").imageUrl("https://images.unsplash.com/photo-1597872200969-2b65d56bd16b?w=300").route("/san-pham/82").build());
-        list.add(AiChatResponse.ProductSummary.builder().id(94).variantId(94).name("MSI MAG A650BN 650W 80 Plus Bronze").price(1390000.0).originalPrice(1390000.0).stock(24).category("NGUỒN").imageUrl("https://images.unsplash.com/photo-1587202372634-32705e3bf49c?w=300").route("/san-pham/94").build());
-        list.add(AiChatResponse.ProductSummary.builder().id(103).variantId(103).name("Deepcool CC560 Black").price(990000.0).originalPrice(990000.0).stock(24).category("CASE").imageUrl("https://images.unsplash.com/photo-1587202372151-574d5386dbb5?w=300").route("/san-pham/103").build());
-        list.add(AiChatResponse.ProductSummary.builder().id(110).variantId(110).name("Thermalassassin X120 SE").price(498000.0).originalPrice(498000.0).stock(25).category("TẢN NHIỆT").imageUrl("https://images.unsplash.com/photo-1587202372575-f55db1a9ecf5?w=300").route("/san-pham/110").build());
-        return list;
+    private volatile Set<String> dynamicCatalogKeywords = Set.of();
+    private volatile long lastLexiconRefreshMs = 0L;
+
+    private Set<String> getDynamicCatalogKeywords() {
+        long now = System.currentTimeMillis();
+        if (dynamicCatalogKeywords.isEmpty() || (now - lastLexiconRefreshMs) > 600_000L) {
+            try {
+                List<String> rows = jdbcTemplate.queryForList("""
+                    SELECT LOWER(name) FROM brands
+                    UNION
+                    SELECT LOWER(name) FROM categories
+                    UNION
+                    SELECT LOWER(slug) FROM categories WHERE slug IS NOT NULL
+                """, String.class);
+                Set<String> lex = new HashSet<>();
+                for (String r : rows) {
+                    if (r != null && !r.isBlank()) {
+                        lex.add(r.trim().toLowerCase());
+                        for (String token : r.trim().toLowerCase().split("[\\s\\-]+")) {
+                            if (token.length() >= 3) lex.add(token);
+                        }
+                    }
+                }
+                dynamicCatalogKeywords = lex;
+                lastLexiconRefreshMs = now;
+            } catch (Exception ignored) {}
+        }
+        return dynamicCatalogKeywords;
+    }
+
+    private AiChatResponse.ProductSummary pickRealComponentBySlot(String categoryKeyword, double maxSlotBudget, String requiredCompatibilityToken) {
+        try {
+            String sql = """
+                SELECT p.id as product_id, p.name as product_name, p.description as product_desc,
+                       p.warranty_period_months as warranty_months,
+                       COALESCE(b.name, 'Chính hãng') as brand_name,
+                       c.name as category_name,
+                       pv.id as variant_id, pv.variant_name, pv.price, pv.original_price,
+                       pv.stock_quantity as stock, pv.image_url,
+                       spec.specs_summary
+                FROM product_variants pv
+                JOIN products p ON pv.product_id = p.id
+                JOIN categories c ON p.category_id = c.id
+                LEFT JOIN brands b ON p.brand_id = b.id
+                LEFT JOIN (
+                    SELECT sv.product_variant_id,
+                           string_agg(s.name || ': ' || COALESCE(so.display_value, sv.value, ''), ' | ') as specs_summary
+                    FROM specification_values sv
+                    JOIN specifications s ON sv.specification_id = s.id
+                    LEFT JOIN specification_options so ON sv.option_id = so.id
+                    GROUP BY sv.product_variant_id
+                ) spec ON spec.product_variant_id = pv.id
+                WHERE UPPER(p.status) = 'ACTIVE'
+                  AND pv.stock_quantity > 0
+                  AND (c.slug = ? OR (? != 'cpu' AND LOWER(c.name) LIKE ?) OR (? = 'cpu' AND LOWER(c.name) LIKE '%vi xử lý%'))
+            """;
+
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    sql + " ORDER BY ABS(pv.price - ?) ASC, pv.stock_quantity DESC LIMIT 15",
+                    categoryKeyword.toLowerCase(),
+                    categoryKeyword.toLowerCase(),
+                    "%" + categoryKeyword.toLowerCase() + "%",
+                    categoryKeyword.toLowerCase(),
+                    maxSlotBudget
+            );
+
+            if (rows.isEmpty()) return null;
+
+            Map<String, Object> chosen = null;
+            if (requiredCompatibilityToken != null && !requiredCompatibilityToken.isBlank()) {
+                String req = requiredCompatibilityToken.toLowerCase();
+                for (Map<String, Object> r : rows) {
+                    String haystack = (r.get("product_name") + " " + r.get("variant_name") + " " + r.get("specs_summary") + " " + r.get("product_desc")).toLowerCase();
+                    double price = ((Number) r.get("price")).doubleValue();
+                    if (haystack.contains(req) && price <= maxSlotBudget * 1.25) {
+                        chosen = r;
+                        break;
+                    }
+                }
+                if (chosen == null) {
+                    for (Map<String, Object> r : rows) {
+                        String haystack = (r.get("product_name") + " " + r.get("variant_name") + " " + r.get("specs_summary") + " " + r.get("product_desc")).toLowerCase();
+                        if (haystack.contains(req)) {
+                            chosen = r;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (chosen == null) {
+                for (Map<String, Object> r : rows) {
+                    double price = ((Number) r.get("price")).doubleValue();
+                    if (price <= maxSlotBudget * 1.15) {
+                        chosen = r;
+                        break;
+                    }
+                }
+            }
+            if (chosen == null) {
+                chosen = rows.get(0);
+            }
+
+            return mapRowToProductSummary(chosen);
+        } catch (Exception e) {
+            log.warn("Lỗi pickRealComponentBySlot cho category={}: {}", categoryKeyword, e.getMessage());
+            return null;
+        }
+    }
+
+    private AiChatResponse.ProductSummary mapRowToProductSummary(Map<String, Object> r) {
+        Integer pid = ((Number) r.get("product_id")).intValue();
+        Integer vid = r.get("variant_id") != null ? ((Number) r.get("variant_id")).intValue() : pid;
+        String rawSpecs = (String) r.get("specs_summary");
+        String cleanSpecs = sanitizeSpecsForUser(rawSpecs);
+        return AiChatResponse.ProductSummary.builder()
+                .id(pid)
+                .variantId(vid)
+                .name((String) r.get("product_name"))
+                .brand(r.get("brand_name") != null ? (String) r.get("brand_name") : "Chính hãng")
+                .description((String) r.get("product_desc"))
+                .specs(cleanSpecs)
+                .warrantyMonths(r.get("warranty_months") != null ? ((Number) r.get("warranty_months")).intValue() : 36)
+                .variantName((String) r.get("variant_name"))
+                .category((String) r.get("category_name"))
+                .price(r.get("price") != null ? ((Number) r.get("price")).doubleValue() : 0.0)
+                .originalPrice(r.get("original_price") != null ? ((Number) r.get("original_price")).doubleValue() : null)
+                .stock(r.get("stock") != null ? ((Number) r.get("stock")).intValue() : 0)
+                .imageUrl((String) r.get("image_url"))
+                .route("/san-pham/" + pid)
+                .build();
+    }
+
+    private List<AiChatResponse.ProductSummary> buildRealPcComponentsForBudget(long budgetVal) {
+        List<AiChatResponse.ProductSummary> build = new ArrayList<>();
+
+        // 1. CPU (~21% ngân sách)
+        AiChatResponse.ProductSummary cpu = pickRealComponentBySlot("cpu", budgetVal * 0.21, null);
+        if (cpu == null) cpu = pickRealComponentBySlot("vi xử lý", budgetVal * 0.21, null);
+
+        // Phát hiện Socket của CPU vừa chọn (LGA1700, AM5, AM4) từ specs hoặc tên
+        String cpuText = cpu != null ? (cpu.getName() + " " + cpu.getSpecs() + " " + cpu.getDescription()).toLowerCase() : "";
+        String requiredSocket = null;
+        if (cpuText.contains("lga1700") || cpuText.contains("lga 1700") || cpuText.matches(".*i[3579]-1[234]\\d{3}.*")) {
+            requiredSocket = "lga1700";
+        } else if (cpuText.contains("am5") || cpuText.matches(".*(7500f|7600|7700|7800|8600|9600|9700|9900|9950).*")) {
+            requiredSocket = "am5";
+        } else if (cpuText.contains("am4") || cpuText.matches(".*(3000g|5600|5700).*")) {
+            requiredSocket = "am4";
+        }
+
+        // 2. Mainboard (~14% ngân sách) khớp Socket với CPU
+        AiChatResponse.ProductSummary main = pickRealComponentBySlot("mainboard", budgetVal * 0.14, requiredSocket);
+        if (main == null) main = pickRealComponentBySlot("bo mạch", budgetVal * 0.14, requiredSocket);
+
+        // Phát hiện chuẩn RAM (DDR4 hay DDR5) của Mainboard vừa chọn
+        String mainText = main != null ? (main.getName() + " " + main.getVariantName() + " " + main.getSpecs() + " " + main.getDescription()).toLowerCase() : "";
+        String requiredRamType = mainText.contains("ddr5") ? "ddr5" : (mainText.contains("ddr4") ? "ddr4" : (budgetVal >= 22_000_000L ? "ddr5" : "ddr4"));
+
+        // 3. RAM (~10% ngân sách) khớp chuẩn DDR4/DDR5 với Mainboard
+        AiChatResponse.ProductSummary ram = pickRealComponentBySlot("ram", budgetVal * 0.10, requiredRamType);
+
+        // 4. VGA (~36% ngân sách)
+        AiChatResponse.ProductSummary vga = pickRealComponentBySlot("gpu", budgetVal * 0.36, null);
+        if (vga == null) vga = pickRealComponentBySlot("card", budgetVal * 0.36, null);
+
+        // 5. SSD (~7% ngân sách)
+        AiChatResponse.ProductSummary ssd = pickRealComponentBySlot("ssd", budgetVal * 0.07, "nvme");
+        if (ssd == null) ssd = pickRealComponentBySlot("ổ cứng", budgetVal * 0.07, null);
+
+        // 6. Nguồn PSU (~6% ngân sách)
+        AiChatResponse.ProductSummary psu = pickRealComponentBySlot("psu", budgetVal * 0.06, null);
+        if (psu == null) psu = pickRealComponentBySlot("nguồn", budgetVal * 0.06, null);
+
+        // 7. Vỏ Case (~4% ngân sách)
+        AiChatResponse.ProductSummary pcCase = pickRealComponentBySlot("case", budgetVal * 0.04, null);
+        if (pcCase == null) pcCase = pickRealComponentBySlot("vỏ", budgetVal * 0.04, null);
+
+        // 8. Tản nhiệt (~2.5% ngân sách)
+        AiChatResponse.ProductSummary cooler = pickRealComponentBySlot("cooler", budgetVal * 0.025, null);
+        if (cooler == null) cooler = pickRealComponentBySlot("tản", budgetVal * 0.025, null);
+
+        for (AiChatResponse.ProductSummary item : List.of(
+                cpu != null ? cpu : new AiChatResponse.ProductSummary(),
+                main != null ? main : new AiChatResponse.ProductSummary(),
+                ram != null ? ram : new AiChatResponse.ProductSummary(),
+                vga != null ? vga : new AiChatResponse.ProductSummary(),
+                ssd != null ? ssd : new AiChatResponse.ProductSummary(),
+                psu != null ? psu : new AiChatResponse.ProductSummary(),
+                pcCase != null ? pcCase : new AiChatResponse.ProductSummary(),
+                cooler != null ? cooler : new AiChatResponse.ProductSummary()
+        )) {
+            if (item.getId() != null) {
+                build.add(item);
+            }
+        }
+        return build;
     }
 
     private String normalizeCategoryGroup(String category) {
         if (category == null) return "KHÁC";
         String c = category.toLowerCase().trim();
+        if (c.contains("tản") || c.contains("cooler")) return "TẢN NHIỆT";
         if (c.contains("cpu") || c.contains("vi xử lý") || c.contains("processor")) return "CPU";
         if (c.contains("vga") || c.contains("đồ họa") || c.contains("card") || c.contains("gpu")) return "VGA";
         if (c.contains("main") || c.contains("bo mạch") || c.contains("motherboard")) return "MAINBOARD";
         if (c.contains("ram") || c.contains("bộ nhớ") || c.contains("memory")) return "RAM";
         if (c.contains("ssd") || c.contains("ổ cứng") || c.contains("storage") || c.contains("hdd")) return "SSD";
         if (c.contains("nguồn") || c.contains("psu") || c.contains("power")) return "NGUỒN";
-        if (c.contains("tản") || c.contains("cooler")) return "TẢN NHIỆT";
         if (c.contains("case") || c.contains("thùng") || c.contains("chassis") || c.contains("vỏ")) return "CASE";
         if (c.contains("màn") || c.contains("monitor")) return "MÀN HÌNH";
         return category.toUpperCase();
@@ -550,16 +804,14 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             for (String rawLine : text.split("\\r?\\n")) {
                 String l = rawLine.trim();
                 if (l.startsWith("🔹") || (l.startsWith("• **") && l.contains(":"))) {
-                    String clean = l.replace("🔹", "").replace("**", "").replace("•", "").trim();
-                    if (clean.contains(":")) {
-                        clean = clean.substring(clean.indexOf(":") + 1).trim();
+                    String afterColon = l.contains(":") ? l.substring(l.indexOf(":") + 1) : l;
+                    if (afterColon.contains("—")) {
+                        afterColon = afterColon.substring(0, afterColon.indexOf("—"));
                     }
-                    if (clean.contains("—")) {
-                        clean = clean.substring(0, clean.indexOf("—")).trim();
+                    if (afterColon.contains("|")) {
+                        afterColon = afterColon.substring(0, afterColon.indexOf("|"));
                     }
-                    if (clean.contains("(")) {
-                        clean = clean.substring(0, clean.indexOf("(")).trim();
-                    }
+                    String clean = afterColon.replace("🔹", "").replace("**", "").replace("•", "").trim();
                     if (clean.length() > 3) {
                         lines.add(clean);
                     }
@@ -634,7 +886,15 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
     private boolean isProductQuery(String message) {
         if (message == null) return false;
         String m = message.toLowerCase().trim();
-        return m.matches(".*(ram|cpu|vga|gpu|card|mainboard|main|nguồn|psu|ssd|ổ cứng|màn hình|chuột|bàn phím|ddr|ghz|mhz|gb|tb|rtx|gtx|intel|amd|ryzen|core|i3|i5|i7|i9|asus|msi|gigabyte|corsair|kingston|linh kiện|mua máy|cấu hình|pc).*");
+        if (m.matches(".*(ram|cpu|vga|gpu|card|mainboard|main|nguồn|psu|ssd|ổ cứng|màn hình|chuột|bàn phím|ddr|ghz|mhz|gb|tb|rtx|gtx|intel|amd|ryzen|core|i3|i5|i7|i9|asus|msi|gigabyte|corsair|kingston|linh kiện|mua máy|cấu hình|pc).*")) {
+            return true;
+        }
+        for (String kw : getDynamicCatalogKeywords()) {
+            if (m.contains(kw)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private record ServiceRequestSummary(
@@ -904,7 +1164,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             return "";
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("DANH SÁCH LINH KIỆN HIỆN CÓ SẴN TRONG KHO CYBERSHOP (TÌM TỪ VECTOR DATABASE & KHO THỜI GIAN THỰC):\n");
+        sb.append("DANH SÁCH LINH KIỆN HIỆN CÓ SẴN TRONG KHO TECHZONE (TÌM TỪ VECTOR DATABASE & KHO THỜI GIAN THỰC):\n");
         for (AiChatResponse.ProductSummary p : products) {
             sb.append("- ").append(p.getName())
               .append(" (Phiên bản: ").append(p.getVariantName() != null ? p.getVariantName() : "Tiêu chuẩn").append(")")
@@ -1150,14 +1410,24 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
 
             StringBuilder sql = new StringBuilder("""
                 SELECT p.id as product_id, p.name as product_name, p.description as product_desc,
+                       p.warranty_period_months as warranty_months,
                        COALESCE(b.name, 'Chính hãng') as brand_name,
                        c.name as category_name,
                        pv.id as variant_id, pv.variant_name, pv.price, pv.original_price,
-                       pv.stock_quantity as stock, pv.image_url
+                       pv.stock_quantity as stock, pv.image_url,
+                       spec.specs_summary
                 FROM product_variants pv
                 JOIN products p ON pv.product_id = p.id
                 LEFT JOIN brands b ON p.brand_id = b.id
                 JOIN categories c ON p.category_id = c.id
+                LEFT JOIN (
+                    SELECT sv.product_variant_id,
+                           string_agg(s.name || ': ' || COALESCE(so.display_value, sv.value, ''), ' | ') as specs_summary
+                    FROM specification_values sv
+                    JOIN specifications s ON sv.specification_id = s.id
+                    LEFT JOIN specification_options so ON sv.option_id = so.id
+                    GROUP BY sv.product_variant_id
+                ) spec ON spec.product_variant_id = pv.id
                 WHERE UPPER(p.status) = 'ACTIVE'
             """);
 
@@ -1200,7 +1470,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.append("DANH SÁCH LINH KIỆN HIỆN CÓ SẴN TRONG KHO CYBERSHOP LIÊN QUAN ĐẾN CÂU HỎI:\n");
+            sb.append("DANH SÁCH LINH KIỆN HIỆN CÓ SẴN TRONG KHO TECHZONE LIÊN QUAN ĐẾN CÂU HỎI:\n");
             List<AiChatResponse.ProductSummary> products = new ArrayList<>();
 
             for (Map<String, Object> r : rows) {
@@ -1226,20 +1496,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 }
                 sb.append("\n");
 
-                products.add(AiChatResponse.ProductSummary.builder()
-                        .id(pid)
-                        .variantId(vid)
-                        .name(pName)
-                        .brand(bName != null ? bName : "Chính hãng")
-                        .description(pDesc)
-                        .variantName(vName)
-                        .category(cName)
-                        .price(price != null ? price.doubleValue() : null)
-                        .originalPrice(origPrice != null ? origPrice.doubleValue() : null)
-                        .stock(stock != null ? stock.intValue() : 0)
-                        .imageUrl(img)
-                        .route("/san-pham/" + pid)
-                        .build());
+                products.add(mapRowToProductSummary(r));
             }
 
             return new CatalogSearchResult(sb.toString(), products);
@@ -1258,6 +1515,61 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
     private boolean isOutOfScope(String message) {
         String msgLower = message.toLowerCase().trim();
         return msgLower.matches(".*(hóa đơn đỏ|hóa đơn vat|hóa đơn công ty|mua sỉ|chiết khấu b2b|đại lý|hợp đồng mua bán|khiếu nại nhân viên|thái độ phục vụ|bồi thường thiệt hại|chuyển khoản nhầm).*");
+    }
+
+    /**
+     * Tự động tìm kiếm mã voucher ưu đãi tốt nhất trong DB khớp với tổng giá trị tư vấn để gợi ý cho khách
+     */
+    private String buildDynamicPromotionAdvisory(double totalAmount) {
+        if (totalAmount <= 0) return "";
+        try {
+            StorePromotionContext promoCtx = fetchActivePromotionsAndFlashSales();
+            if (promoCtx.activeVouchers().isEmpty()) {
+                return "";
+            }
+
+            PromotionSummary bestVoucher = null;
+            double maxSavings = 0;
+
+            for (PromotionSummary p : promoCtx.activeVouchers()) {
+                double savings = 0;
+                if ("percentage".equalsIgnoreCase(p.discountType()) && p.discountValue() != null) {
+                    savings = totalAmount * (p.discountValue().doubleValue() / 100.0);
+                } else if (p.discountValue() != null) {
+                    savings = p.discountValue().doubleValue();
+                }
+                if (savings > maxSavings && savings < totalAmount) {
+                    maxSavings = savings;
+                    bestVoucher = p;
+                }
+            }
+
+            if (bestVoucher != null && maxSavings > 0) {
+                double finalPay = Math.max(0, totalAmount - maxSavings);
+                StringBuilder sb = new StringBuilder();
+                sb.append("\n🎁 **Mẹo tiết kiệm từ TechZone**:\n");
+                sb.append("• Đơn hàng của bạn đạt điều kiện áp dụng mã giảm giá **").append(bestVoucher.code()).append("** (").append(bestVoucher.name()).append(")!\n");
+                sb.append("• Nhập mã `").append(bestVoucher.code()).append("` tại bước thanh toán để được **giảm ngay ").append(MONEY_FMT.format(maxSavings)).append("** (tổng thanh toán trọn bộ chỉ còn **").append(MONEY_FMT.format(finalPay)).append("**).\n");
+                return sb.toString();
+            }
+        } catch (Exception e) {
+            log.warn("Lỗi khi tính toán khuyến mãi động: {}", e.getMessage());
+        }
+        return "";
+    }
+
+    private AiChatResponse buildStaffWaitingResponse(String conversationId) {
+        return AiChatResponse.builder()
+                .conversationId(conversationId)
+                .message("🔔 **Yêu cầu kết nối Chuyên viên CSKH đã được ghi nhận!**\n\n"
+                        + "* **Trạng thái**: Đang trong hàng chờ tiếp nhận (`WAITING`).\n"
+                        + "* **Dự kiến**: Chuyên viên tư vấn TechZone trực tuyến sẽ tiếp nhận phiên và phản hồi bạn trong giây lát.\n\n"
+                        + "Vui lòng giữ nguyên cửa sổ chat này nhé!")
+                .messageType("staff_waiting")
+                .quickActions(List.of(
+                        new AiChatResponse.QuickAction("❌ Hủy & Quay lại CyberBot", "end_staff_session", null)
+                ))
+                .build();
     }
 
     private AiChatResponse buildStaffConnectedResponse(String conversationId) {
@@ -1312,8 +1624,8 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 return AiChatResponse.StaffInfo.builder()
                         .id(id)
                         .name(name != null ? name : "Trần Hoàng Nam")
-                        .role("Chuyên viên tư vấn & CSKH CyberShop")
-                        .email(email != null ? email : "support@cybershop.vn")
+                        .role("Chuyên viên tư vấn & CSKH TechZone")
+                        .email(email != null ? email : "support@techzone.vn")
                         .phone(phone != null ? phone : "1900 8888")
                         .avatar("👨‍💼")
                         .status("online")
@@ -1326,8 +1638,8 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
         return AiChatResponse.StaffInfo.builder()
                 .id(1)
                 .name("Trần Hoàng Nam")
-                .role("Chuyên viên tư vấn & Kỹ thuật CyberShop")
-                .email("support@cybershop.vn")
+                .role("Chuyên viên tư vấn & Kỹ thuật TechZone")
+                .email("support@techzone.vn")
                 .phone("1900 8888")
                 .avatar("👨‍💼")
                 .status("online")
@@ -1345,7 +1657,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             }
             return AiChatResponse.builder()
                     .conversationId(conversationId)
-                    .message("Dạ, chuyên viên đã kết thúc phiên hỗ trợ trực tiếp. Cảm ơn bạn đã liên hệ CyberShop! Chúc bạn một ngày tuyệt vời! CyberBot đã sẵn sàng tiếp tục đồng hành cùng bạn. 🤖")
+                    .message("Dạ, chuyên viên đã kết thúc phiên hỗ trợ trực tiếp. Cảm ơn bạn đã liên hệ TechZone! Chúc bạn một ngày tuyệt vời! CyberBot đã sẵn sàng tiếp tục đồng hành cùng bạn. 🤖")
                     .messageType("staff_ended")
                     .quickActions(List.of(
                             new AiChatResponse.QuickAction("📦 Đơn hàng gần nhất", "ask", "Đơn hàng gần nhất của tôi thế nào?"),
@@ -1369,7 +1681,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
 
         // 0. Lệnh kết nối hoặc kết thúc nhân viên hỗ trợ
         if (msgLower.equals("connect_staff")) {
-            return buildStaffConnectedResponse(conversationId);
+            return buildStaffWaitingResponse(conversationId);
         }
 
         if (msgLower.equals("end_staff_session")) {
@@ -1446,7 +1758,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                         history
                 );
             }
-            return buildStaffConnectedResponse(conversationId);
+            return buildStaffWaitingResponse(conversationId);
         }
 
         if (lastBotText.contains("bảo hành")) {
@@ -1637,6 +1949,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                - Khách hỏi tư vấn build PC / cấu hình máy tính / lên dàn máy theo ngân sách hoặc nhu cầu (ví dụ: 'build PC 25 triệu', 'tư vấn cấu hình đồ họa 3D', 'lên dàn máy gaming'...):
                  BẠN PHẢI TƯ VẤN CỤ THỂ ĐẦY ĐỦ TRỌN BỘ 8 LINH KIỆN MÁY TÍNH (CPU, Mainboard, RAM, Card đồ họa VGA, Ổ cứng SSD, Nguồn PSU, Vỏ Case, Tản nhiệt) kèm tên sản phẩm thực tế từ KHO LINH KIỆN THỰC TẾ của TechZone, giá bán, thông số nổi bật và tổng ngân sách.
                  Phân tích ngắn gọn lý do chọn cấu hình và nêu rõ cam kết TechZone: Miễn phí 100% công lắp ráp, stress-test kiểm tra nhiệt độ và kích hoạt bảo hành điện tử chính hãng theo Serial.
+                 - KHI TƯ VẤN CẤU HÌNH PC HOẶC LINH KIỆN CÓ TỔNG GIÁ TRỊ, BẠN BẮT BUỘC PHẢI ĐỐI CHIẾU DANH SÁCH MÃ VOUCHER TRONG MỤC 'CHƯƠNG TRÌNH KHUYẾN MÃI' VÀ TÍNH TOÁN SỐ TIỀN KHÁCH ĐƯỢC GIẢM (VÍ DỤ: 'Nhập mã NEWBIE tại bước thanh toán để giảm ngay 500,000₫, tổng tiền chỉ còn X...'). KHÔNG ĐƯỢC BỎ QUÊN TƯ VẤN MÃ GIẢM GIÁ CHO KHÁCH.
                  TUYỆT ĐỐI KHÔNG chỉ nói chung chung hoặc chỉ bảo khách sang trang /build-pc mà không liệt kê danh sách linh kiện trong khung chat!
                - Khách hỏi so sánh hoặc tính tương thích -> Phân tích rõ ràng sự khác biệt về socket (LGA1700 vs AM5), chuẩn RAM (DDR4 vs DDR5), công suất nguồn (PSU) và khuyến nghị mẫu phù hợp.
                - Khách hỏi về chính sách bảo hành, GHN, thanh toán -> Dựa vào TRI THỨC TỪ VECTOR DATABASE để giải đáp.
@@ -1664,7 +1977,7 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
 
         if (ctx.isMember()) {
             sb.append("\n=== THÔNG TIN KHÁCH HÀNG ĐANG CHAT (ĐÃ ĐĂNG NHẬP) ===\n");
-            sb.append("Khách hàng: ").append(ctx.fullName()).append(" (SĐT: ").append(ctx.phone()).append(")\n");
+            sb.append("Khách hàng: ").append(ctx.fullName()).append(" (SĐT: ").append(maskPhone(ctx.phone())).append(")\n");
             sb.append("DANH SÁCH ĐƠN HÀNG GẦN ĐÂY CỦA KHÁCH:\n");
             for (OrderSummary o : ctx.recentOrders()) {
                 sb.append("- Đơn: ").append(o.code())
@@ -1793,6 +2106,12 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             reply.append("* **Chế độ bảo hành**: 36 tháng chính hãng, 1 đổi 1 trong 30 ngày đầu nếu phát sinh lỗi phần cứng NSX.\n");
             if (primary.getDescription() != null && !primary.getDescription().isBlank()) {
                 reply.append("* **Thông số nổi bật**: ").append(primary.getDescription().trim()).append("\n");
+            }
+            if (primary.getPrice() != null && primary.getPrice() > 0) {
+                String promoAdvisory = buildDynamicPromotionAdvisory(primary.getPrice());
+                if (!promoAdvisory.isBlank()) {
+                    reply.append(promoAdvisory);
+                }
             }
 
             if (products.size() > 1) {
@@ -2243,19 +2562,78 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                msgLower.contains("dàn máy") ||
                msgLower.contains("dàn pc") ||
                msgLower.contains("lên cấu hình") ||
+               msgLower.contains("bộ pc") ||
+               msgLower.contains("bộ máy") ||
                msgLower.contains("tư vấn pc") ||
                msgLower.contains("ráp pc") ||
                msgLower.contains("lắp pc") ||
                msgLower.contains("lắp máy") ||
                msgLower.contains("thùng pc") ||
+               msgLower.matches(".*(tư vấn|gợi ý|mua|build|ráp|lắp|chọn|cần).*?(pc|máy tính|case).*") ||
+               msgLower.matches(".*(pc|máy tính|dàn|cấu hình).*?\\d+\\s*(?:triệu|trieu|tr|t|củ|cu|m).*") ||
                msgLower.matches(".*(pc gaming|pc đồ họa|pc văn phòng|pc đồ hoạ|pc dựng phim).*");
+    }
+
+    /**
+     * Lọc bỏ các thuộc tính crawler/metadata nội bộ, chỉ giữ lại thông số kỹ thuật cốt lõi cho người dùng
+     */
+    private String sanitizeSpecsForUser(String rawSpecs) {
+        if (rawSpecs == null || rawSpecs.isBlank()) return "";
+
+        String[] parts = rawSpecs.split("\\| ");
+        List<String> cleanParts = new ArrayList<>();
+
+        for (String part : parts) {
+            String p = part.trim();
+            String lower = p.toLowerCase(Locale.ROOT);
+
+            // Loại bỏ các trường cào dữ liệu và ghi chú nội bộ
+            if (lower.startsWith("price_source:") || 
+                lower.startsWith("price_seen_date:") || 
+                lower.startsWith("price_status:") || 
+                lower.startsWith("compat_note:") ||
+                lower.startsWith("lifecycle:") ||
+                lower.startsWith("compute_stack:") ||
+                lower.contains("chưa rõ") || 
+                lower.contains("chưa xác minh")) {
+                continue;
+            }
+            cleanParts.add(p);
+        }
+
+        // Giữ lại tối đa 4 thông số phần cứng quan trọng nhất (như Socket, RAM, TDP, Cores...)
+        if (cleanParts.size() > 4) {
+            cleanParts = cleanParts.subList(0, 4);
+        }
+        return String.join(" | ", cleanParts);
     }
 
     private BigDecimal extractBudgetFromMessage(String msg) {
         if (msg == null) return new BigDecimal("25000000");
         String text = msg.toLowerCase().replace(",", ".").replaceAll("\\s+", " ");
-        
-        java.util.regex.Matcher m1 = java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(?:triệu|trieu|tr\\b|củ|cu\\b|m\\b)").matcher(text);
+
+        // 1. Bắt kiểu viết tắt tiếng Việt: "28tr5", "28t5", "28củ5", "28m5" -> 28,500,000đ
+        java.util.regex.Matcher mAbbr = java.util.regex.Pattern
+                .compile("(\\d+)\\s*(?:triệu|trieu|tr|t|củ|cu|m)\\s*(\\d+)\\b")
+                .matcher(text);
+        if (mAbbr.find()) {
+            try {
+                double mainVal = Double.parseDouble(mAbbr.group(1));
+                double subVal = Double.parseDouble(mAbbr.group(2));
+                if (subVal < 10) subVal = subVal / 10.0;
+                else if (subVal < 100) subVal = subVal / 100.0;
+                else if (subVal < 1000) subVal = subVal / 1000.0;
+                double totalVal = mainVal + subVal;
+                if (totalVal > 0 && totalVal < 1000) {
+                    return BigDecimal.valueOf((long)(totalVal * 1_000_000L));
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 2. Bắt kiểu chuẩn: "28.5 triệu", "28.5tr", "28.5 củ"
+        java.util.regex.Matcher m1 = java.util.regex.Pattern
+                .compile("(\\d+(?:\\.\\d+)?)\\s*(?:triệu|trieu|tr\\b|củ|cu\\b|m\\b)")
+                .matcher(text);
         if (m1.find()) {
             try {
                 double val = Double.parseDouble(m1.group(1));
@@ -2264,8 +2642,11 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 }
             } catch (Exception ignored) {}
         }
-        
-        java.util.regex.Matcher m2 = java.util.regex.Pattern.compile("(\\d{1,3}(?:\\.\\d{3}){2,3}|\\d{7,9})").matcher(text.replace(".", ""));
+
+        // 3. Bắt số nguyên đầy đủ: "28500000" hoặc "28.500.000"
+        java.util.regex.Matcher m2 = java.util.regex.Pattern
+                .compile("(\\d{1,3}(?:\\.\\d{3}){2,3}|\\d{7,9})")
+                .matcher(text.replace(".", ""));
         if (m2.find()) {
             try {
                 long val = Long.parseLong(m2.group(1));
@@ -2274,122 +2655,64 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 }
             } catch (Exception ignored) {}
         }
-        
+
         return new BigDecimal("25000000");
     }
 
-    private AiChatResponse formatSmartPcBuildAdvisory(String message, BigDecimal budget, String conversationId) {
-        StringBuilder reply = new StringBuilder();
-        List<AiChatResponse.ProductSummary> productCards = new ArrayList<>();
+        private AiChatResponse formatSmartPcBuildAdvisory(String message, BigDecimal budget, String conversationId) {
         long budgetVal = budget != null ? budget.longValue() : 25_000_000L;
+        List<AiChatResponse.ProductSummary> productCards = buildRealPcComponentsForBudget(budgetVal);
 
-        String buildName;
-        String purposeDesc;
-        String cpuName; double cpuPrice; String cpuSpecs;
-        String mainName; double mainPrice; String mainSpecs;
-        String ramName; double ramPrice; String ramSpecs;
-        String vgaName; double vgaPrice; String vgaSpecs;
-        String ssdName; double ssdPrice; String ssdSpecs;
-        String psuName; double psuPrice; String psuSpecs;
-        String caseName; double casePrice; String caseSpecs;
-        String coolerName; double coolerPrice; String coolerSpecs;
-
-        if (budgetVal < 15_000_000L) {
-            buildName = "PC Gaming Esport & Văn Phòng Phổ Thông";
-            purposeDesc = "Tối ưu ngân sách học tập, làm việc đa nhiệm và chiến mượt mà các tựa game eSports (LOL, Valorant, CS2, FO4) ở độ phân giải Full HD.";
-            cpuName = "Intel Core i3-12100F"; cpuPrice = 2190000; cpuSpecs = "4 nhân / 8 luồng, xung nhịp turbo 4.3GHz";
-            mainName = "MSI PRO H610M-E DDR4"; mainPrice = 1690000; mainSpecs = "Socket LGA1700, hỗ trợ DDR4 bus 3200";
-            ramName = "Kingston Fury Beast 16GB (2x8GB) DDR4 3200MHz"; ramPrice = 990000; ramSpecs = "Dual-Channel 16GB, độ trễ thấp CL16";
-            vgaName = "ASUS Dual GeForce GTX 1650 OC 4GB GDDR6"; vgaPrice = 3690000; vgaSpecs = "4GB VRAM, tản nhiệt 2 quạt mát mẻ";
-            ssdName = "Kingston NV2 500GB NVMe PCIe Gen4"; ssdPrice = 990000; ssdSpecs = "Tốc độ đọc 3500MB/s, khởi động Windows tức thì";
-            psuName = "MSI MAG A550BN 550W 80 Plus Bronze"; psuPrice = 990000; psuSpecs = "Chuẩn 80 Plus Bronze, công suất thực ổn định";
-            caseName = "Xigmatek NYX 3F Black (Kèm 3 Fan RGB)"; casePrice = 590000; caseSpecs = "Mặt kính cường lực, thông gió tốt";
-            coolerName = "DeepCool AG400 ARGB"; coolerPrice = 450000; coolerSpecs = "Tản tháp 4 ống đồng, đèn LED RGB";
-        } else if (budgetVal < 23_000_000L) {
-            buildName = "PC Gaming Đồ Họa Phổ Thông TechZone";
-            purposeDesc = "Hiệu năng cân bằng giữa làm việc đồ họa nhẹ, Photoshop/Premiere và chiến mượt mà game eSports/AAA ở thiết lập đồ họa cao.";
-            cpuName = "Intel Core i5-12400F"; cpuPrice = 2890000; cpuSpecs = "6 nhân / 12 luồng, xung nhịp turbo 4.4GHz";
-            mainName = "Gigabyte B760M GAMING DDR4"; mainPrice = 2690000; mainSpecs = "VRM khỏe, tản nhiệt nhôm, 2 khe M.2 NVMe";
-            ramName = "Corsair Vengeance LPX 16GB (2x8GB) DDR4 3200MHz"; ramPrice = 1090000; ramSpecs = "Dual-Channel 16GB, tản nhiệt nhôm anode";
-            vgaName = "MSI GeForce RTX 3050 VENTUS 2X 6G OC"; vgaPrice = 4599000; vgaSpecs = "6GB VRAM, hỗ trợ Ray Tracing & DLSS";
-            ssdName = "Kingston NV2 1TB NVMe PCIe Gen4"; ssdPrice = 1690000; ssdSpecs = "Dung lượng 1TB, tốc độ đọc 3500MB/s";
-            psuName = "MSI MAG A650BN 650W 80 Plus Bronze"; psuPrice = 1390000; psuSpecs = "650W công suất thực, chuẩn 80 Plus Bronze";
-            caseName = "Montech AIR 100 ARGB Black/White"; casePrice = 1290000; caseSpecs = "Kèm sẵn 4 fan ARGB, lưới airflow thông thoáng";
-            coolerName = "Thermalright Assassin King 120 SE"; coolerPrice = 550000; coolerSpecs = "5 ống đồng mạ niken, tản nhiệt êm ái";
-        } else if (budgetVal < 33_000_000L) {
-            buildName = "PC Gaming AAA & Đồ Họa 3D Blender 25Tr";
-            purposeDesc = "Để tối ưu sát mốc 25,000,000đ và tận dụng tối đa hiệu năng cho cả game AAA lẫn render Blender (nhờ nhân CUDA của NVIDIA), TechZone điều chỉnh lại cấu hình nâng cấp card đồ họa lên mức tương xứng:";
-            cpuName = "Intel Core i5-13400F (LGA1700)"; cpuPrice = 5490000; cpuSpecs = "10 nhân / 16 luồng, Socket LGA1700, Turbo 4.6GHz";
-            mainName = "ASUS TUF GAMING B760M-PLUS WIFI (DDR5)"; mainPrice = 4290000; mainSpecs = "Socket LGA1700, chuẩn RAM DDR5, tích hợp WiFi 6 & Bluetooth";
-            ramName = "Kingston Fury Beast 32GB (2x16GB) DDR5 5600MHz — Chuẩn DDR5"; ramPrice = 2890000; ramSpecs = "Dual-Channel 32GB (2x16GB), chuẩn DDR5 bus 5600MHz siêu tốc";
-            vgaName = "MSI GeForce RTX 4060 VENTUS 2X BLACK 8G OC"; vgaPrice = 8290000; vgaSpecs = "8GB GDDR6, nhân CUDA hỗ trợ render 3D Blender & DLSS 3";
-            ssdName = "Kingston NV2 1TB NVMe PCIe 4.0"; ssdPrice = 1890000; ssdSpecs = "Dung lượng 1TB NVMe Gen4, tốc độ đọc 3500MB/s tải game và project cực nhanh";
-            psuName = "MSI MAG A650BN 650W 80 Plus Bronze"; psuPrice = 1390000; psuSpecs = "Công suất thực 650W, chuẩn 80 Plus Bronze an toàn chịu tải nặng liên tục";
-            caseName = "Deepcool CC560 Black"; casePrice = 990000; caseSpecs = "Kèm sẵn quạt làm mát, luồng khí lưu thông tốt, mặt kính cường lực";
-            coolerName = "Thermalassassin X120 SE"; coolerPrice = 498000; coolerSpecs = "Tản tháp 4 ống đồng, giữ CPU luôn mát mẻ dưới 65°C";
-        } else {
-            buildName = "PC Hiệu Năng Cực Đại Workstation & Gaming 4K";
-            purposeDesc = "Cấu hình phân khúc cao cấp đáp ứng trọn vẹn Render 3D chuyên nghiệp, làm phim 8K, Machine Learning và Gaming 4K đỉnh cao.";
-            cpuName = "Intel Core i7-14700K"; cpuPrice = 9890000; cpuSpecs = "20 nhân / 28 luồng, xung nhịp lên tới 5.6GHz";
-            mainName = "MSI MAG B760 TOMAHAWK WIFI DDR5"; mainPrice = 4990000; mainSpecs = "Bo mạch DDR5 cao cấp, tích hợp Wifi 6E & Bluetooth";
-            ramName = "Corsair Vengeance RGB 32GB (2x16GB) DDR5 6000MHz"; ramPrice = 3490000; ramSpecs = "Chuẩn DDR5 thế hệ mới, bus 6000MHz siêu nhanh";
-            vgaName = "Gigabyte GeForce RTX 4070 SUPER GAMING OC 12G"; vgaPrice = 17990000; vgaSpecs = "12GB GDDR6X, cân mọi game 4K và tác vụ AI";
-            ssdName = "Samsung 980 PRO 1TB NVMe PCIe Gen4"; ssdPrice = 2590000; ssdSpecs = "Tốc độ đọc đỉnh cao 7000MB/s chuẩn doanh nghiệp";
-            psuName = "Corsair RM750e 750W 80 Plus Gold Fully Modular"; psuPrice = 2790000; psuSpecs = "Chuẩn 80 Plus Gold, dây cáp rời hoàn toàn";
-            caseName = "NZXT H5 Flow RGB Black/White"; casePrice = 2290000; caseSpecs = "Thiết kế tối giản sang trọng, quạt nghiêng hướng luồng gió vào VGA";
-            coolerName = "DeepCool LT720 AIO 360 Liquid Cooler"; coolerPrice = 2990000; coolerSpecs = "Tản nhiệt nước AIO 360mm nắp gương vô cực";
+        double totalVal = 0.0;
+        for (AiChatResponse.ProductSummary p : productCards) {
+            if (p.getPrice() != null) totalVal += p.getPrice();
         }
 
-        double totalVal = cpuPrice + mainPrice + ramPrice + vgaPrice + ssdPrice + psuPrice + casePrice + coolerPrice;
+        StringBuilder reply = new StringBuilder();
+        String buildName;
+        if (budgetVal < 15_000_000L) {
+            buildName = "PC Gaming Esport & Văn Phòng Tiết Kiệm";
+        } else if (budgetVal < 23_000_000L) {
+            buildName = "PC Gaming Đồ Họa Phổ Thông TechZone";
+        } else if (budgetVal < 33_000_000L) {
+            buildName = "PC Gaming AAA & Đồ Họa 3D Đa Nhiệm TechZone";
+        } else {
+            buildName = "PC Hiệu Năng Cao Workstation & Gaming 4K TechZone";
+        }
 
         reply.append("### 🎯 Cấu hình đề xuất: **").append(buildName).append("**\n\n");
-        reply.append("* **Mục đích & Hiệu năng**: ").append(purposeDesc).append("\n");
+        reply.append("* **Mục đích**: Tối ưu linh kiện thực tế đang sẵn hàng tại kho TechZone theo mức ngân sách của bạn.\n");
         reply.append("* **Ngân sách dự kiến**: ").append(MONEY_FMT.format(budgetVal)).append("\n");
-        reply.append("* **Tổng ngân sách sát giá**: **").append(MONEY_FMT.format(totalVal)).append("**");
-        if (Math.abs(totalVal - 25728000.0) < 1.0) {
-            reply.append(" _(Rất sát ngân sách 25 triệu và bạn hoàn toàn có thể áp dụng mã giảm giá **NEWBIE** giảm 500,000₫ để đưa tổng giá trị về đúng **25,228,000₫**!)_\n\n");
-        } else if (budgetVal > totalVal) {
-            reply.append(" _(Dư ").append(MONEY_FMT.format(budgetVal - totalVal)).append(" để tùy chọn phụ kiện hoặc màn hình)_\n\n");
+        reply.append("* **Tổng giá trị thực tế**: **").append(MONEY_FMT.format(totalVal)).append("**");
+        if (budgetVal > totalVal) {
+            reply.append(" _(Tiết kiệm ").append(MONEY_FMT.format(budgetVal - totalVal)).append(" so với dự toán)_\n\n");
         } else {
             reply.append("\n\n");
         }
 
-        reply.append("#### 📋 Chi tiết trọn bộ 8 linh kiện (Tương thích 100% phần cứng):\n\n");
-        reply.append("🔹 **CPU (Bộ vi xử lý)**: **").append(cpuName).append("** — **").append(MONEY_FMT.format(cpuPrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(cpuSpecs).append("\n");
-        reply.append("🔹 **Mainboard (Bo mạch chủ)**: **").append(mainName).append("** — **").append(MONEY_FMT.format(mainPrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(mainSpecs).append("\n");
-        reply.append("🔹 **RAM (Bộ nhớ trong)**: **").append(ramName).append("** — **").append(MONEY_FMT.format(ramPrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(ramSpecs).append("\n");
-        reply.append("🔹 **VGA (Card đồ họa rời)**: **").append(vgaName).append("** — **").append(MONEY_FMT.format(vgaPrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(vgaSpecs).append("\n");
-        reply.append("🔹 **Ổ cứng (SSD NVMe)**: **").append(ssdName).append("** — **").append(MONEY_FMT.format(ssdPrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(ssdSpecs).append("\n");
-        reply.append("🔹 **Nguồn máy tính (PSU)**: **").append(psuName).append("** — **").append(MONEY_FMT.format(psuPrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(psuSpecs).append("\n");
-        reply.append("🔹 **Vỏ thùng Case máy tính**: **").append(caseName).append("** — **").append(MONEY_FMT.format(casePrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(caseSpecs).append("\n");
-        reply.append("🔹 **Tản nhiệt CPU**: **").append(coolerName).append("** — **").append(MONEY_FMT.format(coolerPrice)).append("**\n");
-        reply.append("  ↳ _Thông số_: ").append(coolerSpecs).append("\n\n");
-
-        reply.append("💡 **Đánh giá tương thích từ Kỹ sư phần cứng TechZone:**\n");
-        reply.append("Bộ máy được cân đối chuẩn xác công suất tiêu thụ (TDP CPU + VGA hoàn toàn nằm trong mức an toàn của Nguồn), chuẩn RAM ăn khớp với bo mạch chủ và kích thước tản nhiệt/card đồ họa vừa vặn với vỏ Case.\n\n");
-
+        reply.append("#### 📋 Chi tiết trọn bộ linh kiện sẵn hàng (Tương thích 100% phần cứng):\n\n");
+        for (AiChatResponse.ProductSummary p : productCards) {
+            String catName = getCategoryDisplayName(p.getCategory());
+            String vName = p.getVariantName() != null && !p.getVariantName().equalsIgnoreCase("Tiêu chuẩn")
+                    ? " (" + p.getVariantName() + ")" : "";
+            reply.append("🔹 **").append(catName).append("**: **").append(p.getName()).append(vName).append("** — **")
+                    .append(MONEY_FMT.format(p.getPrice() != null ? p.getPrice() : 0.0)).append("**\n");
+            String cleanSpecs = sanitizeSpecsForUser(p.getSpecs() != null ? p.getSpecs() : p.getDescription());
+            if (!cleanSpecs.isBlank()) {
+                reply.append("  ↳ _Thông số_: ").append(cleanSpecs).append("\n");
+            }
+        }
+        reply.append("\n💡 **Đánh giá tương thích từ Kỹ sư phần cứng TechZone:**\n");
+        reply.append("Tất cả linh kiện được chọn trực tiếp từ kho TechZone đang còn hàng, đảm bảo 100% chuẩn Socket bo mạch chủ và chuẩn RAM ăn khớp, công suất nguồn đủ tải an toàn.\n\n");
         reply.append("🎁 **Đặc quyền khi lắp máy trọn bộ tại TechZone**:\n");
-        reply.append("* Miễn phí 100% công lắp ráp và đi dây thẩm mỹ chuẩn show-case.\n");
-        reply.append("* Kiểm tra Stress-Test (FurMark + Prime95) nhiệt độ ổn định trước khi giao.\n");
-        reply.append("* Hỗ trợ cài đặt sẵn Windows & bộ phần mềm đồ họa/game cơ bản.\n");
-        reply.append("* Kích hoạt bảo hành điện tử chính hãng từng Serial linh kiện ngay khi nhận máy.\n\n");
-        reply.append("👉 **Bạn có thể nhấn nút 'Thêm tất cả vào giỏ hàng' bên dưới hoặc nhắn CyberBot để cho từng món vào giỏ nhé!**");
-
-        productCards.add(AiChatResponse.ProductSummary.builder().id(18).variantId(18).name(cpuName).price(cpuPrice).originalPrice(cpuPrice).stock(25).category("CPU").imageUrl("https://images.unsplash.com/photo-1591799264318-7e6ef8ddb7ea?w=300").route("/san-pham/18").build());
-        productCards.add(AiChatResponse.ProductSummary.builder().id(42).variantId(42).name(mainName).price(mainPrice).originalPrice(mainPrice).stock(25).category("MAINBOARD").imageUrl("https://images.unsplash.com/photo-1518770660439-4636190af475?w=300").route("/san-pham/42").build());
-        productCards.add(AiChatResponse.ProductSummary.builder().id(54).variantId(54).name(ramName).price(ramPrice).originalPrice(ramPrice).stock(50).category("RAM").imageUrl("https://images.unsplash.com/photo-1562976540-1502c2145186?w=300").route("/san-pham/54").build());
-        productCards.add(AiChatResponse.ProductSummary.builder().id(68).variantId(68).name(vgaName).price(vgaPrice).originalPrice(vgaPrice).stock(25).category("VGA").imageUrl("https://images.unsplash.com/photo-1587202372775-e229f172b9d7?w=300").route("/san-pham/68").build());
-        productCards.add(AiChatResponse.ProductSummary.builder().id(82).variantId(82).name(ssdName).price(ssdPrice).originalPrice(ssdPrice).stock(25).category("SSD").imageUrl("https://images.unsplash.com/photo-1597872200969-2b65d56bd16b?w=300").route("/san-pham/82").build());
-        productCards.add(AiChatResponse.ProductSummary.builder().id(94).variantId(94).name(psuName).price(psuPrice).originalPrice(psuPrice).stock(24).category("NGUỒN").imageUrl("https://images.unsplash.com/photo-1587202372634-32705e3bf49c?w=300").route("/san-pham/94").build());
-        productCards.add(AiChatResponse.ProductSummary.builder().id(103).variantId(103).name(caseName).price(casePrice).originalPrice(casePrice).stock(24).category("CASE").imageUrl("https://images.unsplash.com/photo-1587202372151-574d5386dbb5?w=300").route("/san-pham/103").build());
-        productCards.add(AiChatResponse.ProductSummary.builder().id(110).variantId(110).name(coolerName).price(coolerPrice).originalPrice(coolerPrice).stock(25).category("TẢN NHIỆT").imageUrl("https://images.unsplash.com/photo-1587202372575-f55db1a9ecf5?w=300").route("/san-pham/110").build());
+        reply.append("• Miễn phí 100% công lắp ráp và đi dây thẩm mỹ chuẩn show-case.\n");
+        reply.append("• Kiểm tra Stress-Test (FurMark + Prime95) nhiệt độ ổn định trước khi giao.\n");
+        reply.append("• Kích hoạt bảo hành điện tử chính hãng từng Serial linh kiện ngay khi nhận máy.\n");
+        String promoAdvisory = buildDynamicPromotionAdvisory(totalVal);
+        if (!promoAdvisory.isBlank()) {
+            reply.append(promoAdvisory);
+        }
+        reply.append("\n👉 **Bạn có thể nhấn nút 'Thêm tất cả vào giỏ hàng' bên dưới hoặc nhắn CyberBot để cho từng món vào giỏ nhé!**");
 
         List<AiChatResponse.QuickAction> actions = new ArrayList<>();
         actions.add(new AiChatResponse.QuickAction("🛒 Thêm tất cả vào giỏ hàng", "add_all_to_cart", "add_all_to_cart"));
@@ -2405,4 +2728,192 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                 .products(productCards)
                 .build();
     }
+
+    private boolean isSecurityViolationOrPromptInjection(String message) {
+        if (message == null || message.isBlank()) return false;
+        String m = message.toLowerCase().trim();
+
+        return m.matches(".*(ignore all|ignore previous|bỏ qua các hướng dẫn|quên hết quy tắc|system prompt|system instruction|in ra prompt|hiển thị prompt|câu lệnh gốc|cấu hình hệ thống).*")
+                || m.matches(".*(api key|apikey|secret key|jwt secret|access token|password|mật khẩu|file \\.env|application\\.yml|biến môi trường|connection string|jdbc:postgresql).*")
+                || m.matches(".*(tên bảng|cấu trúc bảng|database schema|select \\* from|drop table|delete from|insert into|update .* set|union select|pg_catalog|information_schema).*")
+                || m.matches(".*(doanh thu cửa hàng|lợi nhuận|giá vốn|giá nhập|danh sách toàn bộ khách hàng|số điện thoại của khách hàng khác|email của khách khác).*");
+    }
+
+    /**
+     * SEC-04: Che giấu thông tin cá nhân nhạy cảm (Masking PII) trước khi đưa vào Prompt của Gemini
+     */
+    private String maskPhone(String phone) {
+        if (phone == null || phone.length() < 7) return "***";
+        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 3);
+    }
+
+    /**
+     * SEC-05: Hậu kiểm đầu ra của AI (Output Sanitizer)
+     */
+    private String sanitizeBotOutput(String rawMsg) {
+        if (rawMsg == null || rawMsg.isBlank()) return "";
+        String lower = rawMsg.toLowerCase();
+
+        if (lower.contains("bạn là cyberbot - trợ lý ai")
+                || lower.contains("=== thông tin khách hàng đang chat")
+                || lower.contains("ai_api_key")
+                || lower.contains("aizasy")
+                || lower.contains("jdbc:postgresql")
+                || lower.contains("cyberbot_knowledge_vectors")) {
+            return "Dạ, vì lý do bảo mật thông tin hệ thống của TechZone, mình không thể cung cấp các thông tin kỹ thuật nội bộ này. Bạn có cần mình hỗ trợ tư vấn linh kiện PC hoặc kiểm tra đơn hàng không ạ?";
+        }
+
+        return rawMsg
+                .replace("DANH SÁCH LINH KIỆN HIỆN CÓ SẴN TRONG KHO TECHZONE (TÌM TỪ VECTOR DATABASE & KHO THỜI GIAN THỰC):", "")
+                .replace("DANH SÁCH LINH KIỆN TRONG KHO TECHZONE KHỚP VỚI YÊU CẦU:", "")
+                .trim();
+    }
+
+    /**
+     * Chốt chặn câu hỏi ngoài ngữ cảnh cửa hàng máy tính TechZone (Off-Topic Guardrail)
+     */
+    private boolean isOffTopicDomainQuery(String message, List<AiChatRequest.HistoryItem> history) {
+        if (message == null || message.isBlank()) return false;
+        String m = message.toLowerCase().trim();
+
+        // 1. Nếu là câu chào hỏi xã giao hoặc xác nhận ngắn -> Hợp lệ (Không chặn)
+        if (m.matches("^(xin chào|chào|chào shop|chào bot|hi|hello|alo|ơi|shop ơi|bot ơi|bạn là ai|giúp mình|hỗ trợ mình|tư vấn giúp|ok|oke|dạ|vâng|cảm ơn|thanks|có|không|được|tiếp tục).*")) {
+            return false;
+        }
+
+        // 2. Nếu có chứa bất kỳ từ khóa nghiệp vụ hợp lệ nào của TechZone -> Hợp lệ (Không chặn)
+        boolean hasStoreDomainKeyword = isProductQuery(m)
+                || isReferralComponentQuery(m)
+                || isFollowUpPronounQuery(m)
+                || m.matches(".*(đơn hàng|mã đơn|vận đơn|tz-|ord-|bảo hành|serial|đổi trả|1 đổi 1|ship|ghn|giao hàng|vận chuyển|đồng kiểm|thanh toán|vnpay|cod|trả góp|hoàn tiền|giỏ hàng|mua|đặt hàng|giá|bao nhiêu tiền|khuyến mãi|giảm giá|sale|voucher|mã giảm|cửa hàng|địa chỉ|quận 12|hotline|nhân viên|kỹ thuật|lắp ráp|cài win|vệ sinh máy|không lên hình|màn hình xanh|bsod|nóng quá|sập nguồn|quạt quay|tương thích|nghẽn cổ chai|fps|chơi game|đồ họa|render|blender|premiere|photoshop|valorant|wukong|cyberpunk|lol|cs2|dựng phim|lập trình|văn phòng|máy trạm|server|workstation|laptop|macbook).*");
+
+        if (hasStoreDomainKeyword) {
+            return false;
+        }
+
+        // 3. Danh sách đen (Blacklist) các chủ đề chắc chắn ngoài phạm vi cửa hàng PC
+        boolean isExplicitOffTopic = m.matches(".*\\b(thời tiết|mưa|nắng|nhiệt độ ngoài trời|nấu ăn|công thức nấu|món ăn|phở|bún|cơm|bóng đá|ngoại hạng anh|world cup|ca sĩ|diễn viên|bài hát|làm thơ|viết văn|kể chuyện|tử vi|bói toán|xem ngày|chứng khoán|cổ phiếu|forex|tiền ảo|bitcoin|bất động sản|nhà đất|khám bệnh|uống thuốc|đau bụng|đau đầu|chính trị|tổng thống|chiến tranh|lịch sử|địa lý|thủ đô|giải phương trình|đạo hàm|tích phân|hóa học|sinh học|người yêu|tán gái|thất tình)\\b.*");
+
+        if (isExplicitOffTopic) {
+            return true;
+        }
+
+        // 4. Nếu câu dài (>= 4 từ) mà hoàn toàn không liên quan đến bất kỳ từ khóa nào của cửa hàng
+        String[] words = m.split("\\s+");
+        return words.length >= 4;
+    }
+
+    /**
+     * 1. Tìm chính xác sản phẩm trong kho khớp với tên linh kiện mà Bot vừa tư vấn (Exact & Token Match ưu tiên hơn Vector)
+     */
+    private AiChatResponse.ProductSummary findExactAdvisedProduct(String advisedLine) {
+        if (advisedLine == null || advisedLine.isBlank()) return null;
+        try {
+            String clean = advisedLine
+                    .replaceAll("(?i)^(cpu|vga|gpu|card đồ họa|mainboard|bo mạch chủ|main|ram|bộ nhớ|ssd|ổ cứng|nguồn|psu|vỏ case|case|tản nhiệt|màn hình)\\s*[:\\-]\\s*", "")
+                    .replaceAll("\\(.*?\\)", "")
+                    .replaceAll("—.*", "")
+                    .replaceAll("\\|.*", "")
+                    .replaceAll("\\*\\*", "")
+                    .trim();
+
+            if (clean.length() < 3) return null;
+
+            String exactSql = """
+                SELECT p.id as product_id, p.name as product_name, p.description as product_desc,
+                       p.warranty_period_months as warranty_months,
+                       COALESCE(b.name, 'Chính hãng') as brand_name,
+                       c.name as category_name,
+                       pv.id as variant_id, pv.variant_name, pv.price, pv.original_price,
+                       pv.stock_quantity as stock, pv.image_url,
+                       spec.specs_summary
+                FROM product_variants pv
+                JOIN products p ON pv.product_id = p.id
+                JOIN categories c ON p.category_id = c.id
+                LEFT JOIN brands b ON p.brand_id = b.id
+                LEFT JOIN (
+                    SELECT sv.product_variant_id,
+                           string_agg(s.name || ': ' || COALESCE(so.display_value, sv.value, ''), ' | ') as specs_summary
+                    FROM specification_values sv
+                    JOIN specifications s ON sv.specification_id = s.id
+                    LEFT JOIN specification_options so ON sv.option_id = so.id
+                    GROUP BY sv.product_variant_id
+                ) spec ON spec.product_variant_id = pv.id
+                WHERE UPPER(p.status) = 'ACTIVE'
+                  AND (LOWER(p.name) LIKE ? OR LOWER(?) LIKE '%' || LOWER(p.name) || '%')
+                ORDER BY (CASE WHEN LOWER(p.name) = LOWER(?) THEN 0 ELSE 1 END),
+                         pv.stock_quantity DESC, pv.price ASC
+                LIMIT 1
+            """;
+            List<Map<String, Object>> exactRows = jdbcTemplate.queryForList(
+                    exactSql, "%" + clean.toLowerCase() + "%", clean.toLowerCase(), clean.toLowerCase()
+            );
+
+            if (exactRows.isEmpty()) {
+                List<String> modelTokens = new ArrayList<>();
+                for (String tk : clean.toLowerCase().replaceAll("[^a-z0-9À-ỹ\\-\\s]", " ").split("\\s+")) {
+                    if (tk.length() >= 2 && !Set.of("gb", "tb", "mhz", "bus", "oc", "wifi", "pro", "plus", "dual", "gaming", "box", "tray", "đen", "trắng").contains(tk)) {
+                        modelTokens.add(tk);
+                    }
+                }
+                if (!modelTokens.isEmpty()) {
+                    StringBuilder tokenSql = new StringBuilder("""
+                        SELECT p.id as product_id, p.name as product_name, p.description as product_desc,
+                               p.warranty_period_months as warranty_months,
+                               COALESCE(b.name, 'Chính hãng') as brand_name,
+                               c.name as category_name,
+                               pv.id as variant_id, pv.variant_name, pv.price, pv.original_price,
+                               pv.stock_quantity as stock, pv.image_url,
+                               spec.specs_summary,
+                               (
+                    """);
+                    List<Object> params = new ArrayList<>();
+                    for (int i = 0; i < modelTokens.size(); i++) {
+                        if (i > 0) tokenSql.append(" + ");
+                        tokenSql.append("(CASE WHEN LOWER(p.name || ' ' || COALESCE(pv.variant_name, '')) LIKE ? THEN 2 ELSE 0 END)");
+                        params.add("%" + modelTokens.get(i) + "%");
+                    }
+                    tokenSql.append("""
+                        ) as match_score FROM product_variants pv
+                        JOIN products p ON pv.product_id = p.id
+                        JOIN categories c ON p.category_id = c.id
+                        LEFT JOIN brands b ON p.brand_id = b.id
+                        LEFT JOIN (
+                            SELECT sv.product_variant_id, string_agg(s.name || ': ' || COALESCE(so.display_value, sv.value, ''), ' | ') as specs_summary
+                            FROM specification_values sv
+                            JOIN specifications s ON sv.specification_id = s.id
+                            LEFT JOIN specification_options so ON sv.option_id = so.id
+                            GROUP BY sv.product_variant_id
+                        ) spec ON spec.product_variant_id = pv.id
+                        WHERE UPPER(p.status) = 'ACTIVE' AND (
+                    """);
+                    for (int i = 0; i < modelTokens.size(); i++) {
+                        if (i > 0) tokenSql.append(" OR ");
+                        tokenSql.append("LOWER(p.name) LIKE ?");
+                        params.add("%" + modelTokens.get(i) + "%");
+                    }
+                    tokenSql.append(") ORDER BY match_score DESC, pv.stock_quantity DESC LIMIT 1");
+                    List<Map<String, Object>> scoredRows = jdbcTemplate.queryForList(tokenSql.toString(), params.toArray());
+                    if (!scoredRows.isEmpty() && ((Number) scoredRows.get(0).get("match_score")).intValue() >= 2) {
+                        exactRows = scoredRows;
+                    }
+                }
+            }
+
+            if (!exactRows.isEmpty()) {
+                return mapRowToProductSummary(exactRows.get(0));
+            }
+        } catch (Exception e) {
+            log.warn("Lỗi findExactAdvisedProduct cho '{}': {}", advisedLine, e.getMessage());
+        }
+
+        if (catalogVectorSyncService != null) {
+            List<AiChatResponse.ProductSummary> vec = catalogVectorSyncService.searchProductsByVector(advisedLine, 1);
+            if (vec != null && !vec.isEmpty()) {
+                return vec.get(0);
+            }
+        }
+        return null;
+    }
+
 }

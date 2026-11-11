@@ -38,6 +38,12 @@ public class CheckoutServiceImpl implements CheckoutService {
     @Override
     @Transactional
     public CheckoutPreviewResponse validate(String loginEmail, List<Integer> itemVariantIds) {
+        return validate(loginEmail, null, itemVariantIds);
+    }
+
+    @Override
+    @Transactional
+    public CheckoutPreviewResponse validate(String loginEmail, List<Integer> cartItemIds, List<Integer> itemVariantIds) {
         Integer userId = checkoutRepository.findActiveUserId(loginEmail)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy tài khoản đang hoạt động."));
 
@@ -49,7 +55,21 @@ public class CheckoutServiceImpl implements CheckoutService {
             throw new BusinessException("Giỏ hàng đang trống.");
         }
 
-        if (itemVariantIds != null) {
+        if (cartItemIds != null && !cartItemIds.isEmpty()) {
+            if (cartItemIds.stream().anyMatch(id -> id == null || id <= 0)) {
+                throw new BusinessException("Danh sách sản phẩm được chọn không hợp lệ.");
+            }
+            Set<Integer> allowedCartIds = new HashSet<>(cartItemIds);
+            cartItems = cartItems.stream()
+                    .filter(item -> allowedCartIds.contains(item.getCartItemId()))
+                    .toList();
+            Set<Integer> foundCartItemIds = cartItems.stream()
+                    .map(CheckoutItemProjection::getCartItemId)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!foundCartItemIds.equals(allowedCartIds)) {
+                throw new BusinessException("Sản phẩm được chọn đã thay đổi. Vui lòng kiểm tra lại giỏ hàng.");
+            }
+        } else if (itemVariantIds != null) {
             if (itemVariantIds.isEmpty()
                     || itemVariantIds.stream().anyMatch(id -> id == null || id <= 0)) {
                 throw new BusinessException("Danh sách sản phẩm được chọn không hợp lệ.");
@@ -58,17 +78,29 @@ public class CheckoutServiceImpl implements CheckoutService {
             cartItems = cartItems.stream()
                     .filter(item -> allowed.contains(item.getProductVariantId()))
                     .toList();
-            if (cartItems.size() != allowed.size()) {
+            Set<Integer> foundVariantIds = cartItems.stream()
+                    .map(CheckoutItemProjection::getProductVariantId)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!foundVariantIds.equals(allowed)) {
                 throw new BusinessException("Sản phẩm được chọn đã thay đổi. Vui lòng kiểm tra lại giỏ hàng.");
             }
         }
 
-        var selectedIds = cartItems.stream().map(CheckoutItemProjection::getProductVariantId).collect(java.util.stream.Collectors.toSet());
-        promotions.syncProductPrices(selectedIds.stream().toList());
+        var selectedVariantIds = cartItems.stream().map(CheckoutItemProjection::getProductVariantId).collect(java.util.stream.Collectors.toSet());
+        promotions.syncProductPrices(selectedVariantIds.stream().toList());
+        var selectedCartIds = cartItems.stream().map(CheckoutItemProjection::getCartItemId).collect(java.util.stream.Collectors.toSet());
         cartItems = checkoutRepository.findItemsForPreview(cart.getId()).stream()
-                .filter(item -> selectedIds.contains(item.getProductVariantId())).toList();
+                .filter(item -> selectedCartIds.contains(item.getCartItemId())).toList();
+
+        // Kiểm tra tổng số lượng yêu cầu theo từng variant trên toàn bộ các dòng được chọn
+        // (xử lý chính xác trường hợp 1 linh kiện trong set PC + 1 linh kiện mua lẻ cùng loại)
+        java.util.Map<Integer, Integer> totalRequestedPerVariant = new java.util.HashMap<>();
+        for (CheckoutItemProjection ci : cartItems) {
+            totalRequestedPerVariant.merge(ci.getProductVariantId(), ci.getQuantity(), Integer::sum);
+        }
+
         List<CheckoutItemResponse> items = cartItems.stream()
-                .map(this::validateAndMapItem)
+                .map(item -> validateAndMapItem(item, totalRequestedPerVariant.get(item.getProductVariantId())))
                 .toList();
 
         BigDecimal totalAmount = items.stream()
@@ -78,7 +110,7 @@ public class CheckoutServiceImpl implements CheckoutService {
         return new CheckoutPreviewResponse(cart.getId(), items, totalAmount, true);
     }
 
-    private CheckoutItemResponse validateAndMapItem(CheckoutItemProjection item) {
+    private CheckoutItemResponse validateAndMapItem(CheckoutItemProjection item, Integer totalRequestedQty) {
         if (item.getExistingVariantId() == null || item.getExistingProductId() == null) {
             throw new BusinessException(
                     "Sản phẩm trong giỏ không còn tồn tại: variant " + item.getProductVariantId()
@@ -93,8 +125,10 @@ public class CheckoutServiceImpl implements CheckoutService {
             throw new BusinessException("Số lượng không hợp lệ: " + item.getProductName());
         }
 
-        if (item.getStockQuantity() == null || item.getQuantity() > item.getStockQuantity()) {
-            throw new BusinessException("Không đủ tồn kho: " + item.getProductName());
+        int requiredQty = totalRequestedQty != null ? totalRequestedQty : item.getQuantity();
+        if (item.getStockQuantity() == null || requiredQty > item.getStockQuantity()) {
+            throw new BusinessException("Không đủ tồn kho: " + item.getProductName()
+                    + " (yêu cầu " + requiredQty + ", hiện còn " + (item.getStockQuantity() == null ? 0 : item.getStockQuantity()) + ")");
         }
 
         if (item.getUnitPrice() == null || item.getUnitPrice().signum() < 0) {

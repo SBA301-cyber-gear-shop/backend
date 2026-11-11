@@ -18,21 +18,43 @@ public interface CartItemRepository extends JpaRepository<CartItem, Integer> {
     List<CartItem> findByCartIdOrderByIdAsc(Integer cartId);
 
     @Query(value = """
-            SELECT product_variant_id AS "productVariantId", quantity AS "quantity"
+            SELECT id AS "cartItemId",
+                   product_variant_id AS "productVariantId",
+                   quantity AS "quantity",
+                   pc_custom_id AS "pcCustomId"
             FROM cart_items
             WHERE cart_id = :cartId
-            ORDER BY product_variant_id, id
+            ORDER BY id
             FOR UPDATE
             """, nativeQuery = true)
     List<CartLineProjection> findForCheckout(@Param("cartId") Integer cartId);
 
-    // Tìm một phiên bản sản phẩm đã tồn tại trong giỏ
+    // Tìm một phiên bản sản phẩm đã tồn tại trong giỏ (mua lẻ hoặc cùng set PC)
+    @Query("""
+            SELECT c FROM CartItem c
+            WHERE c.cartId = :cartId
+              AND c.productVariantId = :productVariantId
+              AND ((:pcCustomId IS NULL AND c.pcCustomId IS NULL) OR c.pcCustomId = :pcCustomId)
+            """)
+    Optional<CartItem> findByCartIdAndProductVariantIdAndPcCustomId(
+            @Param("cartId") Integer cartId,
+            @Param("productVariantId") Integer productVariantId,
+            @Param("pcCustomId") Integer pcCustomId
+    );
+
+    List<CartItem> findByCartIdAndPcCustomId(Integer cartId, Integer pcCustomId);
+
+    @Modifying(flushAutomatically = true)
+    @Query("DELETE FROM CartItem c WHERE c.cartId = :cartId AND c.pcCustomId = :pcCustomId")
+    void deleteByCartIdAndPcCustomId(@Param("cartId") Integer cartId, @Param("pcCustomId") Integer pcCustomId);
+
+    @Deprecated
     Optional<CartItem> findByCartIdAndProductVariantId(
             Integer cartId,
             Integer productVariantId
     );
 
-    // Kiểm tra phiên bản đã có trong giỏ hay chưa
+    @Deprecated
     boolean existsByCartIdAndProductVariantId(
             Integer cartId,
             Integer productVariantId

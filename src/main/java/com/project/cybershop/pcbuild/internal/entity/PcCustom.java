@@ -40,6 +40,12 @@ public class PcCustom {
     @Column(name = "total_price", precision = 12, scale = 2)
     private BigDecimal totalPrice;
 
+    @Column(name = "name")
+    private String name;
+
+    @Column(name = "created_at")
+    private java.time.LocalDateTime createdAt;
+
     @OneToMany(mappedBy = "pcCustom", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<PcCustomItem> items = new ArrayList<>();
 

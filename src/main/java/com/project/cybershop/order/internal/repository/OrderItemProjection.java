@@ -13,4 +13,5 @@ public interface OrderItemProjection {
     Integer getWarrantyPeriodMonths();
     Integer getRating();
     String getReviewComment();
+    Integer getPcCustomId();
 }

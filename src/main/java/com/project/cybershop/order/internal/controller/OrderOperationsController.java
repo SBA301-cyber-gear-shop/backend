@@ -3,11 +3,14 @@ package com.project.cybershop.order.internal.controller;
 import com.project.cybershop.order.api.dto.request.CollectPaymentRequest;
 import com.project.cybershop.order.api.dto.request.CancelOrderRequest;
 import com.project.cybershop.order.api.dto.request.HandoverRequest;
+import com.project.cybershop.order.api.dto.request.HandoverRequest.Device;
+import com.project.cybershop.order.api.dto.response.CashCollectionResponse;
 import com.project.cybershop.order.api.dto.response.OrderResponse;
 import com.project.cybershop.order.internal.service.OrderService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -36,6 +39,20 @@ public class OrderOperationsController {
     @PostMapping("/{code}/collect")
     public OrderResponse collect(Authentication auth, @PathVariable String code, @Valid @RequestBody CollectPaymentRequest request) {
         return service.collect(auth.getName(), code, request);
+    }
+
+    @GetMapping("/{code}/cash-collection")
+    public ResponseEntity<CashCollectionResponse> cashCollection(Authentication auth, @PathVariable String code) {
+        return service.cashCollection(auth.getName(), code)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    public record ShippingSerialsRequest(@jakarta.validation.constraints.NotNull @Size(max=10000) List<@jakarta.validation.constraints.NotNull @Valid Device> devices) {}
+
+    @PostMapping("/{code}/shipping-serials")
+    public OrderResponse shippingSerials(Authentication auth, @PathVariable String code, @Valid @RequestBody ShippingSerialsRequest request) {
+        return service.registerShippingSerials(auth.getName(), code, request.devices());
     }
 
     @PostMapping("/{code}/handover")
