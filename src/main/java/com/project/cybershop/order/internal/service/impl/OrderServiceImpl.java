@@ -13,6 +13,7 @@ import com.project.cybershop.order.api.dto.response.CashCollectionResponse;
 import com.project.cybershop.order.api.dto.response.CheckoutDetailsResponse;
 import com.project.cybershop.order.api.dto.response.OrderResponse;
 import com.project.cybershop.order.internal.entity.Cart;
+import com.project.cybershop.order.internal.entity.CartItem;
 import com.project.cybershop.order.internal.entity.Order;
 import com.project.cybershop.order.internal.entity.OrderItem;
 import com.project.cybershop.order.internal.mapper.OrderMapper;
@@ -45,8 +46,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.TreeMap;
 import java.util.UUID;
 
@@ -533,7 +536,7 @@ public class OrderServiceImpl implements OrderService {
                     .filter(g -> g.parts() != null)
                     .flatMap(g -> g.parts().stream())
                     .filter(Objects::nonNull)
-                    .map(PlaceOrderRequest.PcGroupPart::variantId)
+                    .map(PlaceOrderRequest.PcPart::variantId)
                     .collect(Collectors.toSet());
 
             for (CartItem ci : cartItems) {

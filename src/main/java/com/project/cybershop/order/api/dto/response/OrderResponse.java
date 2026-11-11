@@ -47,5 +47,11 @@ public record OrderResponse(
 
     public record Item(Integer id, Integer productVariantId, String productName, int quantity,
                        BigDecimal unitPrice, BigDecimal subtotal, int warrantyPeriodMonths,
-                       Integer rating, String reviewComment) {}
+                       Integer rating, String reviewComment, Integer pcCustomId) {
+        public Item(Integer id, Integer productVariantId, String productName, int quantity,
+                    BigDecimal unitPrice, BigDecimal subtotal, int warrantyPeriodMonths,
+                    Integer rating, String reviewComment) {
+            this(id, productVariantId, productName, quantity, unitPrice, subtotal, warrantyPeriodMonths, rating, reviewComment, null);
+        }
+    }
 }

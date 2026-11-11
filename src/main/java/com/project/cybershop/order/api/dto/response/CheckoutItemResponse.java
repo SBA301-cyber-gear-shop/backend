@@ -5,6 +5,8 @@ import java.math.BigDecimal;
 
 public record CheckoutItemResponse(
 
+        Integer cartItemId,
+
         Integer productVariantId,
 
         String productName,
@@ -19,7 +21,11 @@ public record CheckoutItemResponse(
 
         BigDecimal subtotal,
 
-        Integer stockQuantity
+        Integer stockQuantity,
+
+        Integer pcCustomId,
+
+        String pcCustomName
 
 ) {
 }

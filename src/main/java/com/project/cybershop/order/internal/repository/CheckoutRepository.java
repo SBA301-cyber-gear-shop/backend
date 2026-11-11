@@ -18,7 +18,8 @@ public interface CheckoutRepository extends Repository<Cart, Integer> {
 
     // Dùng LEFT JOIN để vẫn phát hiện dòng giỏ có phiên bản/sản phẩm đã bị xóa.
     @Query(value = """
-            SELECT ci.product_variant_id AS "productVariantId",
+            SELECT ci.id AS "cartItemId",
+                   ci.product_variant_id AS "productVariantId",
                    ci.quantity AS "quantity",
                    pv.id AS "existingVariantId",
                    p.id AS "existingProductId",
@@ -27,10 +28,13 @@ public interface CheckoutRepository extends Repository<Cart, Integer> {
                    pv.variant_name AS "variantName",
                    pv.image_url AS "imageUrl",
                    pv.price AS "unitPrice",
-                   pv.stock_quantity AS "stockQuantity"
+                   pv.stock_quantity AS "stockQuantity",
+                   ci.pc_custom_id AS "pcCustomId",
+                   pc.name AS "pcCustomName"
             FROM cart_items ci
             LEFT JOIN product_variants pv ON pv.id = ci.product_variant_id
             LEFT JOIN products p ON p.id = pv.product_id
+            LEFT JOIN pc_customs pc ON pc.id = ci.pc_custom_id
             WHERE ci.cart_id = :cartId
             ORDER BY ci.id
             """, nativeQuery = true)
