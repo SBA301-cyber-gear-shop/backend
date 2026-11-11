@@ -450,6 +450,22 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private void createOrderItems(Integer orderId, Integer userId, Map<Integer, Integer> quantities, List<PlaceOrderRequest.PcGroup> groups) {
+        // Kiểm tra tồn kho tổng trước khi thực hiện trừ kho bất kỳ linh kiện nào
+        for (Map.Entry<Integer, Integer> entry : quantities.entrySet()) {
+            Integer variantId = entry.getKey();
+            Integer totalQty = entry.getValue();
+            if (totalQty == null || totalQty <= 0) continue;
+            PurchaseVariantResponse product = catalogApi.getPurchaseVariant(variantId);
+            if (!"active".equalsIgnoreCase(product.status())
+                    || product.stockQuantity() < totalQty
+                    || product.warrantyPeriodMonths() < 0) {
+                throw new BusinessException(
+                        "Không đủ tồn kho cho sản phẩm: " + product.productName()
+                        + " (yêu cầu " + totalQty + ", hiện còn " + product.stockQuantity() + ")"
+                );
+            }
+        }
+
         List<OrderItem> items = new ArrayList<>();
         Map<Integer, Integer> remainingQuantities = new HashMap<>(quantities);
 

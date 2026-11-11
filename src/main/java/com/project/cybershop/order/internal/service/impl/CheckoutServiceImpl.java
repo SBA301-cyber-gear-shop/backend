@@ -91,8 +91,16 @@ public class CheckoutServiceImpl implements CheckoutService {
         var selectedCartIds = cartItems.stream().map(CheckoutItemProjection::getCartItemId).collect(java.util.stream.Collectors.toSet());
         cartItems = checkoutRepository.findItemsForPreview(cart.getId()).stream()
                 .filter(item -> selectedCartIds.contains(item.getCartItemId())).toList();
+
+        // Kiểm tra tổng số lượng yêu cầu theo từng variant trên toàn bộ các dòng được chọn
+        // (xử lý chính xác trường hợp 1 linh kiện trong set PC + 1 linh kiện mua lẻ cùng loại)
+        java.util.Map<Integer, Integer> totalRequestedPerVariant = new java.util.HashMap<>();
+        for (CheckoutItemProjection ci : cartItems) {
+            totalRequestedPerVariant.merge(ci.getProductVariantId(), ci.getQuantity(), Integer::sum);
+        }
+
         List<CheckoutItemResponse> items = cartItems.stream()
-                .map(this::validateAndMapItem)
+                .map(item -> validateAndMapItem(item, totalRequestedPerVariant.get(item.getProductVariantId())))
                 .toList();
 
         BigDecimal totalAmount = items.stream()
@@ -102,7 +110,7 @@ public class CheckoutServiceImpl implements CheckoutService {
         return new CheckoutPreviewResponse(cart.getId(), items, totalAmount, true);
     }
 
-    private CheckoutItemResponse validateAndMapItem(CheckoutItemProjection item) {
+    private CheckoutItemResponse validateAndMapItem(CheckoutItemProjection item, Integer totalRequestedQty) {
         if (item.getExistingVariantId() == null || item.getExistingProductId() == null) {
             throw new BusinessException(
                     "Sản phẩm trong giỏ không còn tồn tại: variant " + item.getProductVariantId()
@@ -117,8 +125,10 @@ public class CheckoutServiceImpl implements CheckoutService {
             throw new BusinessException("Số lượng không hợp lệ: " + item.getProductName());
         }
 
-        if (item.getStockQuantity() == null || item.getQuantity() > item.getStockQuantity()) {
-            throw new BusinessException("Không đủ tồn kho: " + item.getProductName());
+        int requiredQty = totalRequestedQty != null ? totalRequestedQty : item.getQuantity();
+        if (item.getStockQuantity() == null || requiredQty > item.getStockQuantity()) {
+            throw new BusinessException("Không đủ tồn kho: " + item.getProductName()
+                    + " (yêu cầu " + requiredQty + ", hiện còn " + (item.getStockQuantity() == null ? 0 : item.getStockQuantity()) + ")");
         }
 
         if (item.getUnitPrice() == null || item.getUnitPrice().signum() < 0) {
