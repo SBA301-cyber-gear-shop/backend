@@ -13,6 +13,7 @@ import com.project.cybershop.pcbuild.api.dto.response.BuildStatus;
 import com.project.cybershop.pcbuild.api.dto.response.BuildViolationResponse;
 import com.project.cybershop.pcbuild.api.dto.response.ReplacementOptionResponse;
 import com.project.cybershop.pcbuild.api.dto.response.SaveBuildResponse;
+import com.project.cybershop.pcbuild.api.dto.response.SavedBuildResponse;
 import com.project.cybershop.pcbuild.internal.entity.CompatibilityRule;
 import com.project.cybershop.pcbuild.internal.entity.PcCustom;
 import com.project.cybershop.pcbuild.internal.entity.PcCustomItem;
@@ -260,6 +261,42 @@ public class PcBuildServiceImpl implements PcBuildService {
                 .total(check.total())
                 .difference(check.difference())
                 .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<SavedBuildResponse> listSaved(Integer userId) {
+        List<PcCustom> customs = pcCustomRepository.findByUserIdAndOrderIdIsNullOrderByIdDesc(userId);
+        List<Integer> variantIds = customs.stream()
+                .flatMap(custom -> custom.getItems().stream())
+                .map(PcCustomItem::getProductVariantId)
+                .distinct()
+                .toList();
+        // Không lọc tồn kho: món đã hết hàng vẫn hiện tên trong bộ đã lưu
+        Map<Integer, ComponentCandidateDTO> parts = catalogPublicApi.getCandidateMapByIds(variantIds);
+
+        List<SavedBuildResponse> builds = new ArrayList<>();
+        for (PcCustom custom : customs) {
+            List<BuildItemResponse> items = custom.getItems().stream()
+                    .sorted(Comparator.comparing(PcCustomItem::getId))   // id tăng dần = thứ tự step_order lúc lưu
+                    .map(item -> {
+                        ComponentCandidateDTO part = parts.get(item.getProductVariantId());
+                        return BuildItemResponse.builder()
+                                .category(item.getComponentRole())
+                                .id(item.getProductVariantId())
+                                .name(part != null ? part.getProductName() : "Linh kiện #" + item.getProductVariantId())
+                                .qty(item.getQuantity())
+                                .price(item.getUnitPrice().longValue())
+                                .build();
+                    })
+                    .toList();
+            builds.add(SavedBuildResponse.builder()
+                    .buildId(custom.getId())
+                    .total(custom.getTotalPrice() != null ? custom.getTotalPrice().longValue() : 0L)
+                    .items(items)
+                    .build());
+        }
+        return builds;
     }
 
     // =========================================================================

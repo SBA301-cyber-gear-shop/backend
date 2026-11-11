@@ -9,6 +9,7 @@ import com.project.cybershop.order.api.dto.request.CheckoutDetailsRequest;
 import com.project.cybershop.order.api.dto.request.CollectPaymentRequest;
 import com.project.cybershop.order.api.dto.request.HandoverRequest;
 import com.project.cybershop.order.api.dto.request.PlaceOrderRequest;
+import com.project.cybershop.order.api.dto.response.CashCollectionResponse;
 import com.project.cybershop.order.api.dto.response.CheckoutDetailsResponse;
 import com.project.cybershop.order.api.dto.response.OrderResponse;
 import com.project.cybershop.order.internal.entity.Cart;
@@ -30,6 +31,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -64,6 +67,7 @@ public class OrderServiceImpl implements OrderService {
     private final PaymentApi paymentApi;
     private final PickupWarrantyApi pickupWarrantyApi;
     private final Clock clock;
+    private final JdbcTemplate jdbc;
 
     // =========================================
     // ĐẶT HÀNG VÀ GIỮ TỒN KHO
@@ -105,6 +109,7 @@ public class OrderServiceImpl implements OrderService {
             }
         }
         Map<Integer, Integer> quantities = groupQuantities(cartItems);
+        validatePcGroups(request.pcGroups(), quantities);
         catalogApi.lockVariantsForPurchase(new ArrayList<>(quantities.keySet()));
         promotionApi.syncProductPrices(new ArrayList<>(quantities.keySet()));
 
@@ -159,7 +164,7 @@ public class OrderServiceImpl implements OrderService {
         }
         order = orderRepository.saveAndFlush(order);
 
-        createOrderItems(order.getId(), quantities);
+        createOrderItems(order.getId(), customer.getId(), quantities, request.pcGroups());
         promotionApi.reserve(voucher, customer.getId(), order.getId(), finalAmount.signum() == 0);
 
         String paymentUrl = null;
@@ -172,7 +177,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         if (request.itemVariantIds() != null && !request.itemVariantIds().isEmpty()) {
-            cartItemRepository.deleteByCartIdAndProductVariantIdIn(cartId, quantities.keySet());
+            clearPurchasedItems(cartId, quantities, request.pcGroups());
         } else {
             clearPurchasedCart(cartId);
         }
@@ -251,9 +256,6 @@ public class OrderServiceImpl implements OrderService {
             try {
                 promotionApi.markUsed(order.getId());
             } catch (Exception ignored) {}
-            if ("shipping".equalsIgnoreCase(order.getDeliveryType())) {
-                autoIssueShippingWarranty(order);
-            }
         }
         return toResponse(order);
     }
@@ -263,20 +265,55 @@ public class OrderServiceImpl implements OrderService {
     // =========================================
     @Override
     public OrderResponse collect(String email, String orderCode, CollectPaymentRequest request) {
-        requireActor(email, true);
+        UserDto collector = requireActor(email, true);
         Order order = findOrderForUpdate(orderCode, null);
 
+        if (!"store".equalsIgnoreCase(order.getDeliveryType())) {
+            throw new BusinessException("Đơn giao tận nơi không thu tiền tại quầy.");
+        }
         if (Set.of("canceled", "completed").contains(order.getStatus())) {
             throw new BusinessException("Đơn không còn được thu tiền.");
         }
 
-        validatePaymentAmount(order);
-        paymentApi.collect(order.getId(), request.receivedAmount(), request.reference());
+        PaymentApi.Payment payment = validatePaymentAmount(order);
+        if (!"cash".equals(payment.methodType())) {
+            throw new BusinessException("Chỉ xác nhận thu tiền mặt tại quầy.");
+        }
+        if ("SUCCESS".equals(payment.status())) {
+            return toResponse(order);
+        }
+
+        String reference = request.reference() == null || request.reference().isBlank()
+                ? null : request.reference().trim();
+        paymentApi.collect(order.getId(), request.receivedAmount(), reference);
+        LocalDateTime paidAt = paymentApi.get(order.getId()).paidAt();
+        jdbc.update("""
+                INSERT INTO order_cash_collections
+                    (order_id, collector_user_id, collector_name, collected_at, amount_due, received_amount, reference)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, order.getId(), collector.getId(), collector.getFullName(), paidAt,
+                payment.amount(), request.receivedAmount(), reference);
         promotionApi.markUsed(order.getId());
 
         order.setUpdatedAt(LocalDateTime.now(clock));
         orderRepository.saveAndFlush(order);
         return toResponse(order);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<CashCollectionResponse> cashCollection(String email, String orderCode) {
+        requireActor(email, true);
+        Order order = orderRepository.findByOrderCode(orderCode).orElseThrow(this::orderNotFound);
+        return jdbc.query("""
+                SELECT collector_user_id, collector_name, collected_at, received_amount,
+                       received_amount - amount_due AS change_amount, reference
+                FROM order_cash_collections WHERE order_id = ?
+                """, (rs, rowNum) -> new CashCollectionResponse(
+                rs.getInt("collector_user_id"), rs.getString("collector_name"),
+                rs.getObject("collected_at", LocalDateTime.class), rs.getBigDecimal("received_amount"),
+                rs.getBigDecimal("change_amount"), rs.getString("reference")), order.getId())
+                .stream().findFirst();
     }
 
     // =========================================
@@ -341,7 +378,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         List<OrderResponse.Item> items = findOrderItems(order.getId());
-        List<PickupWarrantyApi.Unit> units = validateWarrantyDevices(items, request);
+        List<PickupWarrantyApi.Unit> units = validateWarrantyDevices(items, request.devices());
 
         pickupWarrantyApi.issue(units, LocalDateTime.now(clock));
         updateStatus(order, "completed");
@@ -398,12 +435,88 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private void createOrderItems(Integer orderId, Map<Integer, Integer> quantities) {
-        List<OrderItem> items = new ArrayList<>();
-        for (Map.Entry<Integer, Integer> entry : quantities.entrySet()) {
-            PurchaseVariantResponse product = catalogApi.getPurchaseVariant(entry.getKey());
-            Integer quantity = entry.getValue();
+    static void validatePcGroups(List<PlaceOrderRequest.PcGroup> groups, Map<Integer, Integer> quantities) {
+        if (groups == null || groups.isEmpty()) return;
+        Map<Integer, Integer> remaining = new HashMap<>(quantities);
+        for (var group : groups) {
+            if (group == null || group.parts() == null || group.parts().size() < 2)
+                throw new BusinessException("Bộ PC không đầy đủ. Vui lòng kiểm tra giỏ hàng.");
+            Set<Integer> groupParts = new HashSet<>();
+            for (var part : group.parts()) {
+                if (part == null || part.variantId() == null || part.quantity() == null || part.quantity() <= 0
+                        || part.role() == null || part.role().isBlank() || part.role().length() > 50) {
+                    throw new BusinessException("Thông tin linh kiện bộ PC không hợp lệ.");
+                }
+                if (!groupParts.add(part.variantId())) {
+                    throw new BusinessException("Linh kiện bị trùng trong cùng một bộ PC.");
+                }
+                Integer available = remaining.get(part.variantId());
+                if (available == null || available < part.quantity()) {
+                    throw new BusinessException("Linh kiện bộ PC không đủ số lượng trong giỏ hàng. Vui lòng kiểm tra lại.");
+                }
+                remaining.put(part.variantId(), available - part.quantity());
+            }
+        }
+    }
 
+    private void createOrderItems(Integer orderId, Integer userId, Map<Integer, Integer> quantities, List<PlaceOrderRequest.PcGroup> groups) {
+        List<OrderItem> items = new ArrayList<>();
+        Map<Integer, Integer> remainingQuantities = new HashMap<>(quantities);
+
+        // 1. Tạo các OrderItem cho từng bộ PC
+        if (groups != null) {
+            for (var group : groups) {
+                var keys = new GeneratedKeyHolder();
+                jdbc.update(connection -> {
+                    var statement = connection.prepareStatement("INSERT INTO pc_customs (order_id, user_id, total_price) VALUES (?, ?, 0)", new String[]{"id"});
+                    statement.setInt(1, orderId);
+                    statement.setInt(2, userId);
+                    return statement;
+                }, keys);
+                Integer pcId = java.util.Objects.requireNonNull(keys.getKey()).intValue();
+
+                BigDecimal groupTotal = BigDecimal.ZERO;
+                for (var part : group.parts()) {
+                    PurchaseVariantResponse product = catalogApi.getPurchaseVariant(part.variantId());
+                    Integer qty = part.quantity();
+
+                    if (!"active".equalsIgnoreCase(product.status())
+                            || product.stockQuantity() < qty
+                            || product.warrantyPeriodMonths() < 0) {
+                        throw new BusinessException(
+                                "Sản phẩm không còn đủ điều kiện đặt mua: " + product.productName()
+                        );
+                    }
+
+                    catalogApi.deductStock(product.variantId(), qty);
+
+                    String productName = product.productName();
+                    if (product.variantName() != null && !product.variantName().isBlank()) {
+                        productName += " · " + product.variantName();
+                    }
+
+                    BigDecimal partSubtotal = product.price().multiply(BigDecimal.valueOf(qty));
+                    OrderItem item = orderMapper.toOrderItem(product, orderId, qty, productName, partSubtotal);
+                    item.setPcCustomId(pcId);
+                    items.add(item);
+
+                    jdbc.update("INSERT INTO pc_custom_items (pc_custom_id, product_variant_id, quantity, unit_price, component_role) VALUES (?, ?, ?, ?, ?)",
+                            pcId, part.variantId(), qty, product.price(), part.role());
+                    groupTotal = groupTotal.add(partSubtotal);
+
+                    remainingQuantities.put(part.variantId(), remainingQuantities.get(part.variantId()) - qty);
+                }
+
+                jdbc.update("UPDATE pc_customs SET total_price = ? WHERE id = ?", groupTotal, pcId);
+            }
+        }
+
+        // 2. Tạo các OrderItem cho các linh kiện mua lẻ còn lại
+        for (Map.Entry<Integer, Integer> entry : remainingQuantities.entrySet()) {
+            Integer quantity = entry.getValue();
+            if (quantity == null || quantity <= 0) continue;
+
+            PurchaseVariantResponse product = catalogApi.getPurchaseVariant(entry.getKey());
             if (!"active".equalsIgnoreCase(product.status())
                     || product.stockQuantity() < quantity
                     || product.warrantyPeriodMonths() < 0) {
@@ -420,11 +533,68 @@ public class OrderServiceImpl implements OrderService {
             }
 
             BigDecimal subtotal = product.price().multiply(BigDecimal.valueOf(quantity));
-            items.add(orderMapper.toOrderItem(product, orderId, quantity, productName, subtotal));
+            OrderItem item = orderMapper.toOrderItem(product, orderId, quantity, productName, subtotal);
+            item.setPcCustomId(null);
+            items.add(item);
         }
 
         // Ghi xong dòng hàng trước khi payment/bảo hành đọc qua API module khác.
         orderItemRepository.saveAllAndFlush(items);
+    }
+
+    private void clearPurchasedItems(Integer cartId, Map<Integer, Integer> purchasedQuantities, List<PlaceOrderRequest.PcGroup> groups) {
+        List<CartItem> cartItems = cartItemRepository.findByCartIdOrderByIdAsc(cartId);
+        if (cartItems.isEmpty()) return;
+
+        Map<Integer, Integer> remainingToDeduct = new HashMap<>(purchasedQuantities);
+
+        // 1. Nếu có nhóm PC, ưu tiên trừ/xóa các dòng cartItem thuộc bộ PC trước
+        if (groups != null && !groups.isEmpty()) {
+            Set<Integer> groupVariantIds = groups.stream()
+                    .filter(Objects::nonNull)
+                    .filter(g -> g.parts() != null)
+                    .flatMap(g -> g.parts().stream())
+                    .filter(Objects::nonNull)
+                    .map(PlaceOrderRequest.PcGroupPart::variantId)
+                    .collect(Collectors.toSet());
+
+            for (CartItem ci : cartItems) {
+                if (ci.getPcCustomId() != null && groupVariantIds.contains(ci.getProductVariantId())) {
+                    Integer needed = remainingToDeduct.get(ci.getProductVariantId());
+                    if (needed != null && needed > 0) {
+                        int deduct = Math.min(ci.getQuantity(), needed);
+                        ci.setQuantity(ci.getQuantity() - deduct);
+                        remainingToDeduct.put(ci.getProductVariantId(), needed - deduct);
+                        if (ci.getQuantity() <= 0) {
+                            cartItemRepository.delete(ci);
+                        } else {
+                            cartItemRepository.save(ci);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Trừ các món hàng mua lẻ còn lại
+        for (CartItem ci : cartItems) {
+            Integer needed = remainingToDeduct.get(ci.getProductVariantId());
+            if (needed != null && needed > 0 && ci.getQuantity() > 0) {
+                int deduct = Math.min(ci.getQuantity(), needed);
+                ci.setQuantity(ci.getQuantity() - deduct);
+                remainingToDeduct.put(ci.getProductVariantId(), needed - deduct);
+                if (ci.getQuantity() <= 0) {
+                    cartItemRepository.delete(ci);
+                } else {
+                    cartItemRepository.save(ci);
+                }
+            }
+        }
+
+        Cart cart = cartRepository.findById(cartId).orElse(null);
+        if (cart != null) {
+            cart.setUpdatedAt(LocalDateTime.now(clock));
+            cartRepository.saveAndFlush(cart);
+        }
     }
 
     private void clearPurchasedCart(Integer cartId) {
@@ -435,22 +605,23 @@ public class OrderServiceImpl implements OrderService {
         cartRepository.saveAndFlush(cart);
     }
 
-    private void validatePaymentAmount(Order order) {
+    private PaymentApi.Payment validatePaymentAmount(Order order) {
         PaymentApi.Payment payment = paymentApi.get(order.getId());
         if (payment.amount().compareTo(order.getFinalAmount()) != 0) {
             throw new BusinessException("Khoản thanh toán không khớp giá trị đơn hàng.");
         }
+        return payment;
     }
 
     private List<PickupWarrantyApi.Unit> validateWarrantyDevices(
             List<OrderResponse.Item> items,
-            HandoverRequest request
+            List<HandoverRequest.Device> devices
     ) {
         Map<Integer, Long> suppliedQuantities = new HashMap<>();
         Set<String> serialNumbers = new HashSet<>();
         List<PickupWarrantyApi.Unit> units = new ArrayList<>();
 
-        for (HandoverRequest.Device device : request.devices()) {
+        for (HandoverRequest.Device device : devices) {
             OrderResponse.Item item = items.stream()
                     .filter(line -> line.id().equals(device.orderItemId()) && line.warrantyPeriodMonths() > 0)
                     .findFirst()
@@ -523,24 +694,19 @@ public class OrderServiceImpl implements OrderService {
                 ? "0" + normalized.substring(3) : normalized;
     }
 
-    private void autoIssueShippingWarranty(Order order) {
-        try {
-            List<OrderResponse.Item> items = findOrderItems(order.getId());
-            String suffix = (order.getOrderCode() != null && order.getOrderCode().length() >= 6)
-                    ? order.getOrderCode().substring(order.getOrderCode().length() - 6).toUpperCase(Locale.ROOT)
-                    : "GHN";
-            List<PickupWarrantyApi.Unit> units = new ArrayList<>();
-            for (OrderResponse.Item item : items) {
-                if (item.warrantyPeriodMonths() > 0) {
-                    for (int i = 0; i < item.quantity(); i++) {
-                        String serial = "SN-GHN-" + suffix + "-" + item.id() + (item.quantity() > 1 ? "-" + (i + 1) : "");
-                        units.add(new PickupWarrantyApi.Unit(item.id(), serial, item.warrantyPeriodMonths()));
-                    }
-                }
-            }
-            if (!units.isEmpty()) {
-                pickupWarrantyApi.issue(units, LocalDateTime.now(clock));
-            }
-        } catch (Exception ignored) {}
+    @Override
+    public OrderResponse registerShippingSerials(String email, String orderCode, List<HandoverRequest.Device> devices) {
+        requireActor(email, true);
+        Order order = findOrderForUpdate(orderCode, null);
+        if (!"shipping".equalsIgnoreCase(order.getDeliveryType()) || !"completed".equals(order.getStatus())) {
+            throw new BusinessException("Chỉ ghi nhận serial cho đơn giao hàng đã hoàn tất.");
+        }
+        Integer existing = jdbc.queryForObject("SELECT count(*) FROM warranty_cards wc JOIN order_items oi ON oi.id=wc.order_item_id WHERE oi.order_id=?", Integer.class, order.getId());
+        if (existing != null && existing > 0) {
+            throw new BusinessException("Đơn đã có thẻ bảo hành; cần đối chiếu dữ liệu cũ trước khi cập nhật serial.");
+        }
+        var units = validateWarrantyDevices(findOrderItems(order.getId()), devices);
+        pickupWarrantyApi.issue(units, order.getUpdatedAt() == null ? LocalDateTime.now(clock) : order.getUpdatedAt());
+        return toResponse(order);
     }
 }

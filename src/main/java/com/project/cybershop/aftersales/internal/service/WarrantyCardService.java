@@ -74,50 +74,9 @@ public class WarrantyCardService {
         this(cards, requests, events, intakes, orderLookup, mapper, null);
     }
 
-    @Transactional
-    public void syncMissingCards() {
-        if (jdbc == null) return;
-        try {
-            List<Map<String, Object>> rows = jdbc.queryForList("""
-                    SELECT oi.id, oi.quantity, oi.warranty_period_months, o.order_code, o.updated_at, o.delivery_type
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id
-                    WHERE o.status = 'completed'
-                      AND oi.warranty_period_months > 0
-                      AND NOT EXISTS (SELECT 1 FROM warranty_cards wc WHERE wc.order_item_id = oi.id)
-                    """);
-
-            for (Map<String, Object> r : rows) {
-                Integer orderItemId = ((Number) r.get("id")).intValue();
-                int qty = ((Number) r.get("quantity")).intValue();
-                int months = ((Number) r.get("warranty_period_months")).intValue();
-                String orderCode = (String) r.get("order_code");
-                Object updatedObj = r.get("updated_at");
-                LocalDateTime start = updatedObj instanceof java.sql.Timestamp ts ? ts.toLocalDateTime()
-                        : updatedObj instanceof LocalDateTime ldt ? ldt : LocalDateTime.now();
-                String deliveryType = (String) r.get("delivery_type");
-                String prefix = "shipping".equalsIgnoreCase(deliveryType) ? "GHN" : "TZ";
-                String suffix = (orderCode != null && orderCode.length() >= 6)
-                        ? orderCode.substring(orderCode.length() - 6).toUpperCase(Locale.ROOT)
-                        : "DEV";
-
-                for (int i = 0; i < qty; i++) {
-                    String serial = "SN-" + prefix + "-" + suffix + "-" + orderItemId + (qty > 1 ? "-" + (i + 1) : "");
-                    jdbc.update("""
-                            INSERT INTO warranty_cards (order_item_id, serial_number, start_date, end_date, status)
-                            VALUES (?, ?, ?, ?, 'active')
-                            """, orderItemId, serial, start, start.plusMonths(months));
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("syncMissingCards error: " + e.getMessage());
-        }
-    }
-
     /** Tra cứu rồi trả cả đơn chứa thẻ khớp, để khách mang một linh kiện hay cả bộ máy đều thấy đủ đơn đã mua. */
     @Transactional
     public List<WarrantyCardDto> search(String query) {
-        syncMissingCards();
         if (query == null || query.isBlank()) {
             throw new BusinessException("Nhập serial, mã đơn, số điện thoại hoặc mã phiếu.");
         }
@@ -140,6 +99,8 @@ public class WarrantyCardService {
         List<Integer> ids = list.stream().map(WarrantyCard::getId).toList();
         Map<Integer, OrderInfo> orders = orderLookup.byCardIds(ids);
         Map<Integer, List<ServiceRequest>> byCard = requestsByCard(ids);
+        List<Integer> parentIds = list.stream().map(WarrantyCard::getReplacesCardId).filter(Objects::nonNull).distinct().toList();
+        Map<Integer, List<ServiceRequest>> parentRequests = parentIds.isEmpty() ? Map.of() : requestsByCard(parentIds);
         Map<Integer, String> codes = intakeCodes(byCard.values().stream().flatMap(Collection::stream).toList());
         Map<Integer, WarrantyCard> replacedBy = replacedBy(ids);
         LocalDate today = WarrantyRules.now().toLocalDate();
@@ -179,6 +140,8 @@ public class WarrantyCardService {
                     .pickupName(order == null ? null : order.pickupName())
                     .pickupPhone(order == null ? null : order.pickupPhone())
                     .replacesCardId(card.getReplacesCardId())
+                    .replacementPendingReturn(card.getReplacesCardId() != null && parentRequests.getOrDefault(card.getReplacesCardId(), List.of()).stream()
+                            .anyMatch(r -> r.getResolution() == Resolution.REPLACED && r.getStatus() != ServiceRequestStatus.RETURNED))
                     .replacedByCardId(next == null ? null : next.getId())
                     .replacedBySerialNumber(next == null ? null : next.getSerialNumber())
                     .replacedByEndDate(next == null ? null : next.getEndDate())
@@ -208,7 +171,6 @@ public class WarrantyCardService {
     /** Thẻ và phiếu của một khách, chỉ gồm nội dung công khai. */
     @Transactional
     public List<MyWarrantyCardDto> myCards(Integer userId) {
-        syncMissingCards();
         List<WarrantyCard> mine = cards.findAllById(orderLookup.cardIdsOfUser(userId)).stream()
                 .sorted(Comparator.comparing(WarrantyCard::getId).reversed())
                 .toList();
@@ -239,6 +201,7 @@ public class WarrantyCardService {
                     .valid(WarrantyCard.ACTIVE.equals(card.getStatus()) && !today.isBefore(card.getStartDate().toLocalDate())
                             && !today.isAfter(displayEnd.toLocalDate()))
                     .productName(order == null ? null : order.productName())
+                    .pcCustomId(order == null ? null : order.pcCustomId())
                     .variantName(order == null ? null : order.variantName())
                     .orderCode(order == null ? null : order.orderCode())
                     .replacedBySerialNumber(next == null ? null : next.getSerialNumber())
@@ -299,6 +262,7 @@ public class WarrantyCardService {
             WarrantyCard card = cardById.get(t.getWarrantyCardId());
             dto.setIntakeCode(codes.get(t.getIntakeId()));
             dto.setProductName(order == null ? null : order.productName());
+            dto.setPcCustomId(order == null ? null : order.pcCustomId());
             dto.setSerialNumber(card == null ? null : card.getSerialNumber());
             dto.setUnderWarrantyAtIntake(WarrantyRules.wasCoveredOn(card, ServiceRequestService.receivedDay(t)));
             dto.setWarrantyStartDate(card == null ? null : card.getStartDate());
@@ -351,6 +315,7 @@ public class WarrantyCardService {
         dto.setReplacementWarrantyEndDate(replacement == null ? null : replacement.getEndDate());
         dto.setReplacementWarrantyRemainingDays(replacementRemainingDays(replacement));
         dto.setProductName(order == null ? null : order.productName());
+        dto.setPcCustomId(order == null ? null : order.pcCustomId());
         dto.setOrderCode(order == null ? null : order.orderCode());
         return dto;
     }

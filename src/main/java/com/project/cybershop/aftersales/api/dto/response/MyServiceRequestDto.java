@@ -21,6 +21,7 @@ public class MyServiceRequestDto {
     private String requestCode;
     private String intakeCode;
     private String productName;
+    private Integer pcCustomId;
     private String serialNumber;
     private boolean underWarrantyAtIntake;
     private LocalDateTime warrantyStartDate;

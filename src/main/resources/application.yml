@@ -1,16 +1,18 @@
 spring:
   application:
     name: cybershop
+  config:
+    import: optional:file:.env[.properties]
 
   # ==========================================
-  # DATABASE (Neon PostgreSQL Cloud)
+  # DATABASE (Local PostgreSQL - pgAdmin)
   # ==========================================
   datasource:
-    # url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SBA301_WebPC}
+    # url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/cybershop}
     # username: ${SPRING_DATASOURCE_USERNAME:postgres}
     # password: ${SPRING_DATASOURCE_PASSWORD:12345}
     # Cloud Neon (Uncomment if needed):
-    url: jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+    url: ${SPRING_DATASOURCE_USERNAME:jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
     username: neondb_owner
     password: npg_E3lTM5aYOpNA
     driver-class-name: org.postgresql.Driver
@@ -24,11 +26,23 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: update
+    defer-datasource-initialization: true
     show-sql: true
     properties:
       hibernate:
         format_sql: true
         default_batch_fetch_size: 100
+
+  # ==========================================
+  # SQL INITIALIZATION (Khởi tạo dữ liệu người dùng)
+  # ==========================================
+  sql:
+    init:
+      # mode: always
+      mode: never # <-- Đổi từ always thành never để tắt hoàn toàn
+      data-locations: classpath:init-users.sql
+      encoding: UTF-8
+      continue-on-error: true
 
 # ==========================================
 # SWAGGER / OPENAPI
@@ -48,7 +62,6 @@ server:
 
 # ==========================================
 # JWT, AI ENGINE
-# ==========================================
 app:
   store:
     name: TechZone
@@ -83,8 +96,6 @@ app:
     profile-cache-hours: 24
     profile-cache-max-entries: 5000
     needs-unclear-confidence: 0.4
-    min-budget: 8000000             # [ĐÃ CHỐT] ngân sách tối thiểu chấp nhận
-    max-budget: 9999999999          # [ĐÃ CHỐT] khớp numeric(12,2)
     rate-limit-per-minute: 6        # /ai-suggest: mỗi user, hoặc mỗi IP khi chưa đăng nhập (11.1)
     rate-limit-check-per-minute: 30 # /validate, /compatible-replacements, /options: mỗi endpoint
   # ==========================================

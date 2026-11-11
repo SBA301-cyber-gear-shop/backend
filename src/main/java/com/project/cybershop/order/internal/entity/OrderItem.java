@@ -29,6 +29,9 @@ public class OrderItem {
     @Column(name = "product_variant_id", nullable = false)
     private Integer productVariantId;
 
+    @Column(name = "pc_custom_id")
+    private Integer pcCustomId;
+
     @Column(name = "product_name", columnDefinition = "varchar")
     private String productName;
 

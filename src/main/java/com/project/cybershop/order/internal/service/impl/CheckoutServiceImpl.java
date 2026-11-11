@@ -58,7 +58,10 @@ public class CheckoutServiceImpl implements CheckoutService {
             cartItems = cartItems.stream()
                     .filter(item -> allowed.contains(item.getProductVariantId()))
                     .toList();
-            if (cartItems.size() != allowed.size()) {
+            Set<Integer> foundVariantIds = cartItems.stream()
+                    .map(CheckoutItemProjection::getProductVariantId)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!foundVariantIds.equals(allowed)) {
                 throw new BusinessException("Sản phẩm được chọn đã thay đổi. Vui lòng kiểm tra lại giỏ hàng.");
             }
         }

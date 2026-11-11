@@ -35,6 +35,7 @@ build/
 guide.md
 ### Environment ###
 .env
+/.playwright-mcp/
 
 ### Graphify ###
 graphify-out/

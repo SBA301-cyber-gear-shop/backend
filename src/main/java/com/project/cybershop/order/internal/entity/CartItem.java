@@ -25,6 +25,9 @@ public class CartItem {
     @Column(name = "product_variant_id", nullable = false)
     private Integer productVariantId;
 
+    @Column(name = "pc_custom_id")
+    private Integer pcCustomId;
+
     @Column(name = "quantity", nullable = false)
     private Integer quantity;
 

@@ -20,7 +20,7 @@ public interface PromotionRepository extends JpaRepository<Promotion, Integer>, 
     @Query("""
             select new com.project.cybershop.promotion.internal.repository.PromotionTerms(
                 p.id, p.code, p.discountType, p.discountValue, p.usageLimit,
-                p.isActive, p.startDate, p.endDate
+                p.isActive, p.startDate, p.endDate, p.audience
             )
             from Promotion p
             where lower(p.code) = lower(:code)
