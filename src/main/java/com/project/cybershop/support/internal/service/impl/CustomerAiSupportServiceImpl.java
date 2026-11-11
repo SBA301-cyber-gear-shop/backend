@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.cybershop.support.api.dto.request.AiChatRequest;
 import com.project.cybershop.support.api.dto.response.AiChatResponse;
+import com.project.cybershop.support.api.dto.response.SupportSessionDto;
 import com.project.cybershop.support.internal.service.CatalogVectorSyncService;
 import com.project.cybershop.support.internal.service.CustomerAiSupportService;
 import com.project.cybershop.support.internal.service.GeminiEmbeddingService;
@@ -89,9 +90,13 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                     .build();
         }
 
-        // 0. Nếu đang trong phiên Live Chat với nhân viên hỗ trợ (Staff Mode)
-        if ("staff".equalsIgnoreCase(request.getMode())) {
-            if (liveSupportService != null) {
+        // 0. Nếu đang trong phiên Live Chat với nhân viên hỗ trợ (Staff Mode hoặc phiên đã được Staff tiếp nhận ACTIVE trên DB)
+        SupportSessionDto currentSession = (liveSupportService != null) ? liveSupportService.getSession(conversationId) : null;
+        boolean isDbActiveSession = currentSession != null && "ACTIVE".equalsIgnoreCase(currentSession.getStatus());
+        boolean isDbWaitingSession = currentSession != null && "WAITING".equalsIgnoreCase(currentSession.getStatus());
+
+        if (("staff".equalsIgnoreCase(request.getMode()) || isDbActiveSession) && !"connect_staff".equalsIgnoreCase(message)) {
+            if (liveSupportService != null && !"end_staff_session".equalsIgnoreCase(message)) {
                 liveSupportService.recordCustomerMessage(
                         conversationId,
                         userEmailOrNull,
@@ -123,8 +128,18 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
             return buildStaffEndedResponse(conversationId);
         }
 
-        // 2. Kiểm tra yêu cầu gặp nhân viên hoặc câu hỏi ngoài phạm vi nghiệp vụ tự động -> ĐỀ XUẤT kết nối
-        if (isStaffRequest(message) || isOutOfScope(message)) {
+        // 1.5. Nếu khách đang trong hàng chờ (WAITING) và nhắn thêm nội dung bổ sung -> Ghi nhận ngay vào phiên hỗ trợ để Staff thấy
+        if (isDbWaitingSession && liveSupportService != null) {
+            liveSupportService.recordCustomerMessage(
+                    conversationId,
+                    userEmailOrNull,
+                    customerCtx.isMember() ? customerCtx.fullName() : "Khách hàng",
+                    message
+            );
+        }
+
+        // 2. Kiểm tra yêu cầu gặp nhân viên trực tiếp -> Mở phiên WAITING và chuyển sang trạng thái chờ nhân viên tiếp nhận ngay
+        if (isStaffRequest(message)) {
             if (liveSupportService != null) {
                 liveSupportService.createOrOpenSession(
                         conversationId,
@@ -135,6 +150,11 @@ public class CustomerAiSupportServiceImpl implements CustomerAiSupportService {
                         request.getHistory()
                 );
             }
+            return buildStaffWaitingResponse(conversationId);
+        }
+
+        // 2.1. Câu hỏi ngoài phạm vi nghiệp vụ tự động (VAT, mua sỉ B2B, khiếu nại...) -> ĐỀ XUẤT kết nối chuyên viên
+        if (isOutOfScope(message)) {
             return AiChatResponse.builder()
                     .conversationId(conversationId)
                     .message("Dạ, yêu cầu này của bạn cần sự hỗ trợ và thẩm định trực tiếp từ chuyên viên TechZone. **Bạn có muốn mình kết nối bạn với Nhân viên tư vấn (Staff) đang trực tuyến không ạ?**")
