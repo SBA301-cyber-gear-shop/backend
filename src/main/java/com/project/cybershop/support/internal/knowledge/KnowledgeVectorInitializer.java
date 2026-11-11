@@ -72,9 +72,9 @@ public class KnowledgeVectorInitializer implements ApplicationRunner {
                         "POLICY_WARRANTY",
                         "Chính sách bảo hành 1 đổi 1 và điều kiện bảo hành",
                         """
-                        1. Chính sách 1 đổi 1: CyberShop áp dụng chính sách 1 đổi 1 trong vòng 30 ngày đầu tiên kể từ ngày mua nếu sản phẩm gặp lỗi phần cứng do nhà sản xuất.
+                        1. Chính sách 1 đổi 1: TechZone áp dụng chính sách 1 đổi 1 trong vòng 30 ngày đầu tiên kể từ ngày mua nếu sản phẩm gặp lỗi phần cứng do nhà sản xuất.
                         2. Thời hạn bảo hành: Mỗi linh kiện có thời hạn bảo hành chính hãng riêng (CPU, VGA, Mainboard thường từ 36 tháng; RAM, SSD từ 36 - 60 tháng; Nguồn từ 36 - 120 tháng).
-                        3. Điều kiện bảo hành hợp lệ: Sản phẩm phải còn nguyên tem bảo hành của CyberShop và nhà phân phối, số Serial Number (SN) trùng khớp trên hóa đơn điện tử, không bị biến dạng cơ học.
+                        3. Điều kiện bảo hành hợp lệ: Sản phẩm phải còn nguyên tem bảo hành của TechZone và nhà phân phối, số Serial Number (SN) trùng khớp trên hóa đơn điện tử, không bị biến dạng cơ học.
                         4. Các trường hợp từ chối bảo hành: Sản phẩm bị cháy nổ IC, chập điện do thiên tai/sét đánh, chân socket CPU bị cong/gãy, rách tem bảo hành, vào nước hoặc ẩm mốc oxi hóa, hư hỏng do tự ý ép xung quá mức.
                         5. Quy trình gửi bảo hành: Khách hàng có thể mang trực tiếp đến cửa hàng tại Quận 12 TP.HCM hoặc gửi chuyển phát bưu điện/GHN đến shop. Thời gian xử lý kiểm định kỹ thuật từ 24h đến 72h làm việc.
                         """,
@@ -84,11 +84,11 @@ public class KnowledgeVectorInitializer implements ApplicationRunner {
                         "POLICY_SHIPPING_GHN",
                         "Chính sách vận chuyển giao hàng qua Giao Hàng Nhanh (GHN Express)",
                         """
-                        1. Đối tác vận chuyển chính thức: CyberShop hợp tác độc quyền với Giao Hàng Nhanh (GHN Express) để giao hàng toàn quốc 63 tỉnh thành.
+                        1. Đối tác vận chuyển chính thức: TechZone hợp tác độc quyền với Giao Hàng Nhanh (GHN Express) để giao hàng toàn quốc 63 tỉnh thành.
                         2. Thời gian giao hàng dự kiến: Nội thành TP.HCM nhận hàng trong 24 giờ; Các tỉnh thành miền Nam từ 1 - 2 ngày; Miền Trung và miền Bắc từ 2 - 4 ngày làm việc.
-                        3. Chính sách đồng kiểm khi nhận hàng: Toàn bộ đơn hàng CyberShop đều được cài đặt lưu ý 'CHOXEMHANGKHONGTHU' (Cho xem hàng không cho thử). Quý khách được quyền mở hộp kiểm tra ngoại quan linh kiện, số lượng, tem niêm phong trước khi thanh toán cho shipper.
+                        3. Chính sách đồng kiểm khi nhận hàng: Toàn bộ đơn hàng TechZone đều được cài đặt lưu ý 'CHOXEMHANGKHONGTHU' (Cho xem hàng không cho thử). Quý khách được quyền mở hộp kiểm tra ngoại quan linh kiện, số lượng, tem niêm phong trước khi thanh toán cho shipper.
                         4. Xử lý sự cố vận chuyển: Nếu bưu kiện bị móp méo, rách vỡ hộp ngoài hoặc nghi ngờ hư hỏng do vận chuyển, quý khách có quyền từ chối nhận hàng và gọi ngay hotline shop để được gửi bưu kiện mới thay thế.
-                        5. Tra cứu vận đơn: Khách hàng có thể tra cứu hành trình trực tiếp tại trang chi tiết đơn hàng CyberShop hoặc trên trang theo dõi của GHN với mã bưu gửi (ví dụ: LYFEPB).
+                        5. Tra cứu vận đơn: Khách hàng có thể tra cứu hành trình trực tiếp tại trang chi tiết đơn hàng TechZone hoặc trên trang theo dõi của GHN với mã bưu gửi (ví dụ: LYFEPB).
                         """,
                         "{\"source\": \"chinh-sach-van-chuyen\", \"type\": \"policy\"}"
                 ),

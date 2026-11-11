@@ -36,7 +36,7 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
             try {
                 int count = getCatalogVectorCount();
                 if (count == 0) {
-                    log.info("Chưa có Vector Index cho kho hàng linh kiện CyberShop. Bắt đầu đồng bộ tự động...");
+                    log.info("Chưa có Vector Index cho kho hàng linh kiện TechZone. Bắt đầu đồng bộ tự động...");
                     syncCatalogVectors();
                 } else {
                     log.info("Kho hàng đã có {} linh kiện được nhúng trong Vector DB.", count);
@@ -83,15 +83,35 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
 
         try {
             String sql = """
-                SELECT p.id as product_id, p.name as product_name, p.description,
+                SELECT p.id as product_id, p.name as product_name, p.description, p.warranty_period_months,
                        c.name as category_name, c.slug as category_slug,
                        COALESCE(b.name, 'Chính hãng') as brand_name,
                        pv.id as variant_id, pv.variant_name, pv.price, pv.original_price,
-                       pv.stock_quantity, pv.image_url
+                       pv.stock_quantity, pv.image_url,
+                       spec.specs_summary,
+                       rev.avg_rating, rev.review_count
                 FROM product_variants pv
                 JOIN products p ON pv.product_id = p.id
                 JOIN categories c ON p.category_id = c.id
                 LEFT JOIN brands b ON p.brand_id = b.id
+                LEFT JOIN (
+                    SELECT sv.product_variant_id,
+                           string_agg(s.name || ': ' || COALESCE(so.display_value, sv.value, ''), ' | ') as specs_summary
+                    FROM specification_values sv
+                    JOIN specifications s ON sv.specification_id = s.id
+                    LEFT JOIN specification_options so ON sv.option_id = so.id
+                    GROUP BY sv.product_variant_id
+                ) spec ON spec.product_variant_id = pv.id
+                LEFT JOIN (
+                    SELECT oi.product_variant_id,
+                           ROUND(AVG(r.rating)::numeric, 1) as avg_rating,
+                           COUNT(r.id) as review_count
+                    FROM reviews r
+                    JOIN order_items oi ON r.order_item_id = oi.id
+                    JOIN orders o ON oi.order_id = o.id
+                    WHERE o.status = 'completed'
+                    GROUP BY oi.product_variant_id
+                ) rev ON rev.product_variant_id = pv.id
                 WHERE UPPER(p.status) = 'ACTIVE'
                 ORDER BY p.id ASC, pv.price ASC
             """;
@@ -132,15 +152,33 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                     content.append("Phiên bản: ").append(variantName != null ? variantName : "Tiêu chuẩn").append("\n");
                     content.append("Danh mục phần cứng: ").append(categoryName).append("\n");
                     content.append("Thương hiệu: ").append(brandName).append("\n");
-                    content.append("Giá bán tại CyberShop: ").append(MONEY_FMT.format(price)).append("\n");
+                    content.append("Giá bán tại TechZone: ").append(MONEY_FMT.format(price)).append("\n");
                     content.append("Tồn kho hiện có: ").append(stock > 0 ? stock + " sản phẩm sẵn sàng lắp ráp" : "Tạm hết hàng").append("\n");
+                    
+                    String specsSummary = (String) r.get("specs_summary");
+                    if (specsSummary != null && !specsSummary.isBlank()) {
+                        content.append("Thông số kỹ thuật chuẩn: ").append(specsSummary).append("\n");
+                    }
+                    Number avgRatingNum = (Number) r.get("avg_rating");
+                    Number reviewCountNum = (Number) r.get("review_count");
+                    if (avgRatingNum != null && reviewCountNum != null && reviewCountNum.intValue() > 0) {
+                        content.append("Đánh giá khách hàng: ").append(avgRatingNum.doubleValue()).append("/5 sao (")
+                               .append(reviewCountNum.intValue()).append(" đánh giá thực tế)\n");
+                    }
+
                     if (description != null && !description.isBlank()) {
                         content.append("Mô tả kỹ thuật: ").append(description).append("\n");
                     }
 
                     String catLower = categoryName.toLowerCase();
                     if (catLower.contains("vga") || catLower.contains("đồ họa") || catLower.contains("card")) {
-                        content.append("Ứng dụng: Render 3D Blender, dựng phim Premiere 4K, đồ họa thiết kế Photoshop/Illustrator, chơi game 2K/4K max setting, ray tracing, nhân CUDA AI.\n");
+                        if (price >= 12_000_000) {
+                            content.append("Phân khúc: Card đồ họa cao cấp (High-End) chuyên trị Game AAA 2K/4K Max Setting, Ray Tracing, Render 3D Blender/Lumion nặng và huấn luyện AI.\n");
+                        } else if (price >= 5_500_000) {
+                            content.append("Phân khúc: Card đồ họa tầm trung (Mid-Range) tối ưu cho Gaming Full HD / 2K mượt mà, dựng phim Premiere và thiết kế đồ họa 3D.\n");
+                        } else {
+                            content.append("Phân khúc: Card đồ họa phổ thông tiết kiệm ngân sách cho Game eSports (LOL, Valorant, FO4) và đồ họa 2D văn phòng.\n");
+                        }
                     } else if (catLower.contains("cpu") || catLower.contains("vi xử lý")) {
                         content.append("Ứng dụng: Xử lý đa luồng, render CPU, dựng hình kiến trúc, lập trình, tính toán giả lập, chơi game esport, dựng hình đồ họa.\n");
                     } else if (catLower.contains("ram") || catLower.contains("bộ nhớ")) {
@@ -153,6 +191,9 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                         content.append("Ứng dụng: Màn hình đồ họa màu chuẩn 100% sRGB/DCI-P3, tần số quét cao gaming, tấm nền IPS góc nhìn rộng.\n");
                     }
 
+                    Number warrantyNum = (Number) r.get("warranty_period_months");
+                    int warrantyMonths = warrantyNum != null ? warrantyNum.intValue() : 36;
+
                     Map<String, Object> metaMap = new LinkedHashMap<>();
                     metaMap.put("productId", productId);
                     metaMap.put("variantId", variantId);
@@ -163,6 +204,14 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                     metaMap.put("price", price);
                     metaMap.put("originalPrice", originalPrice);
                     metaMap.put("stock", stock);
+                    metaMap.put("warrantyMonths", warrantyMonths);
+                    if (specsSummary != null && !specsSummary.isBlank()) {
+                        metaMap.put("specs", specsSummary);
+                    }
+                    if (avgRatingNum != null && reviewCountNum != null && reviewCountNum.intValue() > 0) {
+                        metaMap.put("rating", avgRatingNum.doubleValue());
+                        metaMap.put("reviewCount", reviewCountNum.intValue());
+                    }
                     metaMap.put("imageUrl", imageUrl);
                     metaMap.put("route", "/san-pham/" + productId);
 
@@ -235,6 +284,7 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                 SELECT v.doc_title, v.chunk_content, v.metadata,
                        pv.price as live_price, pv.stock_quantity as live_stock,
                        p.description as live_description,
+                       p.warranty_period_months as live_warranty,
                        COALESCE(b.name, 'Chính hãng') as live_brand,
                        1 - (v.embedding <=> ?::vector) as similarity
                 FROM cyberbot_knowledge_vectors v
@@ -283,12 +333,23 @@ public class CatalogVectorSyncServiceImpl implements CatalogVectorSyncService, A
                         stock = liveStock.intValue();
                     }
 
+                    String specs = meta.has("specs") && !meta.get("specs").isNull() ? meta.get("specs").asText() : null;
+                    Double rating = meta.has("rating") && !meta.get("rating").isNull() ? meta.get("rating").asDouble() : null;
+                    Integer reviewCount = meta.has("reviewCount") && !meta.get("reviewCount").isNull() ? meta.get("reviewCount").asInt() : null;
+                    Integer warrantyMonths = r.get("live_warranty") != null
+                            ? ((Number) r.get("live_warranty")).intValue()
+                            : (meta.has("warrantyMonths") && !meta.get("warrantyMonths").isNull() ? meta.get("warrantyMonths").asInt() : 36);
+
                     results.add(AiChatResponse.ProductSummary.builder()
                             .id(productId)
                             .variantId(variantId)
                             .name(name)
                             .brand(liveBrand != null ? liveBrand : "Chính hãng")
                             .description(liveDescription)
+                            .specs(specs)
+                            .warrantyMonths(warrantyMonths)
+                            .rating(rating)
+                            .reviewCount(reviewCount)
                             .variantName(variantName)
                             .category(category)
                             .price(price)

@@ -144,6 +144,20 @@ public class OrderServiceImpl implements OrderService {
             finalAmount = finalAmount.add(shippingFee);
         }
 
+        if ("cod".equalsIgnoreCase(request.method())) {
+            if (!"shipping".equalsIgnoreCase(request.deliveryType())) {
+                throw new BusinessException("Phương thức COD chỉ áp dụng cho đơn hàng giao hàng tận nơi.");
+            }
+            BigDecimal maxCodLimit = new BigDecimal("20000000");
+            if (finalAmount.compareTo(maxCodLimit) > 0) {
+                throw new BusinessException(
+                        "Phương thức thanh toán khi nhận hàng (COD) chỉ áp dụng cho đơn hàng tối đa 20.000.000đ. Đơn hàng hiện tại là " +
+                        java.text.NumberFormat.getInstance(new java.util.Locale("vi", "VN")).format(finalAmount) +
+                        "đ, quý khách vui lòng chọn Cổng thanh toán VNPAY hoặc nhận hàng tại cửa hàng."
+                );
+            }
+        }
+
         Order order = orderMapper.toOrder(
                 checkout, customer.getId(), orderCode, voucher.discount(), finalAmount, LocalDateTime.now(clock));
         if (request.deliveryType() != null && "shipping".equalsIgnoreCase(request.deliveryType())) {
@@ -166,6 +180,8 @@ public class OrderServiceImpl implements OrderService {
         String paymentUrl = null;
         if ("vnpay".equalsIgnoreCase(request.method())) {
             paymentUrl = paymentApi.createVnPayPayment(order.getId(), order.getOrderCode(), finalAmount, "127.0.0.1");
+        } else if ("cod".equalsIgnoreCase(request.method())) {
+            paymentApi.createCodPayment(order.getId(), finalAmount);
         } else {
             paymentApi.createCounterPayment(order.getId(), finalAmount);
         }
@@ -347,6 +363,12 @@ public class OrderServiceImpl implements OrderService {
         promotionApi.release(order.getId());
         order.setCancelReason(reason.trim());
         updateStatus(order, "canceled");
+
+        // Nếu đơn hàng đã có bản ghi vận đơn trong bảng shipments, đồng bộ sang trạng thái cancel
+        try {
+            orderRepository.cancelShipmentIfPresent(order.getId());
+        } catch (Exception ignored) {}
+
         return toResponse(order);
     }
 

@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -46,7 +47,19 @@ public class ShippingController {
         return ResponseEntity.ok(ApiResponseDTO.success("Tính cước thành công", shippingService.calculateFee(request)));
     }
 
+    @PatchMapping("/orders/{code}/address")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
+    @Operation(summary = "Staff/Admin: Cập nhật địa chỉ nhận hàng của đơn trước khi tạo vận đơn GHN")
+    public ResponseEntity<ApiResponseDTO<String>> updateAddress(
+            @PathVariable("code") String orderCode,
+            @RequestBody UpdateShippingAddressRequest request
+    ) {
+        shippingService.updateShippingAddress(orderCode, request);
+        return ResponseEntity.ok(ApiResponseDTO.success("Cập nhật địa chỉ đơn hàng thành công", "OK"));
+    }
+
     @PostMapping("/orders/{code}/create-shipment")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
     @Operation(summary = "Staff/Admin: Đẩy đơn hàng sang GHN để sinh mã vận đơn")
     public ResponseEntity<ApiResponseDTO<TrackingResponse>> createShipment(
             @PathVariable("code") String orderCode,
@@ -69,6 +82,7 @@ public class ShippingController {
     }
 
     @PostMapping("/orders/{code}/switch-status")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
     @Operation(summary = "Staff/Admin: Mô phỏng hoặc đổi trạng thái đơn GHN (delivering, delivered, cancel)")
     public ResponseEntity<ApiResponseDTO<TrackingResponse>> switchStatus(
             @PathVariable("code") String orderCode,
@@ -81,6 +95,7 @@ public class ShippingController {
     }
 
     @GetMapping("/orders/{code}/print-token")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
     @Operation(summary = "Staff/Admin: Lấy token in phiếu vận đơn A5 của GHN")
     public ResponseEntity<ApiResponseDTO<Map<String, String>>> getPrintToken(
             @PathVariable("code") String orderCode

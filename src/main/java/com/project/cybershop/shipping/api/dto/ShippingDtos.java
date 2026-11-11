@@ -31,4 +31,13 @@ public class ShippingDtos {
     ) {}
 
     public record SwitchStatusRequest(String status, String note) {}
+
+    public record UpdateShippingAddressRequest(
+            String pickupName,
+            String pickupPhone,
+            String shippingAddress,
+            Integer toProvinceId,
+            Integer toDistrictId,
+            String toWardCode
+    ) {}
 }

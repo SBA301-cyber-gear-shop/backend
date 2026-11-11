@@ -63,15 +63,32 @@ server:
 # ==========================================
 # JWT, AI ENGINE
 app:
+  store:
+    name: TechZone
+    hotline: "1900 8888"
+    support-email: support@techzone.vn
+    address: "Hẻm 282 Lê Thị Riêng, P. Thới An, Quận 12, TP.HCM"
+    cod-max-amount: 20000000
+    return-days: 30
+  product-sales:
+    scheduler-enabled: true
+    refresh-ms: 300000
   jwt:
     secret: ${JWT_SECRET:4LU_zjRsuAOUXG7V964B5clG6u26svjh3Nuck26NUz4}
     expiration-ms: 86400000
   ai:
+    provider: gemini
     api-key: ${AI_API_KEY:}
-    model: gemini-3.5-flash-lite
-    profile-thinking-level: low
-    profile-timeout-ms: 6000
-    max-retries: 1
+    model: gemini-3.5-flash-lite    # ghim bản Stable, không dùng alias *-latest (DD 8.2)
+    profile-thinking-level: low     # trích hồ sơ: suy luận nhẹ để đặt số liệu hợp lý
+    explain-thinking-level: minimal # giải thích: chỉ viết lại dữ liệu có sẵn, ưu tiên nhanh
+    profile-timeout-ms: 6000        # trích hồ sơ, tối đa cho MỘT lần gọi
+    timeout-ms: 8000                # giải thích, tối đa cho MỘT lần gọi
+    max-retries: 1                  # chỉ thử lại khi timeout / 5xx / 429 / JSON hỏng, và chỉ khi còn thời gian (8.5.1)
+    request-deadline-ms: 14000      # TRẦN TỔNG cho mọi lời gọi AI của một request /ai-suggest
+    min-call-ms: 2000               # còn ít hơn mức này tới deadline thì không gọi / không thử lại
+    circuit-failure-threshold: 5    # số lỗi nhà cung cấp LIÊN TIẾP để ngắt mạch
+    circuit-open-seconds: 30        # thời gian ngắt mạch
   pcbuild:
     budget-window-min: 0.90         # [ĐÃ CHỐT] cận dưới để đánh giá độ sát; cận trên luôn là B
     max-solver-iterations: 200
@@ -81,11 +98,6 @@ app:
     needs-unclear-confidence: 0.4
     rate-limit-per-minute: 6        # /ai-suggest: mỗi user, hoặc mỗi IP khi chưa đăng nhập (11.1)
     rate-limit-check-per-minute: 30 # /validate, /compatible-replacements, /options: mỗi endpoint
-  
-  #Reload after 5 mins
-  product-sales:
-    scheduler-enabled: true
-    refresh-ms: 300000  
   # ==========================================
   # VNPAY SANDBOX & GHN SHIPPING (Mở rộng)
   # ==========================================

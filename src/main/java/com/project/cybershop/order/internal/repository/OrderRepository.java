@@ -3,6 +3,7 @@ package com.project.cybershop.order.internal.repository;
 import com.project.cybershop.order.internal.entity.Order;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -49,4 +50,8 @@ public interface OrderRepository extends JpaRepository<Order, Integer>, OrderLoc
             @Param("methodId") Integer methodId,
             @Param("userId") Integer userId
     );
+
+    @Modifying
+    @Query(value = "UPDATE shipments SET status = 'cancel', status_text = 'Đơn vận chuyển đã hủy', updated_at = NOW() WHERE order_id = :orderId", nativeQuery = true)
+    void cancelShipmentIfPresent(@Param("orderId") Integer orderId);
 }
