@@ -5,16 +5,16 @@ spring:
     import: optional:file:.env[.properties]
 
   # ==========================================
-  # DATABASE (Local PostgreSQL - pgAdmin)
+  # DATABASE (Local PostgreSQL - pgAdmin / Neon)
   # ==========================================
   datasource:
     # url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/cybershop}
     # username: ${SPRING_DATASOURCE_USERNAME:postgres}
     # password: ${SPRING_DATASOURCE_PASSWORD:12345}
-    # Cloud Neon (Uncomment if needed):
-    url: ${SPRING_DATASOURCE_USERNAME:jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
-    username: neondb_owner
-    password: npg_E3lTM5aYOpNA
+    # Cloud Neon:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://ep-still-shape-b33guhgd-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
+    username: ${SPRING_DATASOURCE_USERNAME:neondb_owner}
+    password: ${SPRING_DATASOURCE_PASSWORD:npg_E3lTM5aYOpNA}
     driver-class-name: org.postgresql.Driver
     hikari:
       connection-init-sql: SET TIME ZONE 'Asia/Bangkok'
@@ -58,11 +58,13 @@ springdoc:
 # SERVER
 # ==========================================
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 # ==========================================
-# JWT, AI ENGINE
+# CORS, JWT, AI ENGINE
 app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}
   store:
     name: TechZone
     hotline: "1900 8888"
