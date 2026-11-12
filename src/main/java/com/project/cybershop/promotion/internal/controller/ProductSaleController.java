@@ -20,7 +20,7 @@ public class ProductSaleController {
     public List<ProductSaleSearchResult> search(@RequestParam(defaultValue="") String search) {
         return service.search(search);
     }
-    @GetMapping("/{productId}") 
+    @GetMapping("/{productId}")
     public ProductSaleResponse get(@PathVariable Integer productId) {
         return service.get(productId);
     }
