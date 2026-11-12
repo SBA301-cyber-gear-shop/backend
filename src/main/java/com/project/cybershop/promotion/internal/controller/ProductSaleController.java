@@ -13,10 +13,23 @@ import java.util.List;
 @PreAuthorize("hasRole('ADMIN')")
 public class ProductSaleController {
     private final ProductSaleService service;
-    @GetMapping public List<ProductSaleResponse> list() { return service.list(); }
-    @GetMapping("/products") public List<ProductSaleSearchResult> search(@RequestParam(defaultValue="") String search) { return service.search(search); }
-    @GetMapping("/{productId}") public ProductSaleResponse get(@PathVariable Integer productId) { return service.get(productId); }
-    @PutMapping("/{productId}") public ProductSaleResponse save(@PathVariable Integer productId, @Valid @RequestBody ProductSaleRequest request) { return service.save(productId, request); }
+    @GetMapping public List<ProductSaleResponse> list() {
+        return service.list();
+    }
+    @GetMapping("/products")
+    public List<ProductSaleSearchResult> search(@RequestParam(defaultValue="") String search) {
+        return service.search(search);
+    }
+    @GetMapping("/{productId}")
+    public ProductSaleResponse get(@PathVariable Integer productId) {
+        return service.get(productId);
+    }
+    @PutMapping("/{productId}")
+    public ProductSaleResponse save(@PathVariable Integer productId, @Valid @RequestBody ProductSaleRequest request) {
+        return service.save(productId, request);
+    }
     @DeleteMapping("/{productId}") @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void remove(@PathVariable Integer productId) { service.remove(productId); }
+    public void remove(@PathVariable Integer productId) {
+        service.remove(productId);
+    }
 }

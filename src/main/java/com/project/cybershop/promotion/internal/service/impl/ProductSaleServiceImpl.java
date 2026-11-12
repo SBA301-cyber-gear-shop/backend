@@ -49,13 +49,14 @@ public class ProductSaleServiceImpl implements ProductSaleService {
             var saved = prices.findById(id).orElse(null);
             BigDecimal regular = saved == null ? v.price() : saved.getRegularPrice();
             BigDecimal original = saved == null ? v.originalPrice() : saved.getOriginalPrice();
-            BigDecimal base = original != null && original.signum() > 0 ? original : regular;
+            BigDecimal base = regular;
             return new ProductSaleResponse.Variant(id, v.name(), base, regular, v.price());
         }).toList();
         return new ProductSaleResponse(productId, name, sale != null, sale != null && sale.isEnabled(),
                 sale == null ? null : sale.getPercentage(), sale == null ? null : sale.getStart(), sale == null ? null : sale.getEnd(), active, rows,
                 sale == null ? "percentage" : sale.getDiscountType(),
-                sale == null ? null : sale.getDiscountValue() != null ? sale.getDiscountValue() : sale.getPercentage());
+                sale == null ? null : sale.getDiscountValue() != null ? sale.getDiscountValue() : sale.getPercentage(),
+                sale == null || sale.getVariantIds() == null ? null : java.util.Arrays.asList(sale.getVariantIds()));
     }
     @Override @Transactional public ProductSaleResponse save(Integer productId, ProductSaleRequest request) {
         name(productId);
@@ -75,11 +76,16 @@ public class ProductSaleServiceImpl implements ProductSaleService {
             throw new BusinessException("Thời gian kết thúc phải sau bắt đầu.");
         var ids = data.variantIds(productId);
         if (ids.isEmpty()) throw new BusinessException("Sản phẩm cần có phiên bản trước khi lên lịch sale.");
+        if (request.variantIds() != null && (request.variantIds().isEmpty()
+                || request.variantIds().stream().anyMatch(id -> id == null || !ids.contains(id))
+                || request.variantIds().stream().distinct().count() != request.variantIds().size()))
+            throw new BusinessException("Vui lòng chọn phiên bản hợp lệ thuộc sản phẩm.");
         for (var id : ids) data.lockVariant(id);
         var sale = sales.findById(productId).orElseGet(ProductSale::new);
         sale.setProductId(productId); sale.setDiscountType(type); sale.setDiscountValue(value);
         sale.setPercentage("percentage".equals(type) ? value : null);
         sale.setStart(request.start()); sale.setEnd(request.end()); sale.setEnabled(request.enabled());
+        sale.setVariantIds(request.variantIds() == null ? null : request.variantIds().toArray(Integer[]::new));
         sales.saveAndFlush(sale);
         return get(productId);
     }
