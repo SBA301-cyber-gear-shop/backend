@@ -14,9 +14,13 @@ import java.util.List;
 @RestController @RequiredArgsConstructor
 public class ReviewMediaController {
     private final ReviewMediaService service;
+
     public record Submission(@Valid ReviewRequest review,List<Integer> retainedMediaIds) {}
+
     @GetMapping("/api/order-items/{itemId}/review")
-    public ReviewMediaService.Editor editor(Authentication auth,@PathVariable Integer itemId){return service.editor(auth.getName(),itemId);}
+    public ReviewMediaService.Editor editor(Authentication auth,@PathVariable Integer itemId) {
+        return service.editor(auth.getName(),itemId);
+    }
     @PutMapping(value="/api/order-items/{itemId}/review",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void save(Authentication auth,@PathVariable Integer itemId,@Valid @RequestPart("payload") Submission payload,
@@ -24,8 +28,13 @@ public class ReviewMediaController {
         if(payload.review()==null)throw new com.project.cybershop.shared.exception.BusinessException("Thiếu nội dung đánh giá.");
         service.save(auth.getName(),itemId,payload.review(),payload.retainedMediaIds(),files);
     }
-    @GetMapping("/api/reviews/{reviewId}/media") public List<ReviewMediaResponse> list(@PathVariable Integer reviewId){return service.list(reviewId);}
-    @GetMapping("/api/review-media/{id}") public ResponseEntity<ByteArrayResource> file(@PathVariable Integer id){
+    @GetMapping("/api/reviews/{reviewId}/media")
+    public List<ReviewMediaResponse> list(@PathVariable Integer reviewId){
+        return service.list(reviewId);
+    }
+
+    @GetMapping("/api/review-media/{id}")
+    public ResponseEntity<ByteArrayResource> file(@PathVariable Integer id){
         var file=service.content(id);
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(file.getContentType())).contentLength(file.getFileSize())
                 .header("X-Content-Type-Options","nosniff").header("Content-Disposition","inline")

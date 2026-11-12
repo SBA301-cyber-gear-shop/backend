@@ -49,9 +49,12 @@ public class GeminiEmbeddingService {
     private String resolveEffectiveModel() {
         AiConfigDto config = aiConfigApi != null ? aiConfigApi.getActiveConfig("EMBEDDING_CONFIG") : null;
         if (config != null && config.getModelName() != null && !config.getModelName().isBlank()) {
-            return config.getModelName().trim();
+            String m = config.getModelName().trim();
+            if (!m.contains("text-embedding-004")) {
+                return m;
+            }
         }
-        return "text-embedding-004";
+        return "gemini-embedding-001";
     }
 
     /**
@@ -160,15 +163,16 @@ public class GeminiEmbeddingService {
 
         List<String> results = new ArrayList<>(texts.size());
         final int BATCH_SIZE = 80;
+        String effectiveApiKey = resolveEffectiveApiKey();
 
         for (int i = 0; i < texts.size(); i += BATCH_SIZE) {
             int end = Math.min(i + BATCH_SIZE, texts.size());
             List<String> chunk = texts.subList(i, end);
 
             boolean success = false;
-            if (apiKey != null && !apiKey.isBlank()) {
+            if (effectiveApiKey != null && !effectiveApiKey.isBlank()) {
                 String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key="
-                        + apiKey;
+                        + effectiveApiKey;
                 List<Map<String, Object>> requestsList = new ArrayList<>();
                 for (String t : chunk) {
                     requestsList.add(Map.of(

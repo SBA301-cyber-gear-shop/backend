@@ -40,9 +40,10 @@ public class ProductSalePriceServiceImpl implements ProductSalePriceService {
         } else if (!same(snapshot.getAppliedPrice(), variant.price()) || !same(snapshot.getAppliedOriginalPrice(), variant.originalPrice())) {
             snapshot.setRegularPrice(variant.price()); snapshot.setOriginalPrice(variant.originalPrice());
         }
-        boolean active = sale != null && sale.isEnabled() && !now.isBefore(sale.getStart()) && now.isBefore(sale.getEnd());
+        boolean active = sale != null && sale.isEnabled() && !now.isBefore(sale.getStart()) && now.isBefore(sale.getEnd())
+                && (sale.getVariantIds() == null || java.util.Arrays.asList(sale.getVariantIds()).contains(id));
         BigDecimal original = snapshot.getOriginalPrice();
-        BigDecimal base = original != null && original.signum() > 0 ? original : snapshot.getRegularPrice();
+        BigDecimal base = snapshot.getRegularPrice();
         BigDecimal amount = snapshot.getRegularPrice();
         if (active) {
             BigDecimal value = sale.getDiscountValue() != null ? sale.getDiscountValue() : sale.getPercentage();
