@@ -84,6 +84,7 @@ public record DashboardSummaryResponse(
 
     public record TopSellingProductDto(
             String productName,
+            String categoryName,
             long quantitySold,
             BigDecimal totalRevenue
     ) {}

@@ -10,6 +10,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -173,6 +176,7 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
 
     @Override
     public List<DashboardSummaryResponse.MonthlyRevenueDto> getMonthlyRevenue(int months) {
+        int m = months > 0 ? months : 12;
         String sql = """
                 SELECT 
                     sub.report_month,
@@ -195,12 +199,34 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
                 GROUP BY sub.report_month
                 ORDER BY sub.report_month ASC
                 """;
-        return jdbc.query(sql, (rs, rowNum) -> new DashboardSummaryResponse.MonthlyRevenueDto(
+        List<DashboardSummaryResponse.MonthlyRevenueDto> queryResults = jdbc.query(sql, (rs, rowNum) -> new DashboardSummaryResponse.MonthlyRevenueDto(
                 rs.getString("report_month"),
                 rs.getBigDecimal("revenue"),
                 rs.getLong("items_sold"),
                 rs.getLong("order_count")
-        ), months);
+        ), m);
+
+        Map<String, DashboardSummaryResponse.MonthlyRevenueDto> resultMap = new HashMap<>();
+        for (DashboardSummaryResponse.MonthlyRevenueDto item : queryResults) {
+            resultMap.put(item.month(), item);
+        }
+
+        List<DashboardSummaryResponse.MonthlyRevenueDto> fullList = new ArrayList<>();
+        YearMonth current = YearMonth.now();
+        for (int i = m - 1; i >= 0; i--) {
+            String monthKey = current.minusMonths(i).toString();
+            if (resultMap.containsKey(monthKey)) {
+                fullList.add(resultMap.get(monthKey));
+            } else {
+                fullList.add(new DashboardSummaryResponse.MonthlyRevenueDto(
+                        monthKey,
+                        BigDecimal.ZERO,
+                        0L,
+                        0L
+                ));
+            }
+        }
+        return fullList;
     }
 
     @Override
@@ -302,10 +328,14 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
         String sql = """
                 SELECT 
                     oi.product_name,
+                    COALESCE(MAX(c.name), 'Linh kiện') AS category_name,
                     SUM(oi.quantity) AS quantity_sold,
                     SUM(oi.subtotal) AS total_revenue
                 FROM order_items oi
                 JOIN orders o ON oi.order_id = o.id
+                LEFT JOIN product_variants pv ON oi.product_variant_id = pv.id
+                LEFT JOIN products p ON pv.product_id = p.id
+                LEFT JOIN categories c ON p.category_id = c.id
                 WHERE LOWER(o.status) != 'canceled'
                 GROUP BY oi.product_name
                 ORDER BY quantity_sold DESC, total_revenue DESC
@@ -313,6 +343,7 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
                 """;
         return jdbc.query(sql, (rs, rowNum) -> new DashboardSummaryResponse.TopSellingProductDto(
                 rs.getString("product_name"),
+                rs.getString("category_name"),
                 rs.getLong("quantity_sold"),
                 rs.getBigDecimal("total_revenue")
         ), limit);
